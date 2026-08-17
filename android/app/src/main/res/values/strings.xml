@@ -2,4 +2,14 @@
 <resources>
     <string name="app_name">Tracktrip</string>
     <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+    <string name="trips_title">Trips</string>
+    <string name="signed_in">Signed in</string>
+    <string name="signed_in_as">Signed in as %1$s</string>
+
+    <!-- Sign-in error messages -->
+    <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
+    <string name="error_no_google_account">No Google account available on this device.</string>
+    <string name="error_sign_in_failed">Google sign-in failed. Please try again.</string>
+    <string name="error_unexpected_credential">Got an unexpected credential type from Google.</string>
 </resources>

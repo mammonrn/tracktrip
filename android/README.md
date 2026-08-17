@@ -4,10 +4,60 @@ Kotlin + Jetpack Compose client for the trip-tracker backend. Lives in the
 same monorepo as the Node backend; this folder is a self-contained Gradle
 project.
 
-**Current state:** scaffold only. The first screen is a single
-"Sign in with Google" button that does nothing yet — it gets wired up once
-the Google OAuth Android client ID exists (which needs the keystore's SHA-1
-fingerprint, see below).
+**Current state:** Google sign-in is wired end to end — Credential Manager
+obtains a Google ID token, it's exchanged at the backend's
+`POST /auth/google`, and the returned tokens are stored in
+`EncryptedSharedPreferences`. On success the app moves to a placeholder
+`TripListScreen`; on failure it shows an inline message rather than crashing.
+
+## Configuration — where the Client IDs live
+
+**Everything environment-specific is in one file:
+[`app/src/main/res/values/config.xml`](app/src/main/res/values/config.xml).**
+If the Google Cloud project or the API host ever changes, that file is the
+only thing to edit.
+
+| Resource | What it is | Used where |
+|---|---|---|
+| `google_web_client_id` | **Web** OAuth client ID | Passed to `GetGoogleIdOption.setServerClientId(...)` in `MainActivity.kt`, and verified by the backend |
+| `api_base_url` | Backend base URL (`https://api.ptrip.app`) | `AuthApi` |
+
+### Google Cloud OAuth clients (project `471850622906`)
+
+| Client | ID | Referenced in code? |
+|---|---|---|
+| **Web** | `471850622906-8erl86uso7f64td0evq363k3tpfekedd.apps.googleusercontent.com` | **Yes** — `config.xml` → `google_web_client_id` |
+| **Android** | `471850622906-lek8ce0l0kaohchi242a17rlbg6sabta.apps.googleusercontent.com` | **No** — recorded here only |
+
+Neither is a secret; OAuth client IDs are public identifiers that ship inside
+the app. The private key that proves the app's identity is the release
+keystore, which never enters this repo.
+
+Two things that routinely trip people up:
+
+**The Web client ID is the correct one to pass to Credential Manager**, not
+the Android one. `setServerClientId()` wants the client ID of the *server*
+that will verify the token. The returned Google ID token carries that value
+in its `aud` claim, and the backend checks it against its own
+`GOOGLE_CLIENT_ID`. So the same web client ID must appear in **both**
+`config.xml` here and the backend's `.env`.
+
+**The Android client ID is never passed to any API**, which is why it lives
+in this README rather than in `config.xml` — storing it as a string resource
+would ship an unused value in the APK. It exists so Google can authorise
+*this app* to request tokens, matched by package name + signing certificate
+SHA-1 registered in Google Cloud Console.
+
+A consequence worth knowing: debug builds use application ID
+`app.ptrip.tracktrip.debug` and the debug keystore, so they need their **own**
+Android OAuth client registration (with the debug SHA-1 and the `.debug`
+package name) or sign-in will fail with a "developer error" in debug while
+working fine in release. Get the debug SHA-1 with:
+
+```bash
+keytool -list -v -keystore ~/.android/debug.keystore \
+  -alias androiddebugkey -storepass android | grep SHA1:
+```
 
 ## Toolchain
 
@@ -33,6 +83,51 @@ Compose compiler plugin is applied alongside AGP.
   (`androidx.credentials` + `com.google.android.libraries.identity.googleid`),
   *not* the deprecated `GoogleSignInClient` / `play-services-auth` sign-in API.
 - **OkHttp** for backend calls.
+- **`androidx.security:security-crypto`** for `EncryptedSharedPreferences`,
+  so the access/refresh tokens are encrypted at rest (AES256-GCM values,
+  AES256-SIV keys) under an Android Keystore master key — never plain text.
+
+## Sign-in flow
+
+```
+SignInScreen  ──tap──▶  CredentialManager.getCredential()
+                              │  GetGoogleIdOption(serverClientId = WEB client id)
+                              ▼
+                        Google ID token
+                              │
+                              ▼
+        AuthApi ──POST {idToken}──▶  https://api.ptrip.app/auth/google
+                              │
+                              ▼
+              { accessToken, refreshToken, user }
+                              │
+                              ▼
+                TokenStore (EncryptedSharedPreferences)
+                              │
+                              ▼
+                        TripListScreen
+```
+
+Relevant files:
+
+| File | Role |
+|---|---|
+| `MainActivity.kt` | Credential Manager call + which screen to show |
+| `ui/SignInViewModel.kt` | `SignedOut / Loading / Error / SignedIn` state |
+| `ui/SignInScreen.kt` | Button, spinner, inline error text |
+| `ui/TripListScreen.kt` | Placeholder post-sign-in screen |
+| `data/AuthApi.kt` | OkHttp call to `POST /auth/google` |
+| `data/TokenStore.kt` | Encrypted token storage |
+
+Every failure path — no Google account, user dismissed the sheet, network
+down, non-2xx from the backend, malformed response — is caught and turned
+into a short message on screen. Nothing throws to the top level.
+
+Tokens are stored but **not yet used**: there's no authenticated request or
+refresh-on-401 logic, since no screen calls a protected endpoint yet.
+Navigation is deliberately simple state switching in `MainActivity` rather
+than `navigation-compose`; worth revisiting once there's more than one real
+screen.
 
 ## Building
 

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  All environment/project configuration for the app lives in this one file.
+  Change these values if the Google Cloud project or API host ever changes.
+
+  None of these are secrets — OAuth client IDs are public identifiers, and are
+  meant to ship inside the app. The private key that actually proves the app's
+  identity is the release keystore, which never enters this repo.
+-->
+<resources>
+
+    <!--
+      WEB client ID. This is the one passed to GetGoogleIdOption as the
+      *server* client ID, and the one the backend verifies the ID token
+      against (backend .env GOOGLE_CLIENT_ID).
+
+      This is NOT a mistake: Credential Manager wants the Web client ID here,
+      not the Android one. The ID token it returns carries this value in its
+      `aud` claim, which is what the backend checks — so this value must stay
+      in sync with the backend's GOOGLE_CLIENT_ID in .env.
+    -->
+    <string name="google_web_client_id" translatable="false">471850622906-8erl86uso7f64td0evq363k3tpfekedd.apps.googleusercontent.com</string>
+
+    <!--
+      The ANDROID OAuth client ID is deliberately NOT stored here: nothing in
+      the code can use it. Google authorises the app by matching its package
+      name plus signing-certificate SHA-1 against what's registered in Cloud
+      Console, with no API that accepts the ID. It's recorded in
+      android/README.md instead, so this file holds only values the app
+      actually reads.
+    -->
+
+    <!-- Base URL of the trip-tracker backend. No trailing slash. -->
+    <string name="api_base_url" translatable="false">https://api.ptrip.app</string>
+
+</resources>
