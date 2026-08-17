@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'trip-tracker',
+      name: 'tracktrip-api',
       script: 'src/index.js',
       cwd: __dirname,
       env: {
