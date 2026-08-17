@@ -2,6 +2,8 @@ import express from 'express';
 import healthRouter from './routes/index.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createMeRouter } from './routes/me.js';
+import { createTripsRouter } from './routes/trips.js';
+import { createInvitesRouter } from './routes/invites.js';
 import { createWaypointsRouter } from './routes/waypoints.js';
 
 export function createApp({ db, config, verifyGoogleIdToken }) {
@@ -14,6 +16,8 @@ export function createApp({ db, config, verifyGoogleIdToken }) {
   app.use(healthRouter);
   app.use(createAuthRouter({ db, config, verifyGoogleIdToken }));
   app.use(createMeRouter({ db, config }));
+  app.use(createTripsRouter({ db, config }));
+  app.use(createInvitesRouter({ db, config }));
   app.use(createWaypointsRouter({ db, config }));
   return app;
 }

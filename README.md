@@ -6,8 +6,9 @@ motorcycle trip. Node.js + Express + better-sqlite3 + `ws`, run under PM2.
 This is a monorepo: the backend lives at the root, and the Kotlin/Compose
 Android client lives in [`android/`](./android/README.md).
 
-Google Sign-In based auth and a basic profile API are implemented. The live
-WebSocket position feed is still a stub.
+Google Sign-In based auth, a basic profile API, and the trip lifecycle
+(create → invite → accept → end) are implemented. The live WebSocket position
+feed is still a stub.
 
 ## Stack
 
@@ -35,11 +36,18 @@ src/
     users.js          # upsert user by google_sub
     middleware.js      # requireAuth Express middleware
     tripMembership.js  # requireTripMembership (loads trip, enforces 403)
+    tripOwnership.js   # requireTripOwner (owner-only actions)
+    tripStatus.js      # requireActiveTrip (409s writes to an ended trip)
     serializeUser.js   # shapes a user row for API responses
+  trips/
+    email.js         # normalizes invite email addresses
+    serialize.js     # shapes trip / invite rows for API responses
   routes/
     index.js          # health check
     auth.js            # POST /auth/google, /auth/refresh, /auth/logout
     me.js               # GET/PATCH /me
+    trips.js             # /trips, /trips/:id/invites, /trips/:id/end
+    invites.js           # /invites, /invites/:id/accept
     waypoints.js         # /trips/:id/waypoints
   ws/                # WebSocket server (stub)
 scripts/
@@ -78,6 +86,63 @@ Access tokens are JWTs valid for 1 hour. Refresh tokens are opaque 32-byte
 random values valid for 60 days; only their SHA-256 hash is stored in the
 `refresh_tokens` table.
 
+### Trips
+
+A trip runs from creation until its owner ends it. The rider who creates it is
+its owner (`trips.owner_id`) and its first member; everyone else joins by
+accepting an emailed invite. All routes require
+`Authorization: Bearer <accessToken>`.
+
+- `POST /trips` — body `{ name }` (1–60 characters after trimming). Returns
+  `201` with the trip. The caller becomes the owner and is written into
+  `trip_members` with `role = 'owner'` in the same transaction.
+- `GET /trips` — the caller's trips (owned **and** joined), newest first, each
+  with the caller's own `role`.
+- `POST /trips/:id/invites` — **owner only**; body `{ email }`. Returns `201`
+  with the invite. Any other member, or a non-member, gets `403`.
+
+  | Case | Result |
+  |---|---|
+  | New email | `201`, a `pending` invite |
+  | Email already invited and still `pending` | `200` with that same invite — re-inviting is how an owner re-sends it, and never creates a duplicate |
+  | Email of a `revoked` invite | `200`, the same row reopened as `pending` |
+  | Email of an `accepted` invite, or of a current member | `409` |
+  | The owner's own email | `400` |
+  | Malformed address | `400` |
+
+- `POST /trips/:id/end` — **owner only**. Sets `status = 'ended'` and stamps
+  `ended_at`. Returns `200` with the trip; ending an already-ended trip is
+  `409`.
+
+Once a trip has ended it is **read-only**: members can still read it, but every
+write to it — new positions and live waypoint drops included — returns
+`409 {"error": "trip has ended"}`, and no new invite can be sent or accepted.
+
+### Invites
+
+An invite is addressed to an **email**, not to a user id, because the invitee
+may not have an account yet. Only the account signed in with that address can
+accept it. Matching is case-insensitive: invite emails are stored trimmed and
+lowercased, and the caller's address is normalized the same way before it is
+compared.
+
+Any domain is accepted, not just `@gmail.com` — riders sign in with Google,
+which covers Workspace accounts on custom domains too.
+
+- `GET /invites` — the caller's `pending` invites on trips that are still
+  active, each with the inviting trip's `trip_name`. There is no push or email
+  notification yet, so this is how an invitee discovers an invite.
+- `POST /invites/:id/accept` — the invitee joins the trip. Returns `200` with
+  `{ trip, invite }`; the membership row and the invite's
+  `status`/`accepted_at`/`accepted_by` are written in one transaction.
+
+  | Case | Result |
+  |---|---|
+  | Caller's email doesn't match the invite | `403` |
+  | Already accepted, or revoked | `409` |
+  | The trip has ended | `409` |
+  | No such invite | `404` |
+
 ### Waypoints
 
 Stop-off points on a trip. Two kinds:
@@ -87,7 +152,9 @@ Stop-off points on a trip. Two kinds:
 
 All routes require `Authorization: Bearer <accessToken>` **and** that the
 caller is a member of the trip (a row in `trip_members`). A non-member gets
-`403`, an unknown trip `404`, a non-numeric trip id `400`.
+`403`, an unknown trip `404`, a non-numeric trip id `400`. `POST` and `DELETE`
+additionally require the trip to still be active — on an ended trip they
+return `409` while `GET` keeps working.
 
 - `POST /trips/:id/waypoints` — body `{ name, lat, lng, type, order_index? }`.
   Returns `201` with the created waypoint.
