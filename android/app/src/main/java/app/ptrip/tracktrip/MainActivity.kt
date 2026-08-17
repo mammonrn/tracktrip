@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -32,6 +33,7 @@ import app.ptrip.tracktrip.auth.GoogleSignInResult
 import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AppContainer
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.location.LocationFix
 import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
@@ -53,7 +55,10 @@ import app.ptrip.tracktrip.ui.SignInUiState
 import app.ptrip.tracktrip.ui.SignInViewModel
 import app.ptrip.tracktrip.ui.TripDetailScreen
 import app.ptrip.tracktrip.ui.TripDetailViewModel
+import app.ptrip.tracktrip.ui.MapFocus
 import app.ptrip.tracktrip.ui.TripListScreen
+import app.ptrip.tracktrip.ui.TripMapScreen
+import app.ptrip.tracktrip.ui.TripMapViewModel
 import app.ptrip.tracktrip.ui.TripQrScreen
 import app.ptrip.tracktrip.ui.TripsViewModel
 import app.ptrip.tracktrip.ui.rememberBackStack
@@ -417,6 +422,7 @@ private fun SignedInNavigation(
                 },
                 onStopSharing = detailViewModel::stopSharing,
                 onShareInviteLink = detailViewModel::requestShareLink,
+                onOpenMap = { backStack.push(Screen.TripMap(screen.tripId)) },
                 onInviteEmailChange = detailViewModel::onInviteEmailChange,
                 onSendInvite = detailViewModel::sendInvite,
                 onUseSuggestion = detailViewModel::useSuggestion,
@@ -431,6 +437,66 @@ private fun SignedInNavigation(
                     // The list shows each trip's status, so it is stale the
                     // moment this one ends.
                     tripsViewModel.refresh()
+                },
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        is Screen.TripMap -> {
+            val mapViewModel: TripMapViewModel = viewModel(
+                key = "map-${screen.tripId}",
+                factory = tripMapViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val mapState by mapViewModel.uiState.collectAsStateWithLifecycle()
+
+            val context = LocalContext.current
+            val noLocationMessage = stringResource(R.string.map_no_location)
+            var centreOn by remember { mutableStateOf<MapFocus?>(null) }
+            var centreSequence by remember { mutableIntStateOf(0) }
+            val scope = rememberCoroutineScope()
+
+            /**
+             * Where the rider is, best effort: the phone's own idea first,
+             * falling back to the position the server last heard from them —
+             * which is the one thing that works with location switched off.
+             */
+            fun centreOnMe() {
+                scope.launch {
+                    val cached = LocationFix.lastKnown(context)
+                    val fix = cached ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                    val fallback = mapState.members
+                        .firstOrNull { it.userId == profile?.id && it.hasPosition }
+
+                    val target = when {
+                        fix != null -> fix.latitude to fix.longitude
+                        fallback?.lat != null && fallback.lng != null ->
+                            fallback.lat!! to fallback.lng!!
+                        else -> null
+                    }
+                    if (target == null) {
+                        mapViewModel.onNoLocation(noLocationMessage)
+                    } else {
+                        centreSequence += 1
+                        centreOn = MapFocus(target.first, target.second, centreSequence)
+                    }
+                }
+            }
+
+            // The same permission request the sharing controls use — asked
+            // only when the button is pressed without it.
+            val requestLocation = rememberSharingPermissionRequest(
+                onGranted = { centreOnMe() },
+                onDenied = mapViewModel::onNoLocation,
+            )
+
+            TripMapScreen(
+                state = mapState,
+                currentUserId = profile?.id,
+                centreOn = centreOn,
+                onRefresh = mapViewModel::refresh,
+                onCenterOnMe = {
+                    if (LocationFix.hasPermission(context)) centreOnMe() else requestLocation()
                 },
                 onBack = { backStack.pop() },
                 modifier = modifier,
@@ -507,6 +573,13 @@ private fun settingsViewModelFactory(
             onSessionExpired = onSessionExpired,
         )
     }
+
+private fun tripMapViewModelFactory(
+    container: AppContainer,
+    tripId: Long,
+    onSessionExpired: () -> Unit,
+): ViewModelProvider.Factory =
+    factoryOf { TripMapViewModel(tripId, container.tripApi, onSessionExpired) }
 
 private fun profileViewModelFactory(
     container: AppContainer,

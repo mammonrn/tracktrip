@@ -1,6 +1,5 @@
 package app.ptrip.tracktrip.location
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,17 +7,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.location.Location
-import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import androidx.core.os.CancellationSignal
-import androidx.core.location.LocationManagerCompat
 import app.ptrip.tracktrip.MainActivity
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
@@ -31,11 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
-import java.util.concurrent.Executor
-import kotlin.coroutines.resume
 
 /**
  * Reports this rider's position to a trip while they are sharing.
@@ -172,54 +163,9 @@ class LocationSharingService : Service() {
         }
     }
 
-    /**
-     * One location fix, or null.
-     *
-     * Uses the platform's own `LocationManager` rather than Play Services'
-     * fused provider: at a ten-minute cadence the extra accuracy is not worth
-     * another dependency, and this keeps working on a phone whose Play
-     * Services are unhealthy — which is exactly the phone that ends up on a
-     * mountain road.
-     */
-    private suspend fun currentLocation(): Location? {
-        if (!hasLocationPermission()) {
-            return null
-        }
-        val manager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            ?: return null
-
-        val provider = when {
-            LocationManagerCompat.hasProvider(manager, LocationManager.GPS_PROVIDER) ->
-                LocationManager.GPS_PROVIDER
-            LocationManagerCompat.hasProvider(manager, LocationManager.NETWORK_PROVIDER) ->
-                LocationManager.NETWORK_PROVIDER
-            else -> return null
-        }
-
-        return withTimeoutOrNull(FIX_TIMEOUT_MS) {
-            suspendCancellableCoroutine { continuation ->
-                val cancellation = CancellationSignal()
-                try {
-                    LocationManagerCompat.getCurrentLocation(
-                        manager,
-                        provider,
-                        cancellation,
-                        Executor { runnable -> runnable.run() },
-                    ) { location: Location? -> continuation.resume(location) }
-                } catch (e: SecurityException) {
-                    // Permission revoked between the check above and here.
-                    continuation.resume(null)
-                }
-                continuation.invokeOnCancellation { cancellation.cancel() }
-            }
-        }
-    }
-
-    private fun hasLocationPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+    /** One fix, from the shared helper the map's centre-on-me button also uses. */
+    private suspend fun currentLocation(): Location? =
+        LocationFix.current(applicationContext, FIX_TIMEOUT_MS)
 
     /** Battery level, for the member list. Null rather than a guess. */
     private fun batteryPercent(): Int? {

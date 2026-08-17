@@ -22,6 +22,7 @@ sealed interface Screen {
     data object ScanQr : Screen
     data class TripDetail(val tripId: Long) : Screen
     data class TripQr(val tripId: Long) : Screen
+    data class TripMap(val tripId: Long) : Screen
 }
 
 /**

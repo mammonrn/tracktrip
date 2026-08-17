@@ -85,6 +85,15 @@
     <string name="sharing_no_active_trips">Sharing needs a running trip. Create one, or join a friend\'s.</string>
     <string name="settings_sharing">Location sharing</string>
 
+    <!-- Map -->
+    <string name="map_title">Live map</string>
+    <string name="map_riders_placed">%1$d of %2$d riders on the map</string>
+    <string name="map_center_on_me">Centre on me</string>
+    <string name="map_no_position">No position yet</string>
+    <string name="map_last_seen">Last known position</string>
+    <string name="map_you">%1$s (you)</string>
+    <string name="map_no_location">Couldn\'t work out where you are. Check that location is on.</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">Tracktrip needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
     <string name="location_permission_denied">Location access is off for Tracktrip. Turn it on in Android\'s app settings to share your position with your group.</string>

@@ -62,6 +62,15 @@
     <string name="sharing_notification_title">กำลังแชร์ตำแหน่งของคุณ</string>
     <string name="sharing_notification_stop">หยุด</string>
 
+    <!-- Map -->
+    <string name="map_title">แผนที่สด</string>
+    <string name="map_riders_placed">มีตำแหน่ง %1$d จาก %2$d คน</string>
+    <string name="map_center_on_me">กลับมาที่ตำแหน่งฉัน</string>
+    <string name="map_no_position">ยังไม่มีตำแหน่ง</string>
+    <string name="map_last_seen">ตำแหน่งล่าสุดที่ทราบ</string>
+    <string name="map_you">%1$s (คุณ)</string>
+    <string name="map_no_location">หาตำแหน่งของคุณไม่ได้ ลองเช็คว่าเปิด location อยู่ไหม</string>
+
     <!-- Inviting -->
     <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
     <string name="invite_suggestions">เคยร่วมทริปกันมาก่อน</string>
