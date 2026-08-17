@@ -1,0 +1,206 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+import supertest from 'supertest';
+import { createApp } from '../src/app.js';
+import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
+import { signAccessToken } from '../src/auth/jwt.js';
+
+const JWT_SECRET = 'test-secret';
+
+function setup() {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  runMigrations(db, MIGRATIONS_DIR);
+
+  const insertUser = db.prepare(
+    'INSERT INTO users (google_sub, email, display_name) VALUES (?, ?, ?)'
+  );
+  const riderId = Number(insertUser.run('sub-rider', 'rider@gmail.com', 'Rider').lastInsertRowid);
+  const otherId = Number(insertUser.run('sub-other', 'other@gmail.com', 'Other').lastInsertRowid);
+
+  const app = createApp({
+    db,
+    config: { jwtSecret: JWT_SECRET, googleClientIds: ['test-client-id'] },
+    verifyGoogleIdToken: async () => {
+      throw new Error('unused in these tests');
+    },
+  });
+
+  return {
+    db,
+    app,
+    riderId,
+    otherId,
+    riderToken: signAccessToken(riderId, JWT_SECRET),
+    otherToken: signAccessToken(otherId, JWT_SECRET),
+  };
+}
+
+const patchMe = (app, token) =>
+  supertest(app).patch('/me').set('Authorization', `Bearer ${token}`);
+
+const getMe = (app, token) => supertest(app).get('/me').set('Authorization', `Bearer ${token}`);
+
+// ─── The new fields ─────────────────────────────────────────────────────────
+
+test('PATCH /me stores every optional profile field', async () => {
+  const { app, riderToken } = setup();
+
+  const res = await patchMe(app, riderToken).send({
+    first_name: '  Poom  ',
+    last_name: 'Sukjai',
+    username: 'poom.rides',
+    phone: '081-234-5678',
+    birth_date: '1994-03-17',
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.first_name, 'Poom'); // trimmed
+  assert.equal(res.body.last_name, 'Sukjai');
+  assert.equal(res.body.username, 'poom.rides');
+  assert.equal(res.body.phone, '081-234-5678');
+  assert.equal(res.body.birth_date, '1994-03-17');
+
+  const reread = await getMe(app, riderToken);
+  assert.equal(reread.body.username, 'poom.rides');
+});
+
+test('GET /me reports untouched profile fields as null, not missing', async () => {
+  const { app, riderToken } = setup();
+
+  const res = await getMe(app, riderToken);
+
+  assert.equal(res.status, 200);
+  for (const field of ['first_name', 'last_name', 'username', 'phone', 'birth_date']) {
+    assert.ok(field in res.body, `${field} should be present`);
+    assert.equal(res.body[field], null);
+  }
+});
+
+test('PATCH /me touches only the fields it is sent', async () => {
+  const { app, riderToken } = setup();
+
+  await patchMe(app, riderToken).send({ first_name: 'Poom', phone: '0812345678' });
+  const res = await patchMe(app, riderToken).send({ last_name: 'Sukjai' });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.first_name, 'Poom');
+  assert.equal(res.body.phone, '0812345678');
+  assert.equal(res.body.last_name, 'Sukjai');
+  // display_name was never sent, so sign-in's value survives.
+  assert.equal(res.body.display_name, 'Rider');
+});
+
+test('PATCH /me clears an optional field sent as null or empty', async () => {
+  const { app, riderToken } = setup();
+
+  await patchMe(app, riderToken).send({ phone: '0812345678', username: 'poom' });
+
+  const cleared = await patchMe(app, riderToken).send({ phone: null, username: '  ' });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.phone, null);
+  assert.equal(cleared.body.username, null);
+});
+
+test('PATCH /me refuses to clear display_name', async () => {
+  const { app, riderToken } = setup();
+
+  assert.equal((await patchMe(app, riderToken).send({ display_name: null })).status, 400);
+  assert.equal((await patchMe(app, riderToken).send({ display_name: '   ' })).status, 400);
+  assert.equal((await getMe(app, riderToken)).body.display_name, 'Rider');
+});
+
+test('PATCH /me ignores fields it does not recognise', async () => {
+  const { app, riderToken } = setup();
+
+  const res = await patchMe(app, riderToken).send({ first_name: 'Poom', total_km: 99999 });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.first_name, 'Poom');
+  assert.equal(res.body.total_km, 0);
+});
+
+// ─── Usernames ──────────────────────────────────────────────────────────────
+
+test('a username already held by someone else is a 409', async () => {
+  const { app, riderToken, otherToken } = setup();
+
+  assert.equal((await patchMe(app, otherToken).send({ username: 'poom' })).status, 200);
+
+  const clash = await patchMe(app, riderToken).send({ username: 'poom' });
+  assert.equal(clash.status, 409);
+
+  // Case is not a way around it — "Poom" and "poom" would be one rider
+  // impersonating another.
+  const casedClash = await patchMe(app, riderToken).send({ username: 'PoOm' });
+  assert.equal(casedClash.status, 409);
+});
+
+test('keeping your own username is not a clash with yourself', async () => {
+  const { app, riderToken } = setup();
+
+  await patchMe(app, riderToken).send({ username: 'poom' });
+  const again = await patchMe(app, riderToken).send({ username: 'poom', first_name: 'Poom' });
+
+  assert.equal(again.status, 200);
+  assert.equal(again.body.username, 'poom');
+});
+
+test('usernames are checked for length and shape', async () => {
+  const { app, riderToken } = setup();
+  const rejected = ['ab', 'x'.repeat(21), 'has space', 'has@symbol', '.leading', 'trailing.', 'do..uble'];
+
+  for (const username of rejected) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 400, `expected ${JSON.stringify(username)} to be rejected`);
+  }
+
+  for (const username of ['abc', 'poom_rides', 'poom.rides', 'x'.repeat(20)]) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 200, `expected ${JSON.stringify(username)} to be accepted`);
+  }
+});
+
+// ─── Phone and birth date ───────────────────────────────────────────────────
+
+test('phone numbers are checked loosely but not blindly', async () => {
+  const { app, riderToken } = setup();
+
+  for (const phone of ['081-234-5678', '+66 81 234 5678', '0812345678', '+66812345678']) {
+    const res = await patchMe(app, riderToken).send({ phone });
+    assert.equal(res.status, 200, `expected ${phone} to be accepted`);
+  }
+
+  for (const phone of ['12345', 'not a phone', '+', '0812345678901234567890', 'abc-defg']) {
+    const res = await patchMe(app, riderToken).send({ phone });
+    assert.equal(res.status, 400, `expected ${JSON.stringify(phone)} to be rejected`);
+  }
+});
+
+test('birth dates must be real dates in the past', async () => {
+  const { app, riderToken } = setup();
+
+  assert.equal((await patchMe(app, riderToken).send({ birth_date: '1994-03-17' })).status, 200);
+
+  const nextYear = new Date();
+  nextYear.setUTCFullYear(nextYear.getUTCFullYear() + 1);
+  const rejected = [
+    '17/03/1994', // wrong format
+    '1994-3-7', // unpadded
+    '2025-02-30', // not a real day, and the one a regex alone lets through
+    '1800-01-01', // beyond a human lifetime
+    nextYear.toISOString().slice(0, 10),
+  ];
+
+  for (const birthDate of rejected) {
+    const res = await patchMe(app, riderToken).send({ birth_date: birthDate });
+    assert.equal(res.status, 400, `expected ${birthDate} to be rejected`);
+  }
+});
+
+test('PATCH /me needs a signed-in rider', async () => {
+  const { app } = setup();
+
+  assert.equal((await supertest(app).patch('/me').send({ first_name: 'Poom' })).status, 401);
+});

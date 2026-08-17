@@ -148,6 +148,54 @@ If you changed `PORT` away from the default `4100` in step 3, edit the
 sudo nano /etc/nginx/sites-enabled/api.ptrip.app.conf
 ```
 
+### Rider avatars — the one path you must edit by hand
+
+The config has a `location /uploads/` block that serves uploaded avatars
+straight off disk. It ships with a placeholder path that **will not work
+until you change it**:
+
+```nginx
+root /home/DEPLOY_USER/tracktrip;
+```
+
+There are two occurrences (the outer block and the inner one that matches
+the image files). Both must point at the **parent** of the directory the
+app writes to, because `root` appends the whole URI — `/uploads/avatars/x.jpg`
+is looked up as `<root>/uploads/avatars/x.jpg`.
+
+With the default `UPLOADS_DIR` and a deploy under `/root/tracktrip`, both
+lines become:
+
+```nginx
+root /root/tracktrip;
+```
+
+Then check that nginx's worker can actually read them. It runs as
+`www-data` on Ubuntu, so it needs execute permission on every directory
+down the path:
+
+```bash
+sudo -u www-data stat /root/tracktrip/uploads/avatars
+```
+
+If that says "Permission denied", the usual cause is a `700` home
+directory. Either open the path up (`chmod o+x /root /root/tracktrip`) or
+set `UPLOADS_DIR` in `.env` to somewhere world-traversable such as
+`/var/www/tracktrip/uploads`, create it with `mkdir -p`, `chown` it to the
+user PM2 runs the app as, and point both `root` lines at
+`/var/www/tracktrip`.
+
+Until this is done, uploading an avatar succeeds and the app stores it —
+the image just 404s when anything tries to display it. Nothing else
+breaks, so this is not a step that has to happen at the same moment as the
+code deploy.
+
+After editing, verify with a real file rather than by eye:
+
+```bash
+curl -sI https://api.ptrip.app/uploads/avatars/<some-uploaded-file>.jpg | head -1
+```
+
 **Always test the nginx config before reloading — every time, no
 exceptions.** A bad config that gets reloaded can take down
 `analytics` and `default` along with it:

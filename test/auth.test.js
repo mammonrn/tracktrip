@@ -235,8 +235,12 @@ test('PATCH /me validates display_name', async () => {
   const notAString = await authed().send({ display_name: 123 });
   assert.equal(notAString.status, 400);
 
+  // PATCH /me is a partial update: the profile screen sends what changed, so
+  // an empty body is a save with nothing in it rather than a malformed
+  // request. Sending display_name and getting it wrong is still an error —
+  // it is the one profile field that may be edited but not cleared.
   const missing = await authed().send({});
-  assert.equal(missing.status, 400);
+  assert.equal(missing.status, 200);
 
   const trimmed = await authed().send({ display_name: '  Valid Name  ' });
   assert.equal(trimmed.status, 200);
