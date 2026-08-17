@@ -53,7 +53,7 @@ class TripApiParsingTest {
     }
 
     @Test
-    fun `a trip with no name falls back rather than showing "null"`() {
+    fun `a trip with no name falls back rather than showing the word null`() {
         val trip = JSONObject("""{"id":3,"name":null,"owner_id":1,"status":"active","role":"owner"}""")
             .toTrip()
 
@@ -95,8 +95,9 @@ class TripApiParsingTest {
     @Test
     fun `GET positions parses a rider who has reported`() {
         val payload = """
-            [{"user_id":2,"display_name":"Friend","photo_url":null,"role":"member",
-              "is_sharing":true,"lat":19.1,"lng":99.2,"accuracy":null,"speed":22.4,
+            [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
+              "is_sharing":true,"sharing_until":"2026-08-17T17:18:22.441Z",
+              "lat":19.1,"lng":99.2,"accuracy":null,"speed":22.4,
               "heading":275.5,"battery_pct":63,"recorded_at":"2026-05-01T09:00:00.000Z"}]
         """.trimIndent()
 
@@ -104,8 +105,10 @@ class TripApiParsingTest {
 
         assertEquals(2L, member.userId)
         assertEquals("Friend", member.displayName)
-        assertNull(member.photoUrl)
+        assertEquals("friend.jpg", member.photoUrl)
         assertTrue(member.isSharing)
+        assertEquals("2026-08-17T17:18:22.441Z", member.sharingUntil)
+        assertFalse(member.isSharingIndefinitely)
         assertTrue(member.hasPosition)
         assertEquals(19.1, member.lat!!, 1e-9)
         assertEquals(99.2, member.lng!!, 1e-9)
@@ -115,14 +118,92 @@ class TripApiParsingTest {
     }
 
     @Test
+    fun `on a running trip every member reads as sharing, session or not`() {
+        // Verbatim GET /trips/1/positions on an ACTIVE trip: Friend has set a
+        // 4-hour session, Owner has set nothing, Quiet has never reported.
+        val payload = """
+            [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
+              "is_sharing":true,"sharing_until":"2026-08-17T17:18:22.441Z","lat":19.1,"lng":99.2,
+              "accuracy":null,"speed":22.4,"heading":275.5,"battery_pct":63,
+              "recorded_at":"2026-05-01T09:00:00.000Z"},
+             {"user_id":1,"display_name":"Owner","photo_url":"owner.jpg","role":"owner",
+              "is_sharing":true,"sharing_until":null,"lat":18.79,"lng":98.98,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":91,
+              "recorded_at":"2026-05-01T08:00:00.000Z"},
+             {"user_id":3,"display_name":"Quiet","photo_url":null,"role":"member",
+              "is_sharing":true,"sharing_until":null,"lat":null,"lng":null,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":null,"recorded_at":null}]
+        """.trimIndent()
+
+        val members = JSONArray(payload).map { it.toMemberPosition() }
+        assertEquals(3, members.size)
+        assertTrue(members.all { it.isSharing })
+
+        // A null sharing_until on a sharing rider means "no end time", which
+        // is why isSharing has to be read alongside it rather than inferred
+        // from it.
+        val owner = members.single { it.isOwner }
+        assertNull(owner.sharingUntil)
+        assertTrue(owner.isSharingIndefinitely)
+
+        val friend = members.single { it.userId == 2L }
+        assertFalse(friend.isSharingIndefinitely)
+    }
+
+    @Test
+    fun `after the trip ends only the riders who carried on read as sharing`() {
+        // Verbatim, same trip, after the owner ended it. Nothing about the
+        // rows changed except is_sharing — the positions are still there.
+        val payload = """
+            [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
+              "is_sharing":true,"sharing_until":"2026-08-17T17:18:22.441Z","lat":19.1,"lng":99.2,
+              "accuracy":null,"speed":22.4,"heading":275.5,"battery_pct":63,
+              "recorded_at":"2026-05-01T09:00:00.000Z"},
+             {"user_id":1,"display_name":"Owner","photo_url":"owner.jpg","role":"owner",
+              "is_sharing":false,"sharing_until":null,"lat":18.79,"lng":98.98,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":91,
+              "recorded_at":"2026-05-01T08:00:00.000Z"},
+             {"user_id":3,"display_name":"Quiet","photo_url":null,"role":"member",
+              "is_sharing":false,"sharing_until":null,"lat":null,"lng":null,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":null,"recorded_at":null}]
+        """.trimIndent()
+
+        val members = JSONArray(payload).map { it.toMemberPosition() }
+
+        val friend = members.single { it.userId == 2L }
+        assertTrue(friend.isSharing)
+        assertEquals("2026-08-17T17:18:22.441Z", friend.sharingUntil)
+        // Still on the map, just no longer live.
+        val owner = members.single { it.isOwner }
+        assertFalse(owner.isSharing)
+        assertFalse(owner.isSharingIndefinitely)
+        assertTrue(owner.hasPosition)
+
+        assertFalse(members.single { it.userId == 3L }.isSharing)
+    }
+
+    @Test
+    fun `a member row missing is_sharing is read as not sharing`() {
+        // Not a shape the backend sends, but the fallback matters: guessing
+        // "true" would paint a rider as live on the strength of a missing
+        // field.
+        val member = JSONObject(
+            """{"user_id":4,"display_name":"Unknown","role":"member","lat":null,"lng":null}"""
+        ).toMemberPosition()
+
+        assertFalse(member.isSharing)
+        assertNull(member.sharingUntil)
+    }
+
+    @Test
     fun `a member who has never reported parses with no position, not zeroes`() {
         // The backend lists every member, nulling the position fields for
         // anyone yet to report. Reading those as 0.0 would drop the rider on
         // the map off the coast of Africa.
         val payload = """
             {"user_id":3,"display_name":"Silent","photo_url":null,"role":"owner",
-             "is_sharing":true,"lat":null,"lng":null,"accuracy":null,"speed":null,
-             "heading":null,"battery_pct":null,"recorded_at":null}
+             "is_sharing":true,"sharing_until":null,"lat":null,"lng":null,"accuracy":null,
+             "speed":null,"heading":null,"battery_pct":null,"recorded_at":null}
         """.trimIndent()
 
         val member = JSONObject(payload).toMemberPosition()
@@ -139,7 +220,8 @@ class TripApiParsingTest {
     fun `a member with no display name still gets something to show`() {
         val member = JSONObject(
             """{"user_id":7,"display_name":null,"role":"member","is_sharing":true,
-                "lat":null,"lng":null,"battery_pct":null,"recorded_at":null}"""
+                "sharing_until":null,"lat":null,"lng":null,"battery_pct":null,
+                "recorded_at":null}"""
         ).toMemberPosition()
 
         assertEquals("Rider 7", member.label)

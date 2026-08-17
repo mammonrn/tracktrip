@@ -41,7 +41,21 @@ data class MemberPosition(
     val displayName: String?,
     val photoUrl: String?,
     val role: String,
+    /**
+     * Whether this rider may be reporting right now — the same question the
+     * backend's write guard answers. On a running trip that is everyone;
+     * once the trip has ended it is only those who chose to carry on.
+     */
     val isSharing: Boolean,
+    /**
+     * When this rider's own sharing session lapses, or null.
+     *
+     * Null covers two different things, which [isSharing] tells apart: no
+     * session at all, and a session set to run until the rider stops it. So
+     * "sharing, no end time" is `isSharing = true` with this null — not a
+     * missing value to fall back on.
+     */
+    val sharingUntil: String?,
     val lat: Double?,
     val lng: Double?,
     val batteryPct: Int?,
@@ -50,6 +64,9 @@ data class MemberPosition(
     val hasPosition: Boolean get() = lat != null && lng != null
     val isOwner: Boolean get() = role == Trip.ROLE_OWNER
     val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: "Rider $userId"
+
+    /** Sharing with no end time — the rider stops it by hand. */
+    val isSharingIndefinitely: Boolean get() = isSharing && sharingUntil == null
 }
 
 /** The profile screen's challenge widget, from GET /me/level. */
@@ -147,7 +164,10 @@ internal fun JSONObject.toMemberPosition() = MemberPosition(
     displayName = optStringOrNull("display_name"),
     photoUrl = optStringOrNull("photo_url"),
     role = optStringOrNull("role") ?: "member",
-    isSharing = optBoolean("is_sharing", true),
+    // Defaults to false: a member row that arrives without the field is
+    // safer read as "not sharing" than as a rider who might be live.
+    isSharing = optBoolean("is_sharing", false),
+    sharingUntil = optStringOrNull("sharing_until"),
     lat = optDoubleOrNull("lat"),
     lng = optDoubleOrNull("lng"),
     batteryPct = optIntOrNull("battery_pct"),
