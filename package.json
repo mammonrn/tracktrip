@@ -18,9 +18,15 @@
     "better-sqlite3": "^11.9.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.6.2",
+    "google-auth-library": "^11.0.2",
+    "jsonwebtoken": "^9.0.3",
     "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
   }
 }

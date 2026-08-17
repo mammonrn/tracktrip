@@ -1,17 +1,15 @@
 import http from 'node:http';
-import express from 'express';
 import { config } from './config.js';
 import { openDb } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
-import router from './routes/index.js';
+import { createApp } from './app.js';
+import { verifyGoogleIdToken } from './auth/google.js';
 import { attachWebSocketServer } from './ws/index.js';
 
 const db = openDb();
 runMigrations(db);
 
-const app = express();
-app.use(express.json());
-app.use(router);
+const app = createApp({ db, config, verifyGoogleIdToken });
 
 const server = http.createServer(app);
 attachWebSocketServer(server);

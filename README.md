@@ -3,8 +3,8 @@
 Backend for an Android app that shares rider positions among members of a
 motorcycle trip. Node.js + Express + better-sqlite3 + `ws`, run under PM2.
 
-This is the **scaffold**: project layout, DB schema, and migrations only.
-Auth and the live WebSocket position feed are not implemented yet.
+Google Sign-In based auth and a basic profile API are implemented. The live
+WebSocket position feed is still a stub.
 
 ## Stack
 
@@ -12,24 +12,65 @@ Auth and the live WebSocket position feed are not implemented yet.
 - SQLite via `better-sqlite3`
 - `ws` for the WebSocket server (stubbed for now)
 - PM2 for process management in production
+- Caddy as the reverse proxy / TLS terminator in front of the app
 
 ## Project layout
 
 ```
 src/
-  config.js        # reads .env
+  app.js            # Express app factory (used by both index.js and tests)
+  config.js         # reads .env
   db/
-    index.js       # better-sqlite3 connection
-    migrate.js      # migration runner (npm run migrate)
-    migrations/     # numbered .sql migration files
-    cleanup.js       # position_history retention cleanup logic
-  routes/           # HTTP routes (health check only so far)
-  ws/               # WebSocket server (stub)
+    index.js        # better-sqlite3 connection
+    migrate.js       # migration runner (npm run migrate)
+    migrations/      # numbered .sql migration files
+    cleanup.js        # position_history retention cleanup logic
+  auth/
+    google.js        # verifies Google ID tokens
+    jwt.js            # signs/verifies access tokens
+    refreshTokens.js  # issue/hash/rotate/revoke refresh tokens
+    users.js          # upsert user by google_sub
+    middleware.js      # requireAuth Express middleware
+    serializeUser.js   # shapes a user row for API responses
+  routes/
+    index.js          # health check
+    auth.js            # POST /auth/google, /auth/refresh, /auth/logout
+    me.js               # GET/PATCH /me
+  ws/                # WebSocket server (stub)
 scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
 test/                 # node:test unit tests
 data/                 # SQLite DB file lives here (gitignored)
+Caddyfile             # reverse proxy config for api.ptrip.app
 ```
+
+## API
+
+### Auth
+
+- `POST /auth/google` — body `{ idToken }`. Verifies the Google ID token,
+  upserts the user by `google_sub`, and returns
+  `{ accessToken, refreshToken, user }`.
+- `POST /auth/refresh` — body `{ refreshToken }`. Rotates the refresh token
+  (the old one is revoked immediately) and returns a new
+  `{ accessToken, refreshToken }` pair. Presenting a refresh token that was
+  already revoked/rotated is treated as token theft: every refresh token for
+  that user is revoked.
+- `POST /auth/logout` — body `{ refreshToken }`. Revokes that refresh token.
+
+All `/auth/*` routes are rate-limited to 20 requests/minute per IP.
+
+### Profile
+
+Requires `Authorization: Bearer <accessToken>`.
+
+- `GET /me` — current user.
+- `PATCH /me` — body `{ display_name }` (1–40 characters after trimming).
+  Photo uploads aren't supported yet; `photo_url` can't be changed via the API.
+
+Access tokens are JWTs valid for 1 hour. Refresh tokens are opaque 32-byte
+random values valid for 60 days; only their SHA-256 hash is stored in the
+`refresh_tokens` table.
 
 ## Setup
 
@@ -93,8 +134,21 @@ same box without colliding:
    pm2 start ecosystem.config.cjs
    pm2 save
    ```
-4. Put a reverse proxy (nginx, etc.) in front if the app needs to be
-   reachable on 80/443, forwarding to the `PORT` from `.env`.
+4. Put Caddy in front so the app is reachable at `https://api.ptrip.app`.
+   The included `Caddyfile` reverse-proxies that domain to
+   `localhost:<PORT>` (match the port to your `.env` if you didn't use the
+   default `4100`) and Caddy will request/renew the TLS certificate
+   automatically — this **requires DNS for `api.ptrip.app` to point at the
+   VPS and ports 80 and 443 to be open** (allow them in `ufw`/your cloud
+   firewall if they aren't already). If Caddy isn't already running on the
+   box:
+   ```bash
+   sudo cp Caddyfile /etc/caddy/Caddyfile   # or append this site block to the existing one
+   sudo systemctl reload caddy
+   ```
+   If another site already runs on this Caddy instance, merge the
+   `api.ptrip.app { ... }` block into the existing Caddyfile instead of
+   overwriting it.
 5. Schedule `npm run cleanup -- --confirm` periodically (e.g. a daily
    cron entry or a PM2 cron restart job) to enforce
    `HISTORY_RETENTION_DAYS`.
@@ -107,7 +161,7 @@ All variables are documented in `.env.example`:
 |----------------------------|-------------------------------------------------------------------------------|-----------------------------|
 | `PORT`                    | Port the Express + WebSocket server listens on. Choose one free on the VPS. | `4100`                     |
 | `JWT_SECRET`              | Secret used to sign/verify JWTs issued to the Android app.                 | *(required, no default)*   |
-| `GOOGLE_CLIENT_ID`        | OAuth client ID used to verify Google Sign-In tokens from the app.         | *(required, no default)*   |
+| `GOOGLE_CLIENT_ID`        | Comma-separated OAuth client ID(s) accepted when verifying Google Sign-In tokens (e.g. web + Android client IDs). | *(required, no default)*   |
 | `DB_PATH`                 | Path to the SQLite database file.                                          | `./data/trip-tracker.db`   |
 | `HISTORY_RETENTION_DAYS`  | Days of `position_history` to keep for ended trips before cleanup deletes it. | `30`                     |
 
