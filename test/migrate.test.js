@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 
@@ -7,6 +10,20 @@ function freshDb() {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   return db;
+}
+
+/**
+ * Applies only the migrations that sort before `cutoff`, through a directory
+ * holding just those files — the state a database deployed before `cutoff`
+ * is actually in. Returns a cleanup function.
+ */
+function migrateUpTo(db, cutoff) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracktrip-migrations-'));
+  for (const file of fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql') && f < cutoff)) {
+    fs.copyFileSync(path.join(MIGRATIONS_DIR, file), path.join(dir, file));
+  }
+  runMigrations(db, dir);
+  return () => fs.rmSync(dir, { recursive: true, force: true });
 }
 
 test('runMigrations creates the schema_migrations table and applies pending migrations', () => {
@@ -61,6 +78,40 @@ test('expected indexes exist', () => {
   assert.ok(indexes.includes('idx_position_history_trip_user_time'));
   assert.ok(indexes.includes('idx_trips_owner_status'));
   assert.ok(indexes.includes('idx_trip_invites_email_status'));
+});
+
+test('0004 upgrades a database that already holds invites, without losing them', () => {
+  const db = freshDb();
+  const cleanup = migrateUpTo(db, '0004');
+  try {
+    const ownerId = Number(
+      db.prepare("INSERT INTO users (google_sub, email) VALUES ('sub-owner', 'owner@gmail.com')").run()
+        .lastInsertRowid
+    );
+    const tripId = Number(
+      db.prepare("INSERT INTO trips (name, owner_id) VALUES ('Legacy ride', ?)").run(ownerId)
+        .lastInsertRowid
+    );
+    // Written before invite emails were normalized on the way in.
+    const inviteId = Number(
+      db
+        .prepare('INSERT INTO trip_invites (trip_id, email, invited_by) VALUES (?, ?, ?)')
+        .run(tripId, '  Friend@GMail.com ', ownerId).lastInsertRowid
+    );
+
+    const applied = runMigrations(db, MIGRATIONS_DIR);
+    assert.deepEqual(applied, ['0004_trip_invites_accept.sql']);
+
+    const invite = db.prepare('SELECT * FROM trip_invites WHERE id = ?').get(inviteId);
+    assert.equal(invite.email, 'friend@gmail.com'); // backfilled to match new writes
+    assert.equal(invite.status, 'pending'); // and otherwise untouched
+    assert.equal(invite.accepted_at, null);
+    assert.equal(invite.accepted_by, null);
+
+    assert.equal(runMigrations(db, MIGRATIONS_DIR).length, 0);
+  } finally {
+    cleanup();
+  }
 });
 
 test('trips.status CHECK constraint rejects invalid values', () => {
