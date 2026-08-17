@@ -1,0 +1,9 @@
+# Reverse proxy for the trip-tracker API. Caddy provisions and renews the
+# TLS certificate for api.ptrip.app automatically (via Let's Encrypt) the
+# first time it starts, as long as DNS for the domain points at this VPS
+# and ports 80/443 are reachable.
+#
+# If you change PORT in .env, update the port below to match.
+api.ptrip.app {
+	reverse_proxy localhost:4100
+}
