@@ -18,16 +18,48 @@ android {
         versionName = "0.1.0"
     }
 
+    // Optional pinned debug keystore.
+    //
+    // By default AGP signs debug builds with ~/.android/debug.keystore and
+    // generates that file if it's missing. On an ephemeral CI runner it's
+    // always missing, so every build gets a brand-new key with a different
+    // SHA-1 — which Google Sign-In rejects, because only registered
+    // certificate fingerprints are allowed to request tokens.
+    //
+    // Point DEBUG_KEYSTORE_PATH at a keystore to sign debug builds with a
+    // stable, registered certificate instead. Left unset, behaviour is
+    // unchanged.
+    val debugKeystorePath = providers.environmentVariable("DEBUG_KEYSTORE_PATH").orNull
+    val pinnedDebugKeystore = debugKeystorePath
+        ?.takeIf { it.isNotBlank() }
+        ?.let(::file)
+        ?.takeIf { it.isFile }
+
     signingConfigs {
         // Release signing is intentionally not configured yet — the keystore is
         // kept off git and off CI. See android/README.md for how to wire it up
         // via GitHub Secrets later.
+
+        if (pinnedDebugKeystore != null) {
+            create("debugPinned") {
+                storeFile = pinnedDebugKeystore
+                // Defaults match Android's standard debug keystore, so only a
+                // non-standard keystore needs the env vars set.
+                storePassword =
+                    providers.environmentVariable("DEBUG_KEYSTORE_PASSWORD").orNull ?: "android"
+                keyAlias =
+                    providers.environmentVariable("DEBUG_KEY_ALIAS").orNull ?: "androiddebugkey"
+                keyPassword =
+                    providers.environmentVariable("DEBUG_KEY_PASSWORD").orNull ?: "android"
+            }
+        }
     }
 
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
+            signingConfigs.findByName("debugPinned")?.let { signingConfig = it }
         }
         release {
             isMinifyEnabled = false

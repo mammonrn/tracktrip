@@ -307,6 +307,75 @@ keytool -list -v -keystore ~/.android/debug.keystore \
 
 ---
 
+## CI debug signing — pinning the debug keystore
+
+By default AGP signs debug builds with `~/.android/debug.keystore`, creating
+it if missing. A CI runner is a fresh machine every time, so **every CI build
+got a different debug certificate**. Measured on two runs of `main`:
+
+| Build | SHA-1 |
+|---|---|
+| CI run #14 | `5E:19:47:9A:7B:98:3A:50:37:40:A7:21:24:B7:05:F4:37:C2:23:2B` |
+| CI run #8 | `4A:CC:F5:8A:18:01:AD:09:5B:36:4E:1D:13:A4:C1:7C:C2:95:45:17` |
+| Poom's machine | `03:21:F8:4C:C1:3C:2E:A0:29:C3:9C:97:61:C9:67:46:3F:CE:11:E4` |
+
+Google Sign-In only issues tokens to a package name + certificate fingerprint
+registered in Cloud Console, so a CI APK could never sign in — and registering
+one CI fingerprint wouldn't help, since the next build changes it again.
+
+The build now accepts a **pinned** debug keystore. Set
+`DEBUG_KEYSTORE_PATH` (plus `DEBUG_KEYSTORE_PASSWORD`, `DEBUG_KEY_ALIAS`,
+`DEBUG_KEY_PASSWORD` if they aren't the Android defaults) and debug builds are
+signed with it. Unset, behaviour is exactly as before.
+
+CI reads it from the `ANDROID_DEBUG_KEYSTORE_BASE64` secret. **Until that
+secret exists, CI keeps building but the APK still can't sign in** — the run
+is annotated with a warning and the job summary says so.
+
+### Creating the secret (Windows, PowerShell)
+
+Do this once, on the machine whose debug keystore is registered in Cloud
+Console:
+
+```powershell
+# 1. Confirm this is the right keystore — the SHA-1 must match what's
+#    registered in Google Cloud Console for app.ptrip.tracktrip.debug
+keytool -list -v -keystore "$env:USERPROFILE\.android\debug.keystore" `
+  -alias androiddebugkey -storepass android | Select-String "SHA1:"
+
+# 2. Base64-encode it to a single line
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) `
+  | Set-Content -NoNewline "$env:USERPROFILE\debug.keystore.b64"
+
+# 3. Copy to clipboard
+Get-Content "$env:USERPROFILE\debug.keystore.b64" | Set-Clipboard
+```
+
+macOS/Linux equivalent:
+
+```bash
+keytool -list -v -keystore ~/.android/debug.keystore \
+  -alias androiddebugkey -storepass android | grep SHA1:
+base64 -w0 ~/.android/debug.keystore | pbcopy   # Linux: | xclip -selection clipboard
+```
+
+Then in **Settings → Secrets and variables → Actions → New repository
+secret**:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_DEBUG_KEYSTORE_BASE64` | the base64 string |
+| `ANDROID_DEBUG_KEYSTORE_PASSWORD` | *(optional — defaults to `android`)* |
+| `ANDROID_DEBUG_KEY_ALIAS` | *(optional — defaults to `androiddebugkey`)* |
+| `ANDROID_DEBUG_KEY_PASSWORD` | *(optional — defaults to `android`)* |
+
+Delete the `.b64` file afterwards. Then re-run the workflow: every run prints
+the signing SHA-1 to the job summary, so you can confirm it matches.
+
+A debug keystore isn't really a secret — its password is the publicly known
+`android` and it has no security value — but keeping it out of the repo avoids
+confusing it with the release keystore, which genuinely must never be shared.
+
 ## Adding release signing later (not done in this change)
 
 Release signing is intentionally **not** configured yet, because the keystore
