@@ -107,6 +107,9 @@
       from distance along a road — the app has no route to measure against.
       The row says so, because a bare "in front first" would read as a fact.
     -->
+    <!-- Under a start/finish flag whose coordinate was set without a name. -->
+    <string name="map_origin">Start</string>
+    <string name="map_destination">Finish</string>
     <string name="map_order_leader_first">In front first · estimated from heading</string>
 
     <!-- Location permission -->

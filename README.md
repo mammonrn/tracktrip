@@ -145,11 +145,48 @@ its owner (`trips.owner_id`) and its first member; everyone else joins by
 accepting an emailed invite. All routes require
 `Authorization: Bearer <accessToken>`.
 
-- `POST /trips` — body `{ name }` (1–60 characters after trimming). Returns
-  `201` with the trip. The caller becomes the owner and is written into
-  `trip_members` with `role = 'owner'` in the same transaction.
+- `POST /trips` — body `{ name }` (1–60 characters after trimming), plus an
+  optional `origin` and `destination` (see below). Returns `201` with the
+  trip. The caller becomes the owner and is written into `trip_members` with
+  `role = 'owner'` in the same transaction.
 - `GET /trips` — the caller's trips (owned **and** joined), newest first, each
   with the caller's own `role`.
+
+#### Where a trip starts and ends
+
+Every trip carries an optional `origin` and `destination`, serialized as
+either `null` or `{ lat, lng, label }`:
+
+```json
+{
+  "id": 1, "name": "Pai loop", "status": "active", "role": "owner",
+  "origin": { "lat": 18.7883, "lng": 98.9853, "label": "Chiang Mai" },
+  "destination": { "lat": 19.3583, "lng": 98.4406, "label": "Pai" }
+}
+```
+
+These are **columns on `trips`** (migration `0009`), not rows in
+`trip_waypoints`. A trip has at most one of each, ever — as columns the schema
+enforces that, where as rows it would be a rule in application code that the
+first client to post twice would break. Waypoints are the opposite shape:
+a list, ordered, added and deleted freely mid-ride.
+
+Both are nullable and independent: setting off from a known place with no plan
+is an ordinary way to ride, and so is naming a destination before deciding
+where to meet. `label` is optional too — a point dropped on the map may have
+no name, and the app draws "Start"/"Finish" under it instead. A coordinate
+missing its other half is **refused**, not stored: half a position is not a
+place, and it would reach the map as a pin in the Gulf of Guinea.
+
+- `PATCH /trips/:id` — **owner only**. Sets or clears either end.
+
+  A partial update, and that is the point of it being a PATCH: a field left
+  out is left alone, and sending it as `null` clears it. A PUT would make
+  "set the destination" indistinguishable from "wipe the origin". An empty
+  body is a no-op rather than an error.
+
+  Allowed on an **ended** trip: filling in where a ride actually finished is
+  something people do afterwards, and it writes no position.
 - `POST /trips/:id/invites` — **owner only**; body `{ email }`. Returns `201`
   with the invite. Any other member, or a non-member, gets `403`.
 

@@ -34,8 +34,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.CameraTarget
+import app.ptrip.tracktrip.map.EndpointMarker
 import app.ptrip.tracktrip.map.FALLBACK_CENTRE
 import app.ptrip.tracktrip.map.FALLBACK_ZOOM
 import app.ptrip.tracktrip.map.LatLng
@@ -151,6 +153,7 @@ fun TripMapScreen(
                 RiderMap(
                     members = state.placed,
                     waypoints = state.waypoints.all,
+                    trip = state.trip,
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = { focused = it },
@@ -277,6 +280,7 @@ private const val MEMBER_LIST_WEIGHT = 0.55f
 private fun RiderMap(
     members: List<MemberPosition>,
     waypoints: List<Waypoint>,
+    trip: Trip?,
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
@@ -319,6 +323,12 @@ private fun RiderMap(
     // Kept apart from the rider markers so the two can never be confused for
     // one another — by this code or by the person reading the screen.
     val waypointMarkers = remember { mutableListOf<Marker>() }
+    val endpointMarkers = remember { mutableListOf<Marker>() }
+
+    // The flags fall back to a word when the owner set a coordinate but no
+    // name, which is what dropping one on the map gives you.
+    val originFallback = stringResource(R.string.map_origin)
+    val destinationFallback = stringResource(R.string.map_destination)
     var framedOnRiders by remember { mutableStateOf(false) }
     var framedOnMe by remember { mutableStateOf(false) }
 
@@ -356,6 +366,12 @@ private fun RiderMap(
     // enough of them that redrawing costs nothing.
     LaunchedEffect(waypoints) {
         syncWaypoints(mapView, waypoints, waypointMarkers)
+    }
+
+    // The two ends of the trip. They change only when the owner edits them, so
+    // they are keyed on the pair rather than redrawn with every poll.
+    LaunchedEffect(trip?.origin, trip?.destination) {
+        syncEndpoints(mapView, trip, endpointMarkers, originFallback, destinationFallback)
     }
 
     // The opening camera: it follows this phone's own position while the trip
@@ -482,6 +498,50 @@ private fun syncWaypoints(
             title = waypoint.name
             // Tapping a stop does nothing: it is not a rider, so there is no
             // row to highlight, and the name is already drawn on the pin.
+            setOnMarkerClickListener { _, _ -> true }
+        }
+        drawn.add(marker)
+        view.overlays.add(marker)
+    }
+
+    view.invalidate()
+}
+
+/**
+ * Draws the trip's origin and destination, replacing whatever was drawn before.
+ *
+ * Both are optional and independent: a group that set off from a known place
+ * with no plan gets one flag, and a trip nobody has filled in gets none. A
+ * flag with a coordinate but no name still needs *something* under it, so it
+ * falls back to the word for which end it is.
+ */
+private fun syncEndpoints(
+    view: MapView,
+    trip: Trip?,
+    drawn: MutableList<Marker>,
+    originFallback: String,
+    destinationFallback: String,
+) {
+    drawn.forEach { view.overlays.remove(it) }
+    drawn.clear()
+
+    val ends = listOfNotNull(
+        trip?.origin?.let { Triple(EndpointMarker.Kind.ORIGIN, it, originFallback) },
+        trip?.destination?.let { Triple(EndpointMarker.Kind.DESTINATION, it, destinationFallback) },
+    )
+
+    ends.forEach { (kind, endpoint, fallback) ->
+        val marker = Marker(view).apply {
+            position = GeoPoint(endpoint.lat, endpoint.lng)
+            setAnchor(Marker.ANCHOR_CENTER, EndpointMarker.anchorV(view.resources))
+            icon = EndpointMarker.forEndpoint(
+                kind = kind,
+                label = endpoint.label?.takeIf { it.isNotBlank() } ?: fallback,
+                resources = view.resources,
+            )
+            title = endpoint.label ?: fallback
+            // Fixed geography: there is no row to highlight and nothing to say
+            // that the flag is not already saying.
             setOnMarkerClickListener { _, _ -> true }
         }
         drawn.add(marker)

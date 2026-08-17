@@ -46,16 +46,112 @@ export function validateTripInput(body) {
   return { value: { name: trimmed } };
 }
 
+const LABEL_MAX_LENGTH = 120;
+
+/**
+ * Validates one end of a trip — `origin` or `destination` in a request body.
+ *
+ * Three outcomes, and they are all different things:
+ *
+ *  - the field was **absent**: `{ value: undefined }`, meaning leave whatever
+ *    is stored alone;
+ *  - the field was **null**: `{ value: null }`, meaning clear it;
+ *  - the field was an **object**: `{ value: { lat, lng, label } }`.
+ *
+ * A coordinate without its other half is refused rather than stored: half a
+ * position is not a place, and it would reach the map as a pin in the Gulf of
+ * Guinea. The label is optional — a rider dropping a destination from the map
+ * may not have a name for it — but a label on its own is refused for the same
+ * reason, since there would be nothing to draw.
+ */
+export function validateTripEndpoint(payload, field) {
+  if (!Object.prototype.hasOwnProperty.call(payload, field)) {
+    return { value: undefined };
+  }
+
+  const raw = payload[field];
+  if (raw === null) {
+    return { value: null };
+  }
+
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: `${field} must be an object with lat and lng, or null` };
+  }
+
+  const { lat, lng } = raw;
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+    return { error: `${field}.lat must be a number between -90 and 90` };
+  }
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+    return { error: `${field}.lng must be a number between -180 and 180` };
+  }
+
+  let label = null;
+  if (raw.label !== undefined && raw.label !== null) {
+    if (typeof raw.label !== 'string') {
+      return { error: `${field}.label must be a string` };
+    }
+    const trimmed = raw.label.trim();
+    if (trimmed.length > LABEL_MAX_LENGTH) {
+      return { error: `${field}.label must be at most ${LABEL_MAX_LENGTH} characters` };
+    }
+    label = trimmed.length > 0 ? trimmed : null;
+  }
+
+  return { value: { lat, lng, label } };
+}
+
+/**
+ * Reads `origin` and `destination` off a body, in the three-way shape
+ * [validateTripEndpoint] returns.
+ */
+export function validateTripEndpoints(body) {
+  const payload = body || {};
+  const origin = validateTripEndpoint(payload, 'origin');
+  if (origin.error) {
+    return { error: origin.error };
+  }
+  const destination = validateTripEndpoint(payload, 'destination');
+  if (destination.error) {
+    return { error: destination.error };
+  }
+  return { value: { origin: origin.value, destination: destination.value } };
+}
+
+/**
+ * Turns a validated endpoint into the three columns it occupies.
+ * `undefined` contributes nothing, so an untouched field is left alone.
+ */
+function endpointColumns(field, value) {
+  if (value === undefined) {
+    return {};
+  }
+  if (value === null) {
+    return { [`${field}_lat`]: null, [`${field}_lng`]: null, [`${field}_label`]: null };
+  }
+  return {
+    [`${field}_lat`]: value.lat,
+    [`${field}_lng`]: value.lng,
+    [`${field}_label`]: value.label,
+  };
+}
+
 export function createTripsRouter({ db, config }) {
   const router = Router();
   const auth = requireAuth(db, config);
 
   // The trip and its owner membership must land together — a trip whose owner
   // isn't in trip_members would be invisible to every membership check.
-  const insertTrip = db.transaction((name, ownerId) => {
+  const insertTrip = db.transaction((name, ownerId, endpoints) => {
+    const columns = { ...endpointColumns('origin', endpoints.origin ?? null) };
+    Object.assign(columns, endpointColumns('destination', endpoints.destination ?? null));
+
+    const names = ['name', 'owner_id', ...Object.keys(columns)];
     const result = db
-      .prepare('INSERT INTO trips (name, owner_id) VALUES (?, ?)')
-      .run(name, ownerId);
+      .prepare(
+        `INSERT INTO trips (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`
+      )
+      .run(name, ownerId, ...Object.values(columns));
     const tripId = Number(result.lastInsertRowid);
     db.prepare("INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'owner')").run(
       tripId,
@@ -64,15 +160,61 @@ export function createTripsRouter({ db, config }) {
     return tripId;
   });
 
+  /**
+   * Creates a trip. `origin` and `destination` are optional here — a rider
+   * naming a trip from the trip list often has no idea where it is going yet,
+   * and PATCH below is how they fill it in later.
+   */
   router.post('/trips', auth, (req, res) => {
     const { error, value } = validateTripInput(req.body);
     if (error) {
       return res.status(400).json({ error });
     }
 
-    const tripId = insertTrip(value.name, req.user.id);
+    const endpoints = validateTripEndpoints(req.body);
+    if (endpoints.error) {
+      return res.status(400).json({ error: endpoints.error });
+    }
+
+    const tripId = insertTrip(value.name, req.user.id, endpoints.value);
     const created = db.prepare('SELECT * FROM trips WHERE id = ?').get(tripId);
     res.status(201).json(serializeTrip(created, { role: 'owner' }));
+  });
+
+  /**
+   * Sets or clears where a trip starts and ends.
+   *
+   * A partial update: a field left out is left alone, and sending it as
+   * `null` clears it. That distinction is the whole reason this is a PATCH —
+   * a PUT would make "I only want to set the destination" indistinguishable
+   * from "I want to wipe the origin".
+   *
+   * Owner-only, matching every other edit to the trip itself. Allowed on an
+   * ended trip on purpose: filling in where a ride actually finished is
+   * something people do afterwards, and the write guard that stops position
+   * reports has nothing to do with it.
+   */
+  router.patch('/trips/:id', auth, requireTripOwner(db), (req, res) => {
+    const { error, value } = validateTripEndpoints(req.body);
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    const columns = { ...endpointColumns('origin', value.origin) };
+    Object.assign(columns, endpointColumns('destination', value.destination));
+
+    const fields = Object.keys(columns);
+    if (fields.length > 0) {
+      db.prepare(`UPDATE trips SET ${fields.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`).run(
+        ...fields.map((f) => columns[f]),
+        req.trip.id
+      );
+    }
+
+    const updated = db.prepare('SELECT * FROM trips WHERE id = ?').get(req.trip.id);
+    // The caller is the owner — requireTripOwner just proved it — so the role
+    // is known without another query.
+    res.json(serializeTrip(updated, { role: 'owner' }));
   });
 
   router.get('/trips', auth, (req, res) => {
