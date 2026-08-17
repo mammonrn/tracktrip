@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
+import { requireActiveTrip } from '../auth/tripStatus.js';
 
 const NAME_MIN_LENGTH = 1;
 const NAME_MAX_LENGTH = 60;
@@ -76,7 +77,8 @@ export function createWaypointsRouter({ db, config }) {
   const router = Router();
   router.use('/trips/:id/waypoints', requireAuth(db, config), requireTripMembership(db));
 
-  router.post('/trips/:id/waypoints', (req, res) => {
+  // Reads stay open on an ended trip; writes don't.
+  router.post('/trips/:id/waypoints', requireActiveTrip(), (req, res) => {
     const { error, value } = validateWaypointInput(req.body);
     if (error) {
       return res.status(400).json({ error });
@@ -126,7 +128,7 @@ export function createWaypointsRouter({ db, config }) {
     });
   });
 
-  router.delete('/trips/:id/waypoints/:wpId', (req, res) => {
+  router.delete('/trips/:id/waypoints/:wpId', requireActiveTrip(), (req, res) => {
     const waypointId = Number(req.params.wpId);
     if (!Number.isInteger(waypointId) || waypointId <= 0) {
       return res.status(400).json({ error: 'invalid waypoint id' });
