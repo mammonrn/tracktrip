@@ -34,6 +34,8 @@ import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AppContainer
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.location.LocationFix
+import app.ptrip.tracktrip.map.LatLng
+import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
@@ -67,6 +69,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 private const val CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
+
+/**
+ * How often the map screen re-reads the phone's own cached fix.
+ *
+ * Frequent enough that the speed in the top bar keeps up with a bike, cheap
+ * enough to be free: this reads a value the system already holds and never
+ * asks a provider for anything.
+ */
+private const val OWN_FIX_POLL_MS = 5_000L
 
 /**
  * Sanity-checks the configured web client ID before handing it to Google.
@@ -457,6 +468,34 @@ private fun SignedInNavigation(
             val scope = rememberCoroutineScope()
 
             /**
+             * This phone's own latest fix, re-read every few seconds.
+             *
+             * The cached one, never a fresh request: it costs nothing, it is
+             * already being kept up to date by the sharing service while a
+             * rider is sharing, and asking the GPS for its own sake would
+             * undo the battery budget the ten-minute reporting cadence buys.
+             *
+             * It feeds two things the server cannot: the camera's opening
+             * position before anyone has reported, and the rider's own speed
+             * in the top bar — which has to be *now*, not from a poll that is
+             * up to ten minutes old.
+             */
+            var myFix by remember { mutableStateOf<android.location.Location?>(null) }
+            LaunchedEffect(screen.tripId) {
+                while (true) {
+                    myFix = LocationFix.lastKnown(context)
+                    kotlinx.coroutines.delay(OWN_FIX_POLL_MS)
+                }
+            }
+            val myLocation = myFix?.let { LatLng(it.latitude, it.longitude) }
+            val mySpeedKmh = myFix?.let { fix ->
+                Speed.ownKmh(
+                    metresPerSecond = fix.speed.takeIf { fix.hasSpeed() },
+                    fixAgeMs = System.currentTimeMillis() - fix.time,
+                )
+            }
+
+            /**
              * Where the rider is, best effort: the phone's own idea first,
              * falling back to the position the server last heard from them —
              * which is the one thing that works with location switched off.
@@ -494,6 +533,8 @@ private fun SignedInNavigation(
                 state = mapState,
                 currentUserId = profile?.id,
                 centreOn = centreOn,
+                myLocation = myLocation,
+                mySpeedKmh = mySpeedKmh,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
                     if (LocationFix.hasPermission(context)) centreOnMe() else requestLocation()
