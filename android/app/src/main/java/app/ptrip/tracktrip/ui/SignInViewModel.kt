@@ -14,7 +14,22 @@ sealed interface SignInUiState {
     data object SignedOut : SignInUiState
     data object Loading : SignInUiState
     data class Error(val message: String) : SignInUiState
-    data class SignedIn(val displayName: String?) : SignInUiState
+
+    /**
+     * Everything the app knows about who is signed in.
+     *
+     * All three are nullable, and all three are null on a restart that comes
+     * straight in on stored tokens — the profile is only handed over by the
+     * sign-in response.
+     *
+     * TODO: call GET /me on start-up so the settings screen shows a name and
+     * photo after a restart too, instead of only in the session that signed in.
+     */
+    data class SignedIn(
+        val displayName: String?,
+        val email: String? = null,
+        val photoUrl: String? = null,
+    ) : SignInUiState
 }
 
 class SignInViewModel(
@@ -39,7 +54,11 @@ class SignInViewModel(
             try {
                 val session = authApi.signInWithGoogle(idToken)
                 tokenStore.saveTokens(session.accessToken, session.refreshToken)
-                _uiState.value = SignInUiState.SignedIn(session.displayName)
+                _uiState.value = SignInUiState.SignedIn(
+                    displayName = session.displayName,
+                    email = session.email,
+                    photoUrl = session.photoUrl,
+                )
             } catch (e: AuthApiException) {
                 _uiState.value = SignInUiState.Error(e.message ?: "Sign-in failed.")
             } catch (e: Exception) {

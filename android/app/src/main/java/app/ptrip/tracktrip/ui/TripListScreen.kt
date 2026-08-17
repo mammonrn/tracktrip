@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,11 +28,16 @@ import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudEmpty
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudGearIcon
+import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
+import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudText
 import app.ptrip.tracktrip.ui.theme.HudTextDim
+import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
 /**
@@ -51,27 +53,20 @@ fun TripListScreen(
     onCreateTrip: () -> Unit,
     onAcceptInvite: (Invite) -> Unit,
     onRefresh: () -> Unit,
-    onSignOut: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        HudTopBar(
+            title = stringResource(R.string.trips_title),
+            subtitle = displayName?.let { stringResource(R.string.signed_in_as, it) }
+                ?: stringResource(R.string.signed_in),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.trips_title).uppercase(),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = HudAmber,
-                )
-                Text(
-                    text = displayName?.let { stringResource(R.string.signed_in_as, it) }
-                        ?: stringResource(R.string.signed_in),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = HudTextDim,
-                )
-            }
+            HudIconButton(
+                onClick = onOpenSettings,
+                contentDescription = stringResource(R.string.settings_title),
+                icon = { HudGearIcon() },
+            )
         }
 
         state.error?.let { HudError(it) }
@@ -121,15 +116,15 @@ fun TripListScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(onClick = onCreateTrip, modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.new_trip))
-            }
-            OutlinedButton(onClick = onRefresh) {
-                Text(stringResource(R.string.refresh))
-            }
-            TextButton(onClick = onSignOut) {
-                Text(stringResource(R.string.sign_out))
-            }
+            HudPrimaryButton(
+                text = stringResource(R.string.new_trip),
+                onClick = onCreateTrip,
+                modifier = Modifier.weight(1f),
+            )
+            HudSecondaryButton(
+                text = stringResource(R.string.refresh),
+                onClick = onRefresh,
+            )
         }
     }
 }
@@ -194,15 +189,16 @@ private fun InviteCard(invite: Invite, accepting: Boolean, onAccept: () -> Unit)
                     CircularProgressIndicator(color = HudCyan, strokeWidth = 2.dp)
                 }
             } else {
-                Button(onClick = onAccept) {
-                    Text(stringResource(R.string.accept_invite))
-                }
+                HudPrimaryButton(
+                    text = stringResource(R.string.accept_invite),
+                    onClick = onAccept,
+                )
             }
         }
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF04070B)
+@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
 @Composable
 private fun TripListPreview() {
     TracktripTheme {
@@ -220,7 +216,7 @@ private fun TripListPreview() {
             onCreateTrip = {},
             onAcceptInvite = {},
             onRefresh = {},
-            onSignOut = {},
+            onOpenSettings = {},
         )
     }
 }

@@ -6,7 +6,8 @@ project.
 
 **Current state:** signed-in riders can see their trips, create one, accept
 an invitation, and open a trip to invite riders by email, see who's on it, and
-(as owner) end it. Live tracking and the profile screen are not here yet.
+(as owner) end it. There is a settings screen for the profile, language and
+sharing defaults, and signing out. Live tracking is not here yet.
 
 Google sign-in is wired end to end — Credential Manager obtains a Google ID
 token, it's exchanged at the backend's `POST /auth/google`, and the returned
@@ -21,12 +22,39 @@ inline message rather than crashing.
 | Trip list, with pending invitations above it | `GET /trips`, `GET /invites`, `POST /invites/:id/accept` |
 | Create trip | `POST /trips` |
 | Trip detail — members, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end` |
+| Settings — profile, language, sharing default, sign out | nothing yet |
+
+Reached by the gear in the trip list's header. Signing out lives there, not on
+the trip list: it is the app's one destructive control, and it belongs behind a
+screen the rider opens deliberately.
 
 Navigation is a plain sealed `Screen` hierarchy over a small [`BackStack`](
 app/src/main/java/app/ptrip/tracktrip/ui/Navigation.kt), wired to the system
 back button through `BackHandler` — not Navigation Compose. Five screens and
 one argument don't need a route DSL, and at the time of writing the only
 published `navigation-compose` builds were 2.10.0 pre-releases.
+
+## The look
+
+A heads-up display: deep navy ground, amber for primary actions and headings,
+cyan for secondary actions and anything live, ember for destructive ones.
+Buttons are pills with a drawn glow, dividers are translucent accent rather
+than grey, and headings run monospaced and widely tracked.
+
+Every colour is defined in [`ui/theme/Theme.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/theme/Theme.kt) and nowhere else, so
+retuning the palette is one file. Screens compose the shared pieces in
+[`ui/theme/HudComponents.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/theme/HudComponents.kt) — buttons,
+panels, dividers, top bar — rather than styling controls themselves. The icons
+in [`ui/theme/HudIcons.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/theme/HudIcons.kt) are drawn on a
+`Canvas`, which keeps their stroke weight on the same footing as the rest of
+the line work and saves pulling in an icon dependency for six glyphs.
+
+The one colour outside `Theme.kt` is `hud_background` in `res/values/colors.xml`:
+the window background the system paints before Compose starts. Keep it in step
+with `HudBlack`.
 
 ## Session handling
 
