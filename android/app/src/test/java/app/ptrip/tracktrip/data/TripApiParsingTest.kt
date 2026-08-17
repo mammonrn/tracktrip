@@ -121,6 +121,7 @@ class TripApiParsingTest {
     fun `on a running trip every member reads as sharing, session or not`() {
         // Verbatim GET /trips/1/positions on an ACTIVE trip: Friend has set a
         // 4-hour session, Owner has set nothing, Quiet has never reported.
+        // Sharing is on by default, so having no session is not opting out.
         val payload = """
             [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
               "is_sharing":true,"sharing_until":"2026-08-17T17:18:22.441Z","lat":19.1,"lng":99.2,
@@ -151,12 +152,47 @@ class TripApiParsingTest {
     }
 
     @Test
-    fun `after the trip ends only the riders who carried on read as sharing`() {
-        // Verbatim, same trip, after the owner ended it. Nothing about the
-        // rows changed except is_sharing — the positions are still there.
+    fun `a paused rider reads as not sharing while the trip is still running`() {
+        // Verbatim, same trip: Owner has pressed stop, so their session sits
+        // spent. sharing_until is in the *past* here, which is what a pause
+        // looks like on the wire.
         val payload = """
             [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
-              "is_sharing":true,"sharing_until":"2026-08-17T17:18:22.441Z","lat":19.1,"lng":99.2,
+              "is_sharing":true,"sharing_until":"2026-08-17T17:36:59.021Z","lat":19.1,"lng":99.2,
+              "accuracy":null,"speed":22.4,"heading":275.5,"battery_pct":63,
+              "recorded_at":"2026-05-01T09:00:00.000Z"},
+             {"user_id":1,"display_name":"Owner","photo_url":"owner.jpg","role":"owner",
+              "is_sharing":false,"sharing_until":"2026-08-17T13:36:59.047Z","lat":18.79,
+              "lng":98.98,"accuracy":null,"speed":null,"heading":null,"battery_pct":91,
+              "recorded_at":"2026-05-01T08:00:00.000Z"},
+             {"user_id":3,"display_name":"Quiet","photo_url":null,"role":"member",
+              "is_sharing":true,"sharing_until":null,"lat":null,"lng":null,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":null,"recorded_at":null}]
+        """.trimIndent()
+
+        val members = JSONArray(payload).map { it.toMemberPosition() }
+
+        val owner = members.single { it.isOwner }
+        assertFalse(owner.isSharing)
+        assertFalse(owner.isSharingIndefinitely)
+        // Paused, not gone: their last position is still on the map.
+        assertTrue(owner.hasPosition)
+
+        // A rider who never touched the controls is still sharing, and one
+        // who set a timer still has it running.
+        assertTrue(members.single { it.userId == 3L }.isSharing)
+        assertTrue(members.single { it.userId == 2L }.isSharing)
+    }
+
+    @Test
+    fun `after the trip ends nobody reads as sharing`() {
+        // Verbatim, same trip, after the owner ended it. Ending a trip stops
+        // sharing for the whole group and clears every session, so both the
+        // flag and the countdown come back empty for everyone — including
+        // the rider who had four hours left.
+        val payload = """
+            [{"user_id":2,"display_name":"Friend","photo_url":"friend.jpg","role":"member",
+              "is_sharing":false,"sharing_until":null,"lat":19.1,"lng":99.2,
               "accuracy":null,"speed":22.4,"heading":275.5,"battery_pct":63,
               "recorded_at":"2026-05-01T09:00:00.000Z"},
              {"user_id":1,"display_name":"Owner","photo_url":"owner.jpg","role":"owner",
@@ -170,16 +206,13 @@ class TripApiParsingTest {
 
         val members = JSONArray(payload).map { it.toMemberPosition() }
 
-        val friend = members.single { it.userId == 2L }
-        assertTrue(friend.isSharing)
-        assertEquals("2026-08-17T17:18:22.441Z", friend.sharingUntil)
-        // Still on the map, just no longer live.
-        val owner = members.single { it.isOwner }
-        assertFalse(owner.isSharing)
-        assertFalse(owner.isSharingIndefinitely)
-        assertTrue(owner.hasPosition)
+        assertEquals(3, members.size)
+        assertTrue(members.none { it.isSharing })
+        assertTrue(members.none { it.isSharingIndefinitely })
+        assertTrue(members.all { it.sharingUntil == null })
 
-        assertFalse(members.single { it.userId == 3L }.isSharing)
+        // The ride is still there to look back on.
+        assertTrue(members.single { it.userId == 2L }.hasPosition)
     }
 
     @Test

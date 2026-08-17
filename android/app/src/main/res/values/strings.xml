@@ -38,7 +38,7 @@
     <string name="start_sharing">Open live tracking</string>
     <string name="view_final_positions">View final positions</string>
     <string name="end_trip">End this trip</string>
-    <string name="end_trip_confirm">Ending the trip stops everyone\'s location sharing for good. It can\'t be undone.</string>
+    <string name="end_trip_confirm">End trip? This stops location sharing for everyone in the group.</string>
     <string name="end_trip_yes">End trip</string>
 
     <!-- Profile -->
