@@ -343,6 +343,138 @@ test('unknown trip returns 404, malformed trip id returns 400', async () => {
   assert.equal((await post(app, 'abc', memberToken, validFix)).status, 400);
 });
 
+// ─── Lifetime kilometres ────────────────────────────────────────────────────
+
+/** A fix `hours` after 08:00, `latDegrees` north of the starting point. */
+const leg = (latDegrees, hours) => ({
+  lat: 18.79 + latDegrees,
+  lng: 98.98,
+  timestamp: new Date(Date.parse('2026-05-01T08:00:00.000Z') + hours * 3600 * 1000).toISOString(),
+});
+
+const totalKmOf = (db, userId) =>
+  db.prepare('SELECT total_km FROM users WHERE id = ?').get(userId).total_km;
+
+test('riding adds to the rider lifetime total, one leg at a time', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  // The first fix has nothing to measure from.
+  await post(app, tripId, memberToken, leg(0, 0));
+  assert.equal(totalKmOf(db, memberId), 0);
+
+  // ~11 km north over 15 minutes (~44 km/h).
+  await post(app, tripId, memberToken, leg(0.1, 0.25));
+  const afterFirstLeg = totalKmOf(db, memberId);
+  assert.ok(afterFirstLeg > 10 && afterFirstLeg < 12, `got ${afterFirstLeg}`);
+
+  // Another leg of the same length accumulates rather than replacing.
+  await post(app, tripId, memberToken, leg(0.2, 0.5));
+  const afterSecondLeg = totalKmOf(db, memberId);
+  assert.ok(
+    Math.abs(afterSecondLeg - afterFirstLeg * 2) < 0.01,
+    `expected roughly double, got ${afterSecondLeg}`
+  );
+
+  // And it shows up on the profile without any further work.
+  const level = await supertest(app).get('/me/level').set('Authorization', `Bearer ${memberToken}`);
+  assert.equal(level.body.total_km, Number(afterSecondLeg.toFixed(2)));
+  assert.equal(level.body.level.name, 'Novice');
+});
+
+test('a GPS jump too fast to be real does not inflate the total', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  await post(app, tripId, memberToken, leg(0, 0));
+  // ~11 km in one second — a reacquired signal landing in the wrong place.
+  await post(app, tripId, memberToken, leg(0.1, 1 / 3600));
+  assert.equal(totalKmOf(db, memberId), 0, 'the jump must not be credited');
+
+  // The fix is still stored, though: the map should show where the rider
+  // actually is, even when the leg that got them there is not believable.
+  const list = await get(app, tripId, memberToken);
+  assert.ok(Math.abs(list.body.find((p) => p.user_id === memberId).lat - 18.89) < 0.001);
+
+  // Riding on from there, plausibly, counts again from the new position.
+  await post(app, tripId, memberToken, leg(0.2, 0.5));
+  const after = totalKmOf(db, memberId);
+  assert.ok(after > 10 && after < 12, `got ${after}`);
+});
+
+test('drift while parked does not creep the total upwards', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  await post(app, tripId, memberToken, leg(0, 0));
+
+  // 30 fixes over five minutes, each a couple of metres from the last.
+  for (let i = 1; i <= 30; i += 1) {
+    const res = await post(app, tripId, memberToken, {
+      lat: 18.79 + i * 0.000018,
+      lng: 98.98,
+      timestamp: new Date(Date.parse('2026-05-01T08:00:00.000Z') + i * 10_000).toISOString(),
+    });
+    assert.equal(res.status, 200);
+  }
+
+  assert.equal(totalKmOf(db, memberId), 0, 'a parked bike rides nowhere');
+});
+
+test('a stale fix credits nothing, matching the position it fails to store', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  await post(app, tripId, memberToken, leg(0, 0));
+  await post(app, tripId, memberToken, leg(0.1, 0.25));
+  const afterRiding = totalKmOf(db, memberId);
+  assert.ok(afterRiding > 10);
+
+  // A backlog flush delivering an older fix: rejected by the upsert, so it
+  // must not be paid for either.
+  const stale = await post(app, tripId, memberToken, leg(0, 0.1));
+  assert.equal(stale.status, 200);
+  assert.equal(totalKmOf(db, memberId), afterRiding);
+
+  // Nor does re-sending the fix already stored, which would otherwise be a
+  // free way to buy distance by replaying the same leg.
+  await post(app, tripId, memberToken, leg(0.1, 0.25));
+  assert.equal(totalKmOf(db, memberId), afterRiding);
+});
+
+test('each rider is credited only for their own riding', async () => {
+  const { app, db, tripId, ownerToken, memberToken, ownerId, memberId } = setup();
+
+  await post(app, tripId, ownerToken, leg(0, 0));
+  await post(app, tripId, memberToken, leg(0, 0));
+  await post(app, tripId, ownerToken, leg(0.1, 0.25));
+
+  assert.ok(totalKmOf(db, ownerId) > 10, 'the owner rode');
+  assert.equal(totalKmOf(db, memberId), 0, 'the member did not');
+});
+
+test('distance is measured within a trip, not across two of them', async () => {
+  const { app, db, tripId, ownerToken, ownerId } = setup();
+
+  const otherTripId = Number(
+    db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Bangkok', ?, 'active')").run(ownerId)
+      .lastInsertRowid
+  );
+  db.prepare('INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, ?)').run(
+    otherTripId,
+    ownerId,
+    'owner'
+  );
+
+  await post(app, tripId, ownerToken, leg(0, 0));
+
+  // First fix on a different trip, 700 km away. Measuring it against the
+  // Chiang Mai trip's fix would credit a ride that never happened.
+  const bangkok = await supertest(app)
+    .post(`/trips/${otherTripId}/positions`)
+    .set('Authorization', `Bearer ${ownerToken}`)
+    .send({ lat: 13.75, lng: 100.5, timestamp: '2026-05-01T18:00:00.000Z' });
+  assert.equal(bangkok.status, 200);
+
+  assert.equal(totalKmOf(db, ownerId), 0);
+});
+
 // ─── Ended trips ────────────────────────────────────────────────────────────
 
 test('an ended trip refuses new positions', async () => {
@@ -375,6 +507,9 @@ test('an ended trip refuses new positions', async () => {
     .get(tripId, memberId);
   assert.equal(stored.lat, 18.79);
   assert.equal(stored.recorded_at, '2026-05-01T08:00:00.000Z');
+
+  // Nor credited any distance — no ride, no kilometres.
+  assert.equal(db.prepare('SELECT total_km FROM users WHERE id = ?').get(memberId).total_km, 0);
 });
 
 test('an ended trip stays readable, so a trip summary can show where everyone finished', async () => {
