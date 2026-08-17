@@ -62,6 +62,42 @@ jobs:
             echo "::warning::Secret ANDROID_DEBUG_KEYSTORE_BASE64 is not set. Gradle will generate a throwaway debug keystore with a random SHA-1, so GOOGLE SIGN-IN WILL NOT WORK in this APK. See android/README.md."
           fi
 
+      - name: Verify decoded keystore
+        if: steps.debug_keystore.outputs.path != ''
+        env:
+          KEYSTORE_PATH: ${{ steps.debug_keystore.outputs.path }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+        # Opening the keystore here rather than letting AGP fail turns a 40-line
+        # Gradle stack trace into a one-line cause, and separates the two very
+        # different failures: a corrupted base64 payload vs. a wrong password.
+        run: |
+          PASS="${DEBUG_KEYSTORE_PASSWORD:-android}"
+          ALIAS="${DEBUG_KEY_ALIAS:-androiddebugkey}"
+          echo "Decoded keystore: $(stat -c%s "$KEYSTORE_PATH") bytes"
+
+          # keytool reports failures on stdout, not stderr, so both streams have
+          # to be captured together or the classification below sees nothing.
+          if keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$PASS" >/tmp/ks.out 2>&1; then
+            echo "Keystore opened successfully. Aliases and fingerprints:"
+            grep -E 'Alias name:|SHA1:' /tmp/ks.out || true
+            if ! grep -qi "Alias name: $ALIAS" /tmp/ks.out; then
+              echo "::warning::No alias named '$ALIAS' in this keystore. Set ANDROID_DEBUG_KEY_ALIAS to one of the aliases listed above."
+            fi
+            exit 0
+          fi
+
+          echo "keytool could not open the keystore:"
+          grep -v '^Picked up' /tmp/ks.out | head -5
+          if grep -qi 'password was incorrect\|failed to decrypt\|BadPadding\|UnrecoverableKey' /tmp/ks.out; then
+            echo "::error::The keystore decoded fine, but the password is wrong. The build defaults to the standard debug password 'android'. If this keystore uses a different one (a release keystore always does), add it as the ANDROID_DEBUG_KEYSTORE_PASSWORD secret - and double-check that ~/.android/debug.keystore was exported, not the release keystore."
+          elif grep -qi 'Unrecognized keystore format\|Invalid keystore format\|DerInputStream\|not a valid' /tmp/ks.out; then
+            echo "::error::The decoded file is not a keystore, so ANDROID_DEBUG_KEYSTORE_BASE64 is corrupted or truncated. Re-export it as ONE unbroken line with no BEGIN/END header lines."
+          else
+            echo "::error::Could not open the decoded keystore; see the keytool output above."
+          fi
+          exit 1
+
       - name: Build debug APK
         working-directory: android
         env:
