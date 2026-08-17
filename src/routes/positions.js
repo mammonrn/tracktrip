@@ -2,8 +2,9 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
-import { requireActiveTrip } from '../auth/tripStatus.js';
+import { requireSharingAllowed } from '../auth/sharingAllowed.js';
 import { countableDistanceKm } from '../trips/distance.js';
+import { isSessionOpen } from '../trips/sharing.js';
 
 const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
@@ -23,14 +24,28 @@ export const POSITION_RATE_LIMIT = {
   max: 10,
 };
 
-function serializePosition(row) {
+function serializePosition(row, { tripActive, nowIso }) {
+  // The row carries the rider's sharing session, LEFT JOINed, so a member
+  // with no session at all arrives with these as null.
+  const session = row.sharing_started_at === null
+    ? null
+    : { started_at: row.sharing_started_at, expires_at: row.sharing_expires_at };
+
   return {
     user_id: row.user_id,
     display_name: row.display_name,
     photo_url: row.photo_url,
     role: row.role,
-    // 0/1 in SQLite; the map screen wants a real boolean.
-    is_sharing: row.is_sharing === 1,
+    // Derived, not stored, and deliberately the same condition the write
+    // guard applies: this rider may be reporting right now. On a running trip
+    // that is everyone, session or not — which is what it has always meant
+    // to a client. Once the trip ends only those who chose to carry on stay
+    // true. (It used to be a column nothing ever wrote, so it read true
+    // forever; it now answers the question it always claimed to.)
+    is_sharing: tripActive || isSessionOpen(session, nowIso),
+    // When this rider's own session lapses. null means either no session or
+    // one with no expiry — during a running trip most riders have neither.
+    sharing_until: session?.expires_at ?? null,
     lat: row.lat,
     lng: row.lng,
     accuracy: row.accuracy,
@@ -200,19 +215,20 @@ export function createPositionsRouter({ db, config }) {
 
   router.use('/trips/:id/positions', requireAuth(db, config), requireTripMembership(db));
 
-  // Reads stay open on an ended trip; writes don't — same rule as waypoints,
-  // so a finished ride can still be looked back on (where everyone finished)
-  // while nothing new attaches to it.
+  // Reads stay open on an ended trip; writes are gated per rider.
   //
-  // requireActiveTrip therefore has to be mounted per write route: any route
-  // added to this file that stores something must carry it explicitly.
+  // requireSharingAllowed lets a report through while the trip is running, or
+  // afterwards if this particular rider still has sharing switched on — see
+  // auth/sharingAllowed.js. Any route added to this file that stores
+  // something must carry it explicitly.
+  //
   // The limiter is attached to this one route rather than to the router, so
   // it governs position reports and nothing else. (Mounting a limiter with
   // router.use() and no path is what silently throttled the whole API until
   // 27586b2.) Reads are left unlimited: the 10/minute figure is derived from
   // how often a rider *reports*, and a map screen refreshing on a different
   // cadence would otherwise be sharing that budget.
-  router.post('/trips/:id/positions', limitPositionReports, requireActiveTrip(), (req, res) => {
+  router.post('/trips/:id/positions', limitPositionReports, requireSharingAllowed(db), (req, res) => {
     const { error, value } = validatePositionInput(req.body);
     if (error) {
       return res.status(400).json({ error });
@@ -226,12 +242,17 @@ export function createPositionsRouter({ db, config }) {
     const stored = db
       .prepare(
         `SELECT member_positions.*, users.display_name, users.photo_url,
-                trip_members.role, trip_members.is_sharing
+                trip_members.role,
+                sharing_sessions.started_at AS sharing_started_at,
+                sharing_sessions.expires_at AS sharing_expires_at
          FROM member_positions
          JOIN users ON users.id = member_positions.user_id
          JOIN trip_members
            ON trip_members.trip_id = member_positions.trip_id
           AND trip_members.user_id = member_positions.user_id
+         LEFT JOIN sharing_sessions
+           ON sharing_sessions.trip_id = member_positions.trip_id
+          AND sharing_sessions.user_id = member_positions.user_id
          WHERE member_positions.trip_id = ? AND member_positions.user_id = ?`
       )
       .get(req.trip.id, req.user.id);
@@ -239,7 +260,12 @@ export function createPositionsRouter({ db, config }) {
     // 200, not 201: there is one row per rider, so this creates it the first
     // time and replaces it after that. The body is what the server now holds,
     // which is not the submitted fix when a stale one was rejected above.
-    res.json(serializePosition(stored));
+    res.json(
+      serializePosition(stored, {
+        tripActive: req.trip.status === 'active',
+        nowIso: new Date().toISOString(),
+      })
+    );
   });
 
   router.get('/trips/:id/positions', (req, res) => {
@@ -248,8 +274,10 @@ export function createPositionsRouter({ db, config }) {
     // rather than dropping them.
     const positions = db
       .prepare(
-        `SELECT trip_members.user_id, trip_members.role, trip_members.is_sharing,
+        `SELECT trip_members.user_id, trip_members.role,
                 users.display_name, users.photo_url,
+                sharing_sessions.started_at AS sharing_started_at,
+                sharing_sessions.expires_at AS sharing_expires_at,
                 member_positions.lat, member_positions.lng, member_positions.accuracy,
                 member_positions.speed, member_positions.heading,
                 member_positions.battery_pct, member_positions.recorded_at
@@ -258,6 +286,9 @@ export function createPositionsRouter({ db, config }) {
          LEFT JOIN member_positions
            ON member_positions.trip_id = trip_members.trip_id
           AND member_positions.user_id = trip_members.user_id
+         LEFT JOIN sharing_sessions
+           ON sharing_sessions.trip_id = trip_members.trip_id
+          AND sharing_sessions.user_id = trip_members.user_id
          WHERE trip_members.trip_id = ?
          ORDER BY (member_positions.recorded_at IS NULL),
                   member_positions.recorded_at DESC,
@@ -265,7 +296,13 @@ export function createPositionsRouter({ db, config }) {
       )
       .all(req.trip.id);
 
-    res.json(positions.map(serializePosition));
+    // One clock for the whole list, so two riders whose sessions lapse in
+    // the same millisecond can't be reported inconsistently.
+    const context = {
+      tripActive: req.trip.status === 'active',
+      nowIso: new Date().toISOString(),
+    };
+    res.json(positions.map((row) => serializePosition(row, context)));
   });
 
   return router;

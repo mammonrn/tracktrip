@@ -141,6 +141,55 @@ test('0005 gives every existing rider a zero lifetime distance', () => {
   }
 });
 
+test('0006 adds sharing sessions and drops the is_sharing column it replaces', () => {
+  const db = freshDb();
+  const cleanup = migrateUpTo(db, '0006');
+  try {
+    const ownerId = Number(
+      db.prepare("INSERT INTO users (google_sub, email) VALUES ('sub-owner', 'owner@gmail.com')").run()
+        .lastInsertRowid
+    );
+    const tripId = Number(
+      db.prepare("INSERT INTO trips (name, owner_id) VALUES ('Legacy ride', ?)").run(ownerId)
+        .lastInsertRowid
+    );
+    db.prepare('INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, ?)').run(
+      tripId,
+      ownerId,
+      'owner'
+    );
+
+    const columnNames = () =>
+      db.prepare('PRAGMA table_info(trip_members)').all().map((c) => c.name);
+    assert.ok(columnNames().includes('is_sharing'), 'the column exists before 0006');
+
+    const applied = runMigrations(db, MIGRATIONS_DIR);
+    assert.ok(applied.includes('0006_sharing_sessions.sql'));
+
+    // The membership survives; only the column it never used goes away.
+    assert.ok(!columnNames().includes('is_sharing'));
+    const membership = db
+      .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
+      .get(tripId, ownerId);
+    assert.equal(membership.role, 'owner');
+
+    // Nobody is sharing until they say so — an existing member must not be
+    // grandfathered into an open session by the upgrade.
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions').get().count, 0);
+
+    db.prepare(
+      'INSERT INTO sharing_sessions (trip_id, user_id, expires_at) VALUES (?, ?, NULL)'
+    ).run(tripId, ownerId);
+    const session = db.prepare('SELECT * FROM sharing_sessions').get();
+    assert.equal(session.expires_at, null);
+    assert.ok(session.started_at, 'started_at defaults to now');
+
+    assert.equal(runMigrations(db, MIGRATIONS_DIR).length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
 test('trips.status CHECK constraint rejects invalid values', () => {
   const db = freshDb();
   runMigrations(db, MIGRATIONS_DIR);
