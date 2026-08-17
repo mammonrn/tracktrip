@@ -124,6 +124,43 @@ data class SharingSession(
 )
 
 /**
+ * A point on the trip that is not a rider: a planned stop, or one dropped
+ * while riding.
+ *
+ * [orderIndex] is the position along the planned route, and is null for a
+ * live drop — ordering a point that was added because somebody stopped at it
+ * would be inventing a route they never planned.
+ */
+data class Waypoint(
+    val id: Long,
+    val name: String,
+    val lat: Double,
+    val lng: Double,
+    val type: String,
+    val orderIndex: Int?,
+) {
+    val isPlanned: Boolean get() = type == TYPE_PLANNED
+
+    companion object {
+        const val TYPE_PLANNED = "planned"
+        const val TYPE_LIVE = "live"
+    }
+}
+
+/**
+ * A trip's waypoints, as GET /trips/:id/waypoints returns them: two lists,
+ * already sorted by the server — planned in route order, live in the order
+ * they were dropped.
+ */
+data class TripWaypoints(
+    val planned: List<Waypoint> = emptyList(),
+    val live: List<Waypoint> = emptyList(),
+) {
+    val all: List<Waypoint> get() = planned + live
+    val isEmpty: Boolean get() = planned.isEmpty() && live.isEmpty()
+}
+
+/**
  * One rider's level, from GET /trips/:id/member-levels.
  *
  * Only the name and the lifetime total: the map lists a level beside a name,
@@ -144,7 +181,29 @@ data class LevelProgress(
     val kmToNext: Double?,
     val levelMinKm: Double,
     val nextLevelMinKm: Double?,
-)
+) {
+    /**
+     * How far through the current level the rider is, from 0 to 1 — what the
+     * progress bar fills to.
+     *
+     * Measured between the two levels' thresholds rather than from zero: a
+     * rider on 1,600 km is a fifth of the way from Wanderer to Voyager, not
+     * 1,600/3,500 of the way, and a bar that reset to nearly-full on every
+     * promotion would tell them the opposite of what happened.
+     *
+     * A rider at the top of the table has nothing left to fill towards, so
+     * the bar is full — that is a finished ladder, not a stalled one. A
+     * malformed table (thresholds equal or inverted) also returns full rather
+     * than dividing by zero.
+     */
+    val fractionThroughLevel: Float
+        get() {
+            val next = nextLevelMinKm ?: return 1f
+            val span = next - levelMinKm
+            if (span <= 0) return 1f
+            return ((totalKm - levelMinKm) / span).coerceIn(0.0, 1.0).toFloat()
+        }
+}
 
 /**
  * Every trip-related call the app makes. Thin on purpose: it turns JSON into
@@ -244,6 +303,10 @@ class TripApi(private val client: ApiClient) {
         JSONArray(client.get("/trips/$tripId/member-levels"))
             .map { it.toRiderLevel() }
             .associateBy { it.userId }
+
+    /** The trip's planned stops and live drops. */
+    suspend fun waypoints(tripId: Long): TripWaypoints =
+        JSONObject(client.get("/trips/$tripId/waypoints")).toTripWaypoints()
 }
 
 internal inline fun <T> JSONArray.map(transform: (JSONObject) -> T): List<T> =
@@ -311,6 +374,20 @@ internal fun JSONObject.toSharingSession() = SharingSession(
     tripId = optLong("trip_id"),
     sharing = optBoolean("sharing", false),
     expiresAt = optStringOrNull("expires_at"),
+)
+
+internal fun JSONObject.toWaypoint() = Waypoint(
+    id = optLong("id"),
+    name = optStringOrNull("name").orEmpty(),
+    lat = optDouble("lat"),
+    lng = optDouble("lng"),
+    type = optStringOrNull("type") ?: Waypoint.TYPE_LIVE,
+    orderIndex = optIntOrNull("order_index"),
+)
+
+internal fun JSONObject.toTripWaypoints() = TripWaypoints(
+    planned = optJSONArray("planned")?.map { it.toWaypoint() } ?: emptyList(),
+    live = optJSONArray("live")?.map { it.toWaypoint() } ?: emptyList(),
 )
 
 internal fun JSONObject.toRiderLevel() = RiderLevel(
