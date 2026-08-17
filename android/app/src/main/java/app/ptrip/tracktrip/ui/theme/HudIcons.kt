@@ -7,7 +7,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
@@ -30,8 +32,8 @@ private val DEFAULT_ICON_SIZE = 22.dp
 /** Stroke width as a fraction of the icon's radius, shared by every glyph. */
 private const val STROKE_RATIO = 0.15f
 
-/** Spokes around the gear's hub. */
-private const val SPOKE_COUNT = 8
+/** Teeth around the gear. Eight is enough to read as a cog at 22dp. */
+private const val TOOTH_COUNT = 8
 
 private fun DrawScope.hudStroke(): Float = size.minDimension / 2f * STROKE_RATIO
 
@@ -48,7 +50,13 @@ private fun DrawScope.hudLine(tint: Color, from: Offset, to: Offset) {
 /** A point at a fraction of the icon box, so every glyph is written the same way. */
 private fun DrawScope.at(x: Float, y: Float) = Offset(size.width * x, size.height * y)
 
-/** Settings. A hub, a ring of spokes — an instrument dial more than a cog. */
+/**
+ * Settings: a cog.
+ *
+ * The outline alternates between the tooth radius and the root radius rather
+ * than being a circle with spokes stuck on it — spokes on a ring read as a
+ * sun, which is what the first version of this looked like.
+ */
 @Composable
 fun HudGearIcon(
     modifier: Modifier = Modifier,
@@ -57,18 +65,45 @@ fun HudGearIcon(
 ) {
     Canvas(modifier = modifier.size(iconSize)) {
         val radius = size.minDimension / 2f
-        drawCircle(tint, radius = radius * 0.48f, center = center, style = Stroke(hudStroke()))
-        drawCircle(tint, radius = radius * 0.15f, center = center)
-        repeat(SPOKE_COUNT) { i ->
-            val angle = (2.0 * PI / SPOKE_COUNT * i).toFloat()
-            val dx = cos(angle)
-            val dy = sin(angle)
-            hudLine(
-                tint,
-                Offset(center.x + dx * radius * 0.66f, center.y + dy * radius * 0.66f),
-                Offset(center.x + dx * radius * 0.96f, center.y + dy * radius * 0.96f),
-            )
+        val tip = radius * 0.95f
+        val root = radius * 0.66f
+        val step = (2.0 * PI / TOOTH_COUNT).toFloat()
+
+        // Half the angular width of a tooth at its tip, and of the gap
+        // between two teeth at the root. The flanks are whatever is left
+        // over, which is what gives the tooth its taper.
+        val tipHalf = step * 0.22f
+        val rootHalf = step * 0.30f
+
+        fun polar(distance: Float, angle: Float) = Offset(
+            center.x + cos(angle) * distance,
+            center.y + sin(angle) * distance,
+        )
+
+        val cog = Path()
+        repeat(TOOTH_COUNT) { i ->
+            val angle = step * i
+            val tipStart = polar(tip, angle - tipHalf)
+            if (i == 0) cog.moveTo(tipStart.x, tipStart.y) else cog.lineTo(tipStart.x, tipStart.y)
+
+            val tipEnd = polar(tip, angle + tipHalf)
+            cog.lineTo(tipEnd.x, tipEnd.y)
+
+            // Down the trailing flank, along the root, and back up to meet
+            // the next tooth's leading flank.
+            val rootStart = polar(root, angle + rootHalf)
+            cog.lineTo(rootStart.x, rootStart.y)
+            val rootEnd = polar(root, angle + step - rootHalf)
+            cog.lineTo(rootEnd.x, rootEnd.y)
         }
+        cog.close()
+
+        drawPath(
+            path = cog,
+            color = tint,
+            style = Stroke(width = hudStroke(), join = StrokeJoin.Round),
+        )
+        drawCircle(tint, radius = radius * 0.30f, center = center, style = Stroke(hudStroke()))
     }
 }
 
@@ -157,6 +192,38 @@ fun HudClockIcon(
         drawCircle(tint, radius = radius, center = center, style = Stroke(hudStroke()))
         hudLine(tint, center, Offset(center.x, center.y - radius * 0.55f))
         hudLine(tint, center, Offset(center.x + radius * 0.45f, center.y + radius * 0.3f))
+    }
+}
+
+/**
+ * Scan a QR code: a viewfinder with a code inside it.
+ *
+ * The brackets are what makes it read as *scanning* rather than as a QR code
+ * to be shown — the same shape the scanner screen draws over the camera.
+ */
+@Composable
+fun HudScanIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = HudCyan,
+    iconSize: Dp = DEFAULT_ICON_SIZE,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val arm = size.minDimension * 0.22f
+
+        fun bracket(corner: Offset, dx: Float, dy: Float) {
+            hudLine(tint, corner, Offset(corner.x + arm * dx, corner.y))
+            hudLine(tint, corner, Offset(corner.x, corner.y + arm * dy))
+        }
+
+        bracket(at(0.08f, 0.08f), 1f, 1f)
+        bracket(at(0.92f, 0.08f), -1f, 1f)
+        bracket(at(0.08f, 0.92f), 1f, -1f)
+        bracket(at(0.92f, 0.92f), -1f, -1f)
+
+        // Two modules, enough to say "code" without turning into mush at 22dp.
+        val module = size.minDimension * 0.17f
+        drawRect(tint, topLeft = at(0.28f, 0.28f), size = Size(module, module))
+        drawRect(tint, topLeft = at(0.55f, 0.55f), size = Size(module, module))
     }
 }
 
