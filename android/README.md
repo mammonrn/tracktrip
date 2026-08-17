@@ -21,12 +21,23 @@ inline message rather than crashing.
 | Sign-in | `POST /auth/google` |
 | Trip list, with pending invitations above it | `GET /trips`, `GET /invites`, `POST /invites/:id/accept` |
 | Create trip | `POST /trips` |
-| Trip detail — members, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end` |
-| Settings — profile, language, sharing default, sign out | nothing yet |
+| Trip detail — members, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees` |
+| Settings — profile, language, sharing default, sign out | `GET /me` |
+| Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
+| Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
+| Scan to join — the camera | `POST /trips/join` |
 
-Reached by the gear in the trip list's header. Signing out lives there, not on
-the trip list: it is the app's one destructive control, and it belongs behind a
-screen the rider opens deliberately.
+Settings is reached by the gear in the trip list's header, and the scanner by
+the viewfinder icon beside it. Signing out lives in settings, not on the trip
+list: it is the app's one destructive control, it belongs behind a screen the
+rider opens deliberately, and it asks for confirmation before it runs.
+
+`GET /me` is loaded once into a `ProfileViewModel` scoped to the activity.
+Three screens need it — settings shows the name and photo, the profile screen
+edits them, and the trip screen needs the rider's own user id to find their row
+in the member list and show whether their location is going out. It is also
+what fills the profile back in after a restart: the sign-in response only
+exists in the session that signed in.
 
 Navigation is a plain sealed `Screen` hierarchy over a small [`BackStack`](
 app/src/main/java/app/ptrip/tracktrip/ui/Navigation.kt), wired to the system
@@ -149,6 +160,23 @@ Compose compiler plugin is applied alongside AGP.
 - **`androidx.security:security-crypto`** for `EncryptedSharedPreferences`,
   so the access/refresh tokens are encrypted at rest (AES256-GCM values,
   AES256-SIV keys) under an Android Keystore master key — never plain text.
+- **Coil** (`coil3` + `coil-network-okhttp`) for the one remote image the app
+  has: a rider's avatar. The OkHttp fetcher is a separate artifact in 3.x, and
+  without it network images fail at runtime rather than at build time.
+- **ZXing** — `com.google.zxing:core` writes the invite QR code and
+  `com.journeyapps:zxing-android-embedded` wraps the camera preview that reads
+  one. Only `BarcodeView` is used, inside an `AndroidView`; the library's own
+  `CaptureActivity` and decorations are not, so the screen is ordinary Compose
+  with the app's own viewfinder drawn over it.
+
+Picking a photo uses `ActivityResultContracts.PickVisualMedia` — the system
+photo picker, so there is no storage permission to ask for and the app only
+ever sees the one image chosen. The picked image is downscaled to 1024px and
+re-encoded as JPEG before upload (`ui/AvatarImage.kt`): phone cameras produce
+4–12 MB files and the server refuses anything over 5 MB, so without that step
+perfectly ordinary photos would fail to upload. Re-encoding also drops the EXIF
+block, and with it the GPS tag on the original photo — a welcome side effect on
+a location-sharing app.
 
 ## Sign-in flow
 

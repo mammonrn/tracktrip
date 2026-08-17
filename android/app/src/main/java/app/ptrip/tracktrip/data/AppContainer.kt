@@ -23,5 +23,7 @@ class AppContainer(context: Context) {
 
     val tripApi: TripApi by lazy { TripApi(apiClient) }
 
+    val meApi: MeApi by lazy { MeApi(apiClient) }
+
     val authApi: AuthApi by lazy { AuthApi(baseUrl = baseUrl) }
 }

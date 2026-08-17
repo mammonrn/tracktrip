@@ -5,8 +5,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
@@ -49,9 +51,40 @@ class ApiClient(
     suspend fun get(path: String): String = send("GET", path, body = null)
 
     suspend fun post(path: String, body: JSONObject? = null): String =
-        send("POST", path, body?.toString() ?: "{}")
+        send("POST", path, jsonBody(body))
 
-    private suspend fun send(method: String, path: String, body: String?): String =
+    suspend fun patch(path: String, body: JSONObject): String = send("PATCH", path, jsonBody(body))
+
+    /**
+     * A single file upload, as multipart/form-data.
+     *
+     * Takes the bytes rather than a stream: a request body has to survive
+     * being sent twice, because a 401 halfway through a long ride is replayed
+     * after a token refresh, and a consumed stream would replay as an empty
+     * file.
+     */
+    suspend fun postFile(
+        path: String,
+        fieldName: String,
+        filename: String,
+        contentType: String,
+        bytes: ByteArray,
+    ): String {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                fieldName,
+                filename,
+                bytes.toRequestBody(contentType.toMediaType()),
+            )
+            .build()
+        return send("POST", path, body)
+    }
+
+    private fun jsonBody(body: JSONObject?): RequestBody =
+        (body?.toString() ?: "{}").toRequestBody(JSON_MEDIA_TYPE)
+
+    private suspend fun send(method: String, path: String, body: RequestBody?): String =
         withContext(Dispatchers.IO) {
             val first = execute(method, path, body, tokenStore.accessToken())
             if (first.code != 401) {
@@ -74,7 +107,7 @@ class ApiClient(
     private fun execute(
         method: String,
         path: String,
-        body: String?,
+        body: RequestBody?,
         accessToken: String?,
     ): Outcome {
         val builder = Request.Builder().url("$baseUrl$path")
@@ -83,7 +116,8 @@ class ApiClient(
         }
         when (method) {
             "GET" -> builder.get()
-            "POST" -> builder.post((body ?: "{}").toRequestBody(JSON_MEDIA_TYPE))
+            "POST" -> builder.post(body ?: jsonBody(null))
+            "PATCH" -> builder.patch(body ?: jsonBody(null))
             else -> throw IllegalArgumentException("unsupported method $method")
         }
 
