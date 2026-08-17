@@ -81,6 +81,20 @@ jobs:
           KEYPASS="${DEBUG_KEY_PASSWORD:-$PASS}"
           echo "Decoded keystore: $(stat -c%s "$KEYSTORE_PATH") bytes"
 
+          # Format/algorithm details, so a keystore that reads on a developer
+          # machine but not here can be compared without guesswork.
+          echo "--- environment ---"
+          java -version 2>&1 | head -1
+          echo "--- keystore format ---"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$PASS" 2>/dev/null \
+            | grep -iE 'Keystore type|Keystore provider' || echo "(could not read type)"
+          if command -v openssl >/dev/null; then
+            echo "--- encryption algorithms (openssl) ---"
+            openssl pkcs12 -in "$KEYSTORE_PATH" -info -nokeys -passin "pass:$PASS" 2>&1 \
+              | grep -iE 'PKCS7|Encrypted|MAC:' | head -4 || echo "(not PKCS12, or openssl could not parse it)"
+          fi
+          echo "--- checks ---"
+
           # keytool reports failures on stdout, not stderr, so both streams have
           # to be captured together or the classification below sees nothing.
           if keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$PASS" >/tmp/ks.out 2>&1; then
@@ -101,7 +115,9 @@ jobs:
               exit 0
             fi
 
-            echo "::error::The keystore opened and its fingerprint is correct, but the private key '$ALIAS' could not be unlocked. This keystore uses a different password for the KEY than for the STORE. Add the key password as the ANDROID_DEBUG_KEY_PASSWORD secret. (AGP reports this as 'keystore password was incorrect', which is misleading — the store password is fine.) To make them the same instead, run: keytool -keypasswd -keystore debug.keystore -alias $ALIAS -storepass $PASS -keypass <current-key-password> -new $PASS"
+            echo "keytool could not unlock the private key:"
+            grep -iv '^Picked up' /tmp/key.err | head -3
+            echo "::error::The keystore opened and its fingerprint is correct, but the private key '$ALIAS' could not be unlocked with the configured key password. NOTE: 'keytool -list' does NOT verify the key password (it ignores -keypass entirely), so a passing -list on a developer machine does not prove the key password. Verify locally with a command that actually reads the key: keytool -certreq -alias $ALIAS -keystore debug.keystore -storepass $PASS -keypass $PASS  --  If that also fails, re-export the keystore with matching passwords: keytool -importkeystore -srckeystore debug.keystore -srcstorepass $PASS -destkeystore debug-fixed.p12 -deststoretype PKCS12 -deststorepass $PASS -destkeypass $PASS (same key, so the SHA-1 does not change)"
             exit 1
           fi
 
