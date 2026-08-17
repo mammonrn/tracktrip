@@ -38,11 +38,13 @@ src/
     tripMembership.js  # requireTripMembership (loads trip, enforces 403)
     tripOwnership.js   # requireTripOwner (owner-only actions)
     tripStatus.js      # requireActiveTrip (409s writes to an ended trip)
+    sharingAllowed.js  # requireSharingAllowed (trip active, or rider still sharing)
     serializeUser.js   # shapes a user row for API responses
   trips/
     email.js         # normalizes invite email addresses
     serialize.js     # shapes trip / invite rows for API responses
     distance.js      # haversine + the GPS-jitter rules for counting km
+    sharing.js       # sharing-session durations, expiry, and serialization
   users/
     levels.js        # the rider level table and progress towards the next one
   routes/
@@ -53,6 +55,7 @@ src/
     invites.js           # /invites, /invites/:id/accept
     waypoints.js         # /trips/:id/waypoints
     positions.js          # /trips/:id/positions
+    sharing.js             # /trips/:id/share/start, /share/stop
   ws/                # WebSocket server (stub)
 scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
@@ -131,9 +134,14 @@ accepting an emailed invite. All routes require
   `ended_at`. Returns `200` with the trip; ending an already-ended trip is
   `409`.
 
-Once a trip has ended it is **read-only**: members can still read it, but every
-write to it — new positions and live waypoint drops included — returns
-`409 {"error": "trip has ended"}`, and no new invite can be sent or accepted.
+Once a trip has ended, members can still read it but almost nothing can be
+written to it: live waypoint drops return `409 {"error": "trip has ended"}`,
+and no new invite can be sent or accepted.
+
+**Positions are the exception.** Ending a trip is the owner declaring the
+group ride over, not a switch that stops everyone's phone — a rider carrying
+on alone can keep sharing if they choose to. See
+[Sharing sessions](#sharing-sessions).
 
 ### Invites
 
@@ -209,11 +217,11 @@ Where each rider is right now. One row per rider per trip in
 `member_positions` — the latest fix, not a trail.
 
 Both routes require `Authorization: Bearer <accessToken>` **and** trip
-membership, exactly like waypoints — and follow the same ended-trip rule:
-once a trip has `status = 'ended'` it takes no new fixes (`POST` returns
-`409 {"error": "trip has ended"}`) but stays readable, so a finished ride can
-still show where everyone ended up. Membership is checked before trip status,
-so a non-member gets `403` either way; ending a trip never makes it public.
+membership. Reads stay open once a trip has ended, so a finished ride can
+still show where everyone ended up. Writes are gated **per rider** — see
+[Sharing sessions](#sharing-sessions) below. Membership is checked before
+anything else, so a non-member gets `403` either way; ending a trip never
+makes it public.
 
 Clients poll `GET`; there is no push yet.
 
@@ -262,7 +270,7 @@ Clients poll `GET`; there is no push yet.
   [
     {
       "user_id": 2, "display_name": "Member", "photo_url": "member.jpg",
-      "role": "member", "is_sharing": true,
+      "role": "member", "is_sharing": true, "sharing_until": null,
       "lat": 19.1, "lng": 99.2, "accuracy": 12.5, "speed": 22.4,
       "heading": 275.5, "battery_pct": 84,
       "recorded_at": "2026-05-01T09:00:00.000Z"
@@ -273,6 +281,62 @@ Clients poll `GET`; there is no push yet.
   Sorted freshest first. Members who have never reported are **still listed**,
   with every position field `null`, and sort last — the friend list shows them
   as not yet tracking rather than dropping them. Emails are not included.
+
+  `is_sharing` answers exactly what the write guard would: *may this rider be
+  reporting right now?* On a running trip that is everyone. Once the trip ends
+  it is only those who chose to carry on. `sharing_until` is when that rider's
+  own session lapses — `null` for no session, and also for a session with no
+  expiry, which `is_sharing` tells apart.
+
+### Sharing sessions
+
+Ending a trip does **not** stop anyone sharing their location. Each rider
+decides for themselves whether to carry on — someone peeling off to ride home
+the long way still wants to be seen; someone who has parked up does not.
+
+A sharing session is one row per (trip, rider) in `sharing_sessions`. A row
+means sharing is switched on; no row means it was never started, or it was
+stopped. `expires_at` is when it lapses by itself, or `NULL` for "until I turn
+it off". **Ending a trip leaves every session untouched**, to run out on its
+own clock or be stopped by hand.
+
+`POST /trips/:id/positions` is therefore allowed when **either**:
+
+- the trip is still `active` — the ordinary case, needing no session at all; or
+- the trip has ended **and** this rider has an unexpired session.
+
+| Situation on an ended trip | Result |
+|---|---|
+| Never started sharing | `409 {"error": "trip has ended"}` — unchanged from before sessions existed |
+| Session running | `200`, the fix is stored and distance still accrues |
+| Session lapsed or stopped | `409 {"error": "your sharing session has ended"}` |
+
+Both routes require membership, and neither requires the trip to be active —
+switching sharing on **after** the trip has ended is allowed on purpose, for
+the rider who forgot to press it first.
+
+- `POST /trips/:id/share/start` — body `{ duration_minutes }`, one of **30**,
+  **60**, **240**, or `null` for "until stopped". The field is **required**:
+  omitting it is a `400`, not a silent unlimited session. Starting again
+  replaces the session, so a rider can switch from 30 minutes to unlimited
+  halfway through. Returns `200`:
+
+  ```json
+  {
+    "trip_id": 1, "user_id": 2, "sharing": true,
+    "started_at": "2026-08-17T13:07:31.487Z",
+    "expires_at": "2026-08-17T17:07:31.487Z"
+  }
+  ```
+
+- `POST /trips/:id/share/stop` — clears the session. `409` if there wasn't one.
+
+The durations on offer live in `SHARING_DURATION_MINUTES` in
+`src/trips/sharing.js`.
+
+Expired sessions are left in the table rather than swept on a timer;
+`isSessionOpen` is the single place that decides, so the write guard and the
+map can never disagree.
 
 ### Lifetime distance
 
