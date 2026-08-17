@@ -6,6 +6,16 @@
          they arrive with the tracking phase. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Reading a trip's invite QR code. Requested at the moment the scanner
+         screen opens, never at launch. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- A phone without a camera can still do everything else, so this is not
+         a reason for Play to hide the app. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -28,6 +29,11 @@ import app.ptrip.tracktrip.data.AppContainer
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
+import app.ptrip.tracktrip.ui.JoinTripViewModel
+import app.ptrip.tracktrip.ui.LocalApiBaseUrl
+import app.ptrip.tracktrip.ui.ProfileScreen
+import app.ptrip.tracktrip.ui.ProfileViewModel
+import app.ptrip.tracktrip.ui.ScanQrScreen
 import app.ptrip.tracktrip.ui.Screen
 import app.ptrip.tracktrip.ui.SettingsScreen
 import app.ptrip.tracktrip.ui.SettingsViewModel
@@ -37,6 +43,7 @@ import app.ptrip.tracktrip.ui.SignInViewModel
 import app.ptrip.tracktrip.ui.TripDetailScreen
 import app.ptrip.tracktrip.ui.TripDetailViewModel
 import app.ptrip.tracktrip.ui.TripListScreen
+import app.ptrip.tracktrip.ui.TripQrScreen
 import app.ptrip.tracktrip.ui.TripsViewModel
 import app.ptrip.tracktrip.ui.rememberBackStack
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
@@ -63,14 +70,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TracktripTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                ) { innerPadding ->
-                    TracktripApp(
-                        container = container,
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                // Avatars are stored as paths, so the one place that turns
+                // them into URLs needs the API's base URL. Provided here
+                // rather than threaded through every screen that shows a face.
+                CompositionLocalProvider(LocalApiBaseUrl provides container.baseUrl) {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        containerColor = MaterialTheme.colorScheme.background,
+                    ) { innerPadding ->
+                        TracktripApp(
+                            container = container,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
@@ -164,16 +176,25 @@ private fun SignedInNavigation(
         viewModel(factory = tripsViewModelFactory(container, onSignOut))
     val tripsState by tripsViewModel.uiState.collectAsStateWithLifecycle()
 
+    // The rider's own account, loaded once from the server. Several screens
+    // need it, and unlike the sign-in response it is still there after a
+    // restart that came in on stored tokens.
+    val profileViewModel: ProfileViewModel =
+        viewModel(factory = profileViewModelFactory(container, onSignOut))
+    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+    val profile = profileState.user
+
     BackHandler(enabled = backStack.canGoBack) { backStack.pop() }
 
     when (val screen = backStack.current) {
         Screen.Trips -> TripListScreen(
             state = tripsState,
-            displayName = user.displayName,
+            displayName = profile?.displayName ?: user.displayName,
             onOpenTrip = { backStack.push(Screen.TripDetail(it.id)) },
             onCreateTrip = { backStack.push(Screen.CreateTrip) },
             onAcceptInvite = tripsViewModel::acceptInvite,
             onRefresh = tripsViewModel::refresh,
+            onScanQr = { backStack.push(Screen.ScanQr) },
             onOpenSettings = { backStack.push(Screen.Settings) },
             modifier = modifier,
         )
@@ -184,11 +205,49 @@ private fun SignedInNavigation(
 
             SettingsScreen(
                 state = settingsState,
-                displayName = user.displayName,
-                email = user.email,
+                displayName = profile?.displayName ?: user.displayName,
+                email = profile?.email ?: user.email,
+                photoUrl = profile?.photoUrl ?: user.photoUrl,
+                onOpenProfile = { backStack.push(Screen.Profile) },
                 onLanguageChange = settingsViewModel::setLanguage,
                 onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
                 onSignOut = onSignOut,
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        Screen.Profile -> ProfileScreen(
+            state = profileState,
+            // Back to settings once it lands: the changed name and photo are
+            // both visible there, which is a clearer confirmation than a
+            // message on a screen the rider is now finished with.
+            onSave = { patch -> profileViewModel.save(patch) { backStack.pop() } },
+            onAvatarPicked = { picked ->
+                profileViewModel.uploadAvatar(picked.bytes, picked.contentType)
+            },
+            onImageUnreadable = profileViewModel::onImageUnreadable,
+            onBack = { backStack.pop() },
+            modifier = modifier,
+        )
+
+        Screen.ScanQr -> {
+            val joinViewModel: JoinTripViewModel =
+                viewModel(factory = joinTripViewModelFactory(container, onSignOut))
+            val joinState by joinViewModel.uiState.collectAsStateWithLifecycle()
+
+            ScanQrScreen(
+                joining = joinState.joining,
+                error = joinState.error,
+                onCodeScanned = { code ->
+                    joinViewModel.join(code) { trip ->
+                        // Straight to the trip that was just joined — the
+                        // scanner's whole purpose is getting there.
+                        tripsViewModel.refresh()
+                        backStack.pop()
+                        backStack.push(Screen.TripDetail(trip.id))
+                    }
+                },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -225,14 +284,41 @@ private fun SignedInNavigation(
 
             TripDetailScreen(
                 state = detailState,
+                currentUserId = profile?.id,
                 onInviteEmailChange = detailViewModel::onInviteEmailChange,
                 onSendInvite = detailViewModel::sendInvite,
+                onUseSuggestion = detailViewModel::useSuggestion,
+                onShowQr = {
+                    // Issued on the way in, so the screen never opens on a
+                    // code from an earlier visit that has since lapsed.
+                    detailViewModel.createJoinCode()
+                    backStack.push(Screen.TripQr(screen.tripId))
+                },
                 onEndTrip = {
                     detailViewModel.endTrip()
                     // The list shows each trip's status, so it is stale the
                     // moment this one ends.
                     tripsViewModel.refresh()
                 },
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        is Screen.TripQr -> {
+            // The same instance the trip screen used, so the code it just
+            // issued is the one shown here.
+            val detailViewModel: TripDetailViewModel = viewModel(
+                key = "trip-${screen.tripId}",
+                factory = tripDetailViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
+
+            TripQrScreen(
+                joinCode = detailState.joinCode,
+                loading = detailState.joinCodeLoading,
+                error = detailState.joinCodeError,
+                onGenerate = detailViewModel::createJoinCode,
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -268,3 +354,15 @@ private fun tripDetailViewModelFactory(
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
     factoryOf { TripDetailViewModel(tripId, container.tripApi, onSessionExpired) }
+
+private fun profileViewModelFactory(
+    container: AppContainer,
+    onSessionExpired: () -> Unit,
+): ViewModelProvider.Factory =
+    factoryOf { ProfileViewModel(container.meApi, onSessionExpired) }
+
+private fun joinTripViewModelFactory(
+    container: AppContainer,
+    onSessionExpired: () -> Unit,
+): ViewModelProvider.Factory =
+    factoryOf { JoinTripViewModel(container.tripApi, onSessionExpired) }

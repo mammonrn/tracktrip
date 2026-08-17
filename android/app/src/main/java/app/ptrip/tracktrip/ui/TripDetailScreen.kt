@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,7 +26,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.ui.theme.HudChip
 import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -34,6 +37,7 @@ import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
+import app.ptrip.tracktrip.ui.theme.HudStatusBadge
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudText
 import app.ptrip.tracktrip.ui.theme.HudTextDim
@@ -44,14 +48,21 @@ import app.ptrip.tracktrip.ui.theme.riderColor
 @Composable
 fun TripDetailScreen(
     state: TripDetailUiState,
+    currentUserId: Long?,
     onInviteEmailChange: (String) -> Unit,
     onSendInvite: () -> Unit,
+    onUseSuggestion: (SuggestedInvitee) -> Unit,
+    onShowQr: () -> Unit,
     onEndTrip: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val trip = state.trip
     var confirmingEnd by remember { mutableStateOf(false) }
+
+    // The rider's own row in the member list is where their sharing state
+    // lives — the same field the map and the write guard read.
+    val me = currentUserId?.let { id -> state.members.firstOrNull { it.userId == id } }
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         HudTopBar(
@@ -88,6 +99,21 @@ fun TripDetailScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp),
         ) {
+            // Whether this rider's own location is going out right now. Shown
+            // only once the member list has loaded, so it can't briefly claim
+            // "not sharing" while the answer is still unknown.
+            if (me != null) {
+                item {
+                    HudStatusBadge(
+                        text = stringResource(
+                            if (me.isSharing) R.string.sharing_on else R.string.sharing_off
+                        ),
+                        on = me.isSharing,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+
             item {
                 HudSectionHeader(
                     text = stringResource(R.string.members_title),
@@ -111,8 +137,11 @@ fun TripDetailScreen(
                         email = state.inviteEmail,
                         pending = state.invitePending,
                         sentTo = state.inviteSentTo,
+                        suggestions = state.suggestions,
                         onEmailChange = onInviteEmailChange,
                         onSend = onSendInvite,
+                        onUseSuggestion = onUseSuggestion,
+                        onShowQr = onShowQr,
                     )
                 }
             }
@@ -199,10 +228,34 @@ private fun InvitePanel(
     email: String,
     pending: Boolean,
     sentTo: String?,
+    suggestions: List<SuggestedInvitee>,
     onEmailChange: (String) -> Unit,
     onSend: () -> Unit,
+    onUseSuggestion: (SuggestedInvitee) -> Unit,
+    onShowQr: () -> Unit,
 ) {
     HudSurface(accent = HudCyan.copy(alpha = 0.4f)) {
+        // Riders from past trips, one tap instead of an email typed from
+        // memory. Absent for a first trip, which is when there is nobody to
+        // suggest — so the row simply isn't there rather than being empty.
+        if (suggestions.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.invite_suggestions),
+                style = MaterialTheme.typography.labelSmall,
+                color = HudTextDim,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                suggestions.forEach { invitee ->
+                    HudChip(text = invitee.label, onClick = { onUseSuggestion(invitee) })
+                }
+            }
+        }
+
         OutlinedTextField(
             value = email,
             onValueChange = onEmailChange,
@@ -239,6 +292,14 @@ private fun InvitePanel(
             style = MaterialTheme.typography.labelSmall,
             color = HudTextDim,
             modifier = Modifier.padding(top = 8.dp),
+        )
+
+        // Alongside email, not instead of it: an email invite reaches someone
+        // who isn't here, and a QR reaches someone who is.
+        HudSecondaryButton(
+            text = stringResource(R.string.qr_invite_action),
+            onClick = onShowQr,
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
         )
     }
 }
@@ -277,9 +338,16 @@ private fun TripDetailPreview() {
                         recordedAt = null,
                     ),
                 ),
+                suggestions = listOf(
+                    SuggestedInvitee(4, "friend@gmail.com", "Friend", null),
+                    SuggestedInvitee(5, "nut@gmail.com", "Nut", null),
+                ),
             ),
+            currentUserId = 1,
             onInviteEmailChange = {},
             onSendInvite = {},
+            onUseSuggestion = {},
+            onShowQr = {},
             onEndTrip = {},
             onBack = {},
         )

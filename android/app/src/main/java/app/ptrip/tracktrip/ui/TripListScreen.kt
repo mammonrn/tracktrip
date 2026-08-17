@@ -32,6 +32,7 @@ import app.ptrip.tracktrip.ui.theme.HudGearIcon
 import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudScanIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
 import app.ptrip.tracktrip.ui.theme.HudSurface
@@ -53,6 +54,7 @@ fun TripListScreen(
     onCreateTrip: () -> Unit,
     onAcceptInvite: (Invite) -> Unit,
     onRefresh: () -> Unit,
+    onScanQr: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -62,6 +64,11 @@ fun TripListScreen(
             subtitle = displayName?.let { stringResource(R.string.signed_in_as, it) }
                 ?: stringResource(R.string.signed_in),
         ) {
+            HudIconButton(
+                onClick = onScanQr,
+                contentDescription = stringResource(R.string.qr_scan_title),
+                icon = { HudScanIcon() },
+            )
             HudIconButton(
                 onClick = onOpenSettings,
                 contentDescription = stringResource(R.string.settings_title),
@@ -216,6 +223,7 @@ private fun TripListPreview() {
             onCreateTrip = {},
             onAcceptInvite = {},
             onRefresh = {},
+            onScanQr = {},
             onOpenSettings = {},
         )
     }

@@ -3,8 +3,10 @@ package app.ptrip.tracktrip.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
+import app.ptrip.tracktrip.data.JoinCode
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.SessionExpiredException
+import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +25,12 @@ data class TripDetailUiState(
     /** Set after a successful invite, cleared when the field is edited again. */
     val inviteSentTo: String? = null,
     val endPending: Boolean = false,
+    /** Riders this owner has ridden with before, offered instead of typing. */
+    val suggestions: List<SuggestedInvitee> = emptyList(),
+    val joinCode: JoinCode? = null,
+    val joinCodeLoading: Boolean = false,
+    /** Kept apart from [error] so a QR failure doesn't sit on the trip screen. */
+    val joinCodeError: String? = null,
 )
 
 class TripDetailViewModel(
@@ -51,10 +59,62 @@ class TripDetailViewModel(
                 _uiState.update {
                     it.copy(loading = false, trip = trip, members = members, error = null)
                 }
+
+                // Suggestions are owner-only and only for a running trip, so
+                // asking otherwise would spend a request to be told 403.
+                if (trip != null && trip.isOwner && trip.isActive) {
+                    loadSuggestions()
+                }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(loading = false, error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Past companions, fetched quietly.
+     *
+     * A failure here is swallowed rather than shown: the invite form works
+     * perfectly well without suggestions, and an error banner over a
+     * convenience nobody asked for would be noise.
+     */
+    private suspend fun loadSuggestions() {
+        try {
+            val suggestions = tripApi.suggestedInvitees(tripId)
+            _uiState.update { it.copy(suggestions = suggestions) }
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+        } catch (e: ApiException) {
+            _uiState.update { it.copy(suggestions = emptyList()) }
+        }
+    }
+
+    /** Fills the invite field from a suggestion instead of typing it out. */
+    fun useSuggestion(invitee: SuggestedInvitee) {
+        _uiState.update { it.copy(inviteEmail = invitee.email, inviteSentTo = null, error = null) }
+    }
+
+    /**
+     * Issues a join code for the QR screen.
+     *
+     * Always a fresh one, never a cached one: the server retires the previous
+     * code when it issues another, so showing a remembered code after
+     * generating a new one would show a QR that no longer works.
+     */
+    fun createJoinCode() {
+        if (_uiState.value.joinCodeLoading) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
+            try {
+                val code = tripApi.createJoinCode(tripId)
+                _uiState.update { it.copy(joinCodeLoading = false, joinCode = code) }
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(joinCodeLoading = false, joinCodeError = e.message) }
             }
         }
     }

@@ -69,6 +69,34 @@ data class MemberPosition(
     val isSharingIndefinitely: Boolean get() = isSharing && sharingUntil == null
 }
 
+/**
+ * Someone the rider has been on a trip with before, offered on the invite
+ * screen so an email address doesn't have to be typed from memory.
+ */
+data class SuggestedInvitee(
+    val userId: Long,
+    val email: String,
+    val displayName: String?,
+    val photoUrl: String?,
+) {
+    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: email
+}
+
+/** A short-lived code that puts whoever redeems it on the trip. */
+data class JoinCode(
+    val tripId: Long,
+    val code: String,
+    /** ISO-8601, from the server. The QR screen counts down to it. */
+    val expiresAt: String,
+)
+
+/** The outcome of redeeming a join code. */
+data class JoinResult(
+    val trip: Trip,
+    /** True when the rider was already on this trip — a no-op, not a failure. */
+    val alreadyMember: Boolean,
+)
+
 /** The profile screen's challenge widget, from GET /me/level. */
 data class LevelProgress(
     val totalKm: Double,
@@ -110,6 +138,21 @@ class TripApi(private val client: ApiClient) {
 
     suspend fun members(tripId: Long): List<MemberPosition> =
         JSONArray(client.get("/trips/$tripId/positions")).map { it.toMemberPosition() }
+
+    suspend fun suggestedInvitees(tripId: Long): List<SuggestedInvitee> =
+        JSONArray(client.get("/trips/$tripId/suggested-invitees")).map { it.toSuggestedInvitee() }
+
+    /** Issues a fresh join code, retiring any the trip already had. */
+    suspend fun createJoinCode(tripId: Long): JoinCode =
+        JSONObject(client.post("/trips/$tripId/join-code")).toJoinCode()
+
+    suspend fun joinByCode(code: String): JoinResult {
+        val json = JSONObject(client.post("/trips/join", JSONObject().put("code", code)))
+        return JoinResult(
+            trip = json.getJSONObject("trip").toTrip(),
+            alreadyMember = json.optBoolean("already_member", false),
+        )
+    }
 
     suspend fun reportPosition(
         tripId: Long,
@@ -172,6 +215,19 @@ internal fun JSONObject.toMemberPosition() = MemberPosition(
     lng = optDoubleOrNull("lng"),
     batteryPct = optIntOrNull("battery_pct"),
     recordedAt = optStringOrNull("recorded_at"),
+)
+
+internal fun JSONObject.toSuggestedInvitee() = SuggestedInvitee(
+    userId = optLong("user_id"),
+    email = optStringOrNull("email").orEmpty(),
+    displayName = optStringOrNull("display_name"),
+    photoUrl = optStringOrNull("photo_url"),
+)
+
+internal fun JSONObject.toJoinCode() = JoinCode(
+    tripId = optLong("trip_id"),
+    code = optStringOrNull("code").orEmpty(),
+    expiresAt = optStringOrNull("expires_at").orEmpty(),
 )
 
 internal fun JSONObject.toLevelProgress(): LevelProgress {
