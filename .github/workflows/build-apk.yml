@@ -57,6 +57,35 @@ jobs:
             fi
             echo "path=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_OUTPUT"
             echo "::notice::Signing debug build with the pinned keystore from ANDROID_DEBUG_KEYSTORE_BASE64."
+
+            # Fingerprint the decoded bytes. A keystore that reads locally but
+            # not here points at the payload being altered somewhere between
+            # the developer machine and the secret; comparing this hash against
+            # the source file settles that in one step. Byte count alone does
+            # not, since an in-place character change keeps the size identical.
+            SIZE="$(stat -c%s "$RUNNER_TEMP/debug.keystore")"
+            SHA256="$(sha256sum "$RUNNER_TEMP/debug.keystore" | cut -d' ' -f1)"
+            echo "Decoded keystore SHA-256: $SHA256"
+            {
+              echo "### Decoded debug keystore"
+              echo ""
+              echo "| | |"
+              echo "|---|---|"
+              echo "| Size | \`$SIZE\` bytes |"
+              echo "| SHA-256 | \`$SHA256\` |"
+              echo ""
+              echo "Compare against the source file on the developer machine — the two must match exactly:"
+              echo ""
+              echo '```powershell'
+              echo 'Get-FileHash "$env:USERPROFILE\.android\debug.keystore" -Algorithm SHA256'
+              echo '```'
+              echo ""
+              echo '```bash'
+              echo 'sha256sum ~/.android/debug.keystore'
+              echo '```'
+              echo ""
+              echo "A different hash means the bytes changed on the way into the secret (clipboard, editor, or stray whitespace/newline), not that the keystore itself is bad."
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "path=" >> "$GITHUB_OUTPUT"
             echo "::warning::Secret ANDROID_DEBUG_KEYSTORE_BASE64 is not set. Gradle will generate a throwaway debug keystore with a random SHA-1, so GOOGLE SIGN-IN WILL NOT WORK in this APK. See android/README.md."
