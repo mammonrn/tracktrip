@@ -4,11 +4,43 @@ Kotlin + Jetpack Compose client for the trip-tracker backend. Lives in the
 same monorepo as the Node backend; this folder is a self-contained Gradle
 project.
 
-**Current state:** Google sign-in is wired end to end — Credential Manager
-obtains a Google ID token, it's exchanged at the backend's
-`POST /auth/google`, and the returned tokens are stored in
-`EncryptedSharedPreferences`. On success the app moves to a placeholder
-`TripListScreen`; on failure it shows an inline message rather than crashing.
+**Current state:** signed-in riders can see their trips, create one, accept
+an invitation, and open a trip to invite riders by email, see who's on it, and
+(as owner) end it. Live tracking and the profile screen are not here yet.
+
+Google sign-in is wired end to end — Credential Manager obtains a Google ID
+token, it's exchanged at the backend's `POST /auth/google`, and the returned
+tokens are stored in `EncryptedSharedPreferences`. On failure the app shows an
+inline message rather than crashing.
+
+## Screens
+
+| Screen | Backend it talks to |
+|---|---|
+| Sign-in | `POST /auth/google` |
+| Trip list, with pending invitations above it | `GET /trips`, `GET /invites`, `POST /invites/:id/accept` |
+| Create trip | `POST /trips` |
+| Trip detail — members, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end` |
+
+Navigation is a plain sealed `Screen` hierarchy over a small [`BackStack`](
+app/src/main/java/app/ptrip/tracktrip/ui/Navigation.kt), wired to the system
+back button through `BackHandler` — not Navigation Compose. Five screens and
+one argument don't need a route DSL, and at the time of writing the only
+published `navigation-compose` builds were 2.10.0 pre-releases.
+
+## Session handling
+
+Access tokens last an hour, which a long ride outlives. Every authenticated
+call goes through [`ApiClient`](
+app/src/main/java/app/ptrip/tracktrip/data/ApiClient.kt), which on a `401`
+refreshes once and replays the request. Screens never see that; they only see
+`SessionExpiredException` when the refresh itself fails, which drops the user
+back to sign-in.
+
+Refreshes are serialised behind a mutex. The backend rotates the refresh token
+on every use and treats a re-presented old one as theft — by revoking every
+token the user has — so two screens refreshing at once would sign the rider
+out rather than keep them in.
 
 ## Configuration — where the Client IDs live
 
@@ -82,7 +114,10 @@ Compose compiler plugin is applied alongside AGP.
 - **Google Sign-In uses Credential Manager**
   (`androidx.credentials` + `com.google.android.libraries.identity.googleid`),
   *not* the deprecated `GoogleSignInClient` / `play-services-auth` sign-in API.
-- **OkHttp** for backend calls.
+- **OkHttp** for backend calls. Responses are parsed with `org.json` from the
+  platform — no Moshi/Gson/kotlinx-serialization, since the payloads are small
+  and flat enough that a code-generating serializer would cost more than it
+  saves.
 - **`androidx.security:security-crypto`** for `EncryptedSharedPreferences`,
   so the access/refresh tokens are encrypted at rest (AES256-GCM values,
   AES256-SIV keys) under an Android Keystore master key — never plain text.
@@ -222,6 +257,18 @@ cd android
 ```
 
 Output: `app/build/outputs/apk/debug/app-debug.apk`.
+
+Unit tests (plain JVM, no device needed):
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+These are contract tests over the backend's JSON, built from payloads copied
+verbatim off a running server — `app/src/test/.../TripApiParsingTest.kt`. A
+field renamed on the backend fails a test here instead of silently emptying a
+screen. `org.json` is stubbed out in `android.jar` (every method throws), so
+the real implementation is on the unit-test classpath.
 
 Debug builds use the `.debug` application ID suffix, so a debug and a release
 build can sit side by side on one device.
