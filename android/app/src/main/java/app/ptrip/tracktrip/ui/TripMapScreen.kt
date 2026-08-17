@@ -46,8 +46,12 @@ import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.initialCamera
-import app.ptrip.tracktrip.ui.theme.HudBlack
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
+import app.ptrip.tracktrip.ui.theme.AppSurface
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.RankIcon
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
@@ -55,8 +59,6 @@ import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudReadout
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
@@ -157,11 +159,11 @@ fun TripMapScreen(
                 HudIconButton(
                     onClick = onCenterOnMe,
                     contentDescription = stringResource(R.string.map_center_on_me),
-                    icon = { HudPinIcon(tint = HudCyan) },
+                    icon = { HudPinIcon(tint = AppPrimary) },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(12.dp)
-                        .background(HudBlack.copy(alpha = 0.75f), CircleShape),
+                        .background(AppSurface.copy(alpha = 0.92f), CircleShape),
                 )
             }
 
@@ -184,7 +186,7 @@ fun TripMapScreen(
                             Text(
                                 text = stringResource(R.string.map_order_leader_first),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = HudTextDim,
+                                color = AppTextMuted,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
@@ -235,7 +237,7 @@ private fun MapOverlayBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(HudBlack.copy(alpha = 0.88f))
+            .background(AppSurface.copy(alpha = 0.94f))
             .padding(horizontal = 16.dp),
     ) {
         HudTopBar(
@@ -247,7 +249,7 @@ private fun MapOverlayBar(
                 HudReadout(
                     label = stringResource(R.string.map_own_speed),
                     value = speedText(speedKmh),
-                    valueColor = if (speedKmh != null) HudCyan else HudTextDim,
+                    valueColor = if (speedKmh != null) AppPrimary else AppTextMuted,
                 )
             },
         )
@@ -543,13 +545,18 @@ private fun MemberMapRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .background(if (focused) HudCyan.copy(alpha = 0.08f) else HudBlack)
+            .background(if (focused) AppPrimarySoft else AppSurface)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // The same colour as this rider's pin, from the same function.
-        HudDot(color = if (member.hasPosition) riderColor(member.userId) else HudTextDim)
+        HudDot(color = if (member.hasPosition) riderColor(member.userId) else AppTextMuted)
+
+        // The badge appears only once the levels call has landed. Reserving
+        // space for one that may never arrive would leave a hole in every row
+        // on a trip where the request failed.
+        levelName?.let { RankIcon(levelName = it, iconSize = 22.dp) }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -561,7 +568,7 @@ private fun MemberMapRow(
                     member.label
                 },
                 style = MaterialTheme.typography.titleMedium,
-                color = HudText,
+                color = AppText,
             )
             Text(
                 text = buildString {
@@ -578,7 +585,7 @@ private fun MemberMapRow(
                     )
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
 
@@ -588,7 +595,7 @@ private fun MemberMapRow(
             Text(
                 text = speedText(Speed.kmh(member.speedMps)),
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
 
@@ -596,7 +603,7 @@ private fun MemberMapRow(
             Text(
                 text = "$it%",
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
     }

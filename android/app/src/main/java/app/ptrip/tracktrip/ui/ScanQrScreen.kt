@@ -31,11 +31,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import app.ptrip.tracktrip.R
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.ResultPoint
@@ -107,7 +107,7 @@ fun ScanQrScreen(
         Text(
             text = stringResource(R.string.qr_scan_hint),
             style = MaterialTheme.typography.labelSmall,
-            color = HudTextDim,
+            color = AppTextMuted,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
         )
@@ -122,7 +122,7 @@ private fun CameraDenied(askedAlready: Boolean, onRetry: () -> Unit) {
                 if (askedAlready) R.string.qr_camera_denied else R.string.qr_camera_needed
             ),
             style = MaterialTheme.typography.bodyMedium,
-            color = HudTextDim,
+            color = AppTextMuted,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
         )
@@ -174,7 +174,13 @@ private fun CameraPreview(onCodeScanned: (String) -> Unit) {
     }
 }
 
-/** Four corner brackets, the HUD's way of saying "aim here". */
+/**
+ * Four corner brackets: "aim here".
+ *
+ * Drawn in the accent blue rather than in white — white brackets vanish
+ * against a bright wall or a phone screen, which is most of what a rider
+ * points this at.
+ */
 @Composable
 private fun Viewfinder() {
     Box(
@@ -187,14 +193,14 @@ private fun Viewfinder() {
 
                 fun bracket(corner: Offset, dx: Float, dy: Float) {
                     drawLine(
-                        HudCyan,
+                        AppPrimary,
                         corner,
                         Offset(corner.x + arm * dx, corner.y),
                         strokeWidth = stroke,
                         cap = StrokeCap.Round,
                     )
                     drawLine(
-                        HudCyan,
+                        AppPrimary,
                         corner,
                         Offset(corner.x, corner.y + arm * dy),
                         strokeWidth = stroke,

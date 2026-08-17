@@ -8,7 +8,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.content.res.Resources
 import android.graphics.drawable.Drawable
 import androidx.compose.ui.graphics.toArgb
-import app.ptrip.tracktrip.ui.theme.HudBlack
+import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.riderColor
 
 /**
@@ -82,7 +82,10 @@ object RiderMarker {
         val density = resources.displayMetrics.density
         val pinWidth = PIN_WIDTH_DP * density
         val pinHeight = PIN_HEIGHT_DP * density
-        val outline = HudBlack.toArgb()
+        // The darkest ink in the palette. Still a *dark* outline on a light
+        // map: it is what keeps a bright pin from vanishing over a pale road,
+        // and what the name plate needs behind coloured text.
+        val outline = AppText.toArgb()
 
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color

@@ -15,8 +15,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
-import app.ptrip.tracktrip.ui.theme.HudAmber
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -34,14 +34,14 @@ fun SignInScreen(
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = stringResource(R.string.app_name).uppercase(),
+            text = stringResource(R.string.app_name),
             style = MaterialTheme.typography.headlineMedium,
-            color = HudAmber,
+            color = AppText,
         )
 
         if (state is SignInUiState.Loading) {
             CircularProgressIndicator(
-                color = HudCyan,
+                color = AppPrimary,
                 strokeWidth = 2.dp,
                 modifier = Modifier.padding(top = 24.dp),
             )
@@ -65,7 +65,7 @@ fun SignInScreen(
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun SignInScreenPreview() {
     TracktripTheme {
@@ -73,7 +73,7 @@ private fun SignInScreenPreview() {
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun SignInScreenErrorPreview() {
     TracktripTheme {

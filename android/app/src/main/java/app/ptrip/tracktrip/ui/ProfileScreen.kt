@@ -42,9 +42,14 @@ import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.LevelProgress
 import app.ptrip.tracktrip.data.ProfilePatch
 import app.ptrip.tracktrip.data.UserProfile
-import app.ptrip.tracktrip.ui.theme.HudAmber
+import app.ptrip.tracktrip.ui.theme.AppLine
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.RankIcon
+import app.ptrip.tracktrip.ui.theme.RiderRank
+import app.ptrip.tracktrip.ui.theme.rankTint
 import app.ptrip.tracktrip.ui.theme.HudAvatar
-import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudGap
 import app.ptrip.tracktrip.ui.theme.HudLoading
@@ -52,8 +57,6 @@ import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudReadout
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import java.util.Calendar
@@ -155,7 +158,7 @@ private fun ProfileForm(
                 )
                 if (state.uploadingAvatar) {
                     CircularProgressIndicator(
-                        color = HudCyan,
+                        color = AppPrimary,
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(88.dp),
                     )
@@ -165,18 +168,18 @@ private fun ProfileForm(
                 Text(
                     text = user.label,
                     style = MaterialTheme.typography.titleMedium,
-                    color = HudText,
+                    color = AppText,
                 )
                 Text(
                     text = stringResource(R.string.profile_change_photo),
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudCyan,
+                    color = AppPrimary,
                 )
                 user.email?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
-                        color = HudTextDim,
+                        color = AppTextMuted,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -283,13 +286,24 @@ private fun patchFor(
  */
 @Composable
 private fun LevelCard(level: LevelProgress) {
-    HudSurface(accent = HudAmber.copy(alpha = 0.4f)) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            HudReadout(
-                label = stringResource(R.string.profile_level),
-                value = level.levelName,
-                valueColor = HudAmber,
-            )
+    val rank = RiderRank.fromApiName(level.levelName)
+
+    HudSurface(accent = rankTint(rank).copy(alpha = 0.4f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // The badge is the one place the rank is a picture rather than a
+            // word, so it is given room: 48dp, beside the name rather than
+            // above it.
+            RankIcon(rank = rank, iconSize = 48.dp)
+            HudGap(width = 14.dp)
+            Column {
+                HudReadout(
+                    label = stringResource(R.string.profile_level),
+                    // The server's own wording, not the enum's: a rank this
+                    // build doesn't know still shows the name it was given.
+                    value = level.levelName,
+                    valueColor = rankTint(rank),
+                )
+            }
             HudGap()
             HudReadout(
                 label = stringResource(R.string.profile_total_km),
@@ -297,6 +311,7 @@ private fun LevelCard(level: LevelProgress) {
             )
         }
         LevelProgressBar(
+            tint = rankTint(rank),
             fraction = level.fractionThroughLevel,
             modifier = Modifier.padding(top = 14.dp),
         )
@@ -312,7 +327,7 @@ private fun LevelCard(level: LevelProgress) {
                 )
             } ?: stringResource(R.string.profile_level_top),
             style = MaterialTheme.typography.labelSmall,
-            color = HudTextDim,
+            color = AppTextMuted,
             modifier = Modifier.padding(top = 8.dp),
         )
     }
@@ -326,13 +341,17 @@ private fun LevelCard(level: LevelProgress) {
  * standing fact about how far somebody has ridden.
  */
 @Composable
-private fun LevelProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+private fun LevelProgressBar(
+    fraction: Float,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(PROGRESS_BAR_HEIGHT)
             .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
-            .background(HudTextDim.copy(alpha = 0.25f))
+            .background(AppLine)
     ) {
         // coerceAtLeast keeps a sliver visible at the bottom of a level, so a
         // rider one kilometre in sees that they have started rather than an
@@ -342,7 +361,7 @@ private fun LevelProgressBar(fraction: Float, modifier: Modifier = Modifier) {
                 .fillMaxWidth(fraction.coerceIn(0f, 1f).coerceAtLeast(0.015f))
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
-                .background(HudAmber)
+                .background(tint)
         )
     }
 }
@@ -437,7 +456,7 @@ private fun parseIsoDate(value: String): IsoDate? {
     return IsoDate(year, month - 1, day)
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun ProfilePreview() {
     TracktripTheme {
