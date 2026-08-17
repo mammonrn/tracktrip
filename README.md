@@ -8,7 +8,7 @@ WebSocket position feed is still a stub.
 
 ## Stack
 
-- Node.js (>=18) + Express
+- Node.js (>=20) + Express
 - SQLite via `better-sqlite3`
 - `ws` for the WebSocket server (stubbed for now)
 - PM2 for process management in production
