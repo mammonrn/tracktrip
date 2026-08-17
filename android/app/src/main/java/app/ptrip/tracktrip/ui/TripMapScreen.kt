@@ -63,7 +63,6 @@ import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.TilesOverlay
 
 /**
  * A point the map should move to, and a sequence number so that asking for the
@@ -294,13 +293,15 @@ private fun RiderMap(
             controller.setZoom(FALLBACK_ZOOM)
             controller.setCenter(GeoPoint(FALLBACK_CENTRE.lat, FALLBACK_CENTRE.lng))
 
-            // OpenStreetMap serves one style of tile and it is a daylight one.
-            // Rather than run a tile server to get a dark map, the standard
-            // tiles are put through osmdroid's own night-mode colour matrix —
-            // which is what its INVERT_COLORS constant is for — and then
-            // toned towards the app's navy by the scrim below. No custom
-            // tiles, no second server, and the labels stay readable.
-            overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
+            // Tiles are drawn as OpenStreetMap serves them.
+            //
+            // They used to be inverted by osmdroid's night-mode colour matrix
+            // and then washed with a dark scrim, which was the only way to
+            // make a daylight tile set belong in an app that was near-black
+            // everywhere else. The app is light now, so the tiles already
+            // match it — and the inversion was never free: it fought the
+            // cartography, turning green parks grey-brown and water into
+            // something the eye reads as land.
         }
     }
 
@@ -330,18 +331,9 @@ private fun RiderMap(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
-
-        // A thin navy wash over the tiles, so the map sits in the same world
-        // as the rest of the app instead of glowing out of it. Light enough
-        // to read a road name through.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(HudBlack.copy(alpha = 0.18f))
-        )
-    }
+    // No scrim: the map is the thing being read, and every layer over it costs
+    // contrast on the road names.
+    AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
     // Pins: added, removed, and then slid to where their rider now is.
     LaunchedEffect(members) {
