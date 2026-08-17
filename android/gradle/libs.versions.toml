@@ -11,6 +11,8 @@ okhttp = "5.5.0"
 securityCrypto = "1.1.0"
 coroutines = "1.11.0"
 lifecycleViewmodelCompose = "2.11.0"
+junit = "4.13.2"
+json = "20250517"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -33,6 +35,12 @@ androidx-credentials-play-services-auth = { group = "androidx.credentials", name
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+
+# JVM unit tests. org.json is stubbed out in android.jar (every method throws),
+# so the real implementation has to be on the test classpath for anything that
+# parses an API response to be testable without a device.
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 # EncryptedSharedPreferences for auth tokens at rest.
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }

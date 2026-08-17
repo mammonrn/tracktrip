@@ -7,6 +7,43 @@
     <string name="signed_in">Signed in</string>
     <string name="signed_in_as">Signed in as %1$s</string>
 
+    <!-- Trip list -->
+    <string name="invitations_title">Invitations</string>
+    <string name="your_trips_title">Your trips</string>
+    <string name="no_trips_yet">No trips yet. Create one, or wait to be invited.</string>
+    <string name="new_trip">New trip</string>
+    <string name="refresh">Refresh</string>
+    <string name="accept_invite">Accept</string>
+    <string name="invited_as">Invited as %1$s</string>
+    <string name="untitled_trip">Untitled trip</string>
+    <string name="status_active">Active</string>
+    <string name="status_ended">Ended</string>
+    <string name="role_owner">Owner</string>
+    <string name="role_member">Member</string>
+
+    <!-- Create trip -->
+    <string name="trip_name_label">Trip name</string>
+    <string name="create_trip">Create</string>
+    <string name="cancel">Cancel</string>
+    <string name="back">Back</string>
+
+    <!-- Trip detail -->
+    <string name="members_title">Members</string>
+    <string name="invite_title">Invite a rider</string>
+    <string name="invite_email_label">Google account email</string>
+    <string name="send_invite">Invite</string>
+    <string name="invite_sent_to">Invited %1$s</string>
+    <string name="invite_hint">They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
+    <string name="not_tracking_yet">not tracking yet</string>
+    <string name="start_sharing">Open live tracking</string>
+    <string name="view_final_positions">View final positions</string>
+    <string name="end_trip">End this trip</string>
+    <string name="end_trip_confirm">Ending the trip stops everyone\'s location sharing for good. It can\'t be undone.</string>
+    <string name="end_trip_yes">End trip</string>
+
+    <!-- Profile -->
+    <string name="profile_title">Profile</string>
+
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
     <!--

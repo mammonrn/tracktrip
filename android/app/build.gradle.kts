@@ -90,6 +90,15 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests {
+            // Anything android.jar stubs out returns a default instead of
+            // throwing. org.json is the one that matters here, and the real
+            // implementation is on the test classpath ahead of the stub.
+            isReturnDefaultValues = true
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -120,4 +129,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.json)
 }

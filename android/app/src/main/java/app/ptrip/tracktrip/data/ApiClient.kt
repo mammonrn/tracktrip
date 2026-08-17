@@ -1,0 +1,182 @@
+package app.ptrip.tracktrip.data
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+/** A failure with a message already fit to put in front of the user. */
+open class ApiException(message: String) : Exception(message)
+
+/**
+ * The session is gone for good — the refresh token was rejected, so there is
+ * nothing left to retry with and the user has to sign in again.
+ */
+class SessionExpiredException : ApiException("Your session expired. Please sign in again.")
+
+private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+/**
+ * Every authenticated call to the backend goes through here.
+ *
+ * Access tokens last an hour, so a long ride will outlive one mid-session.
+ * Rather than make each screen deal with that, a 401 is handled once here:
+ * refresh, then replay the original request. Only a failed *refresh* reaches
+ * the caller, as [SessionExpiredException].
+ */
+class ApiClient(
+    private val baseUrl: String,
+    private val tokenStore: TokenStore,
+    private val client: OkHttpClient = defaultClient(),
+) {
+
+    /**
+     * Serialises refreshes. Several screens can be loading at once, and
+     * without this each of their 401s would fire its own refresh — with the
+     * backend rotating the refresh token every time, the losers of that race
+     * would present an already-rotated token, which the backend deliberately
+     * treats as theft and answers by revoking every token the user has.
+     */
+    private val refreshMutex = Mutex()
+
+    suspend fun get(path: String): String = send("GET", path, body = null)
+
+    suspend fun post(path: String, body: JSONObject? = null): String =
+        send("POST", path, body?.toString() ?: "{}")
+
+    private suspend fun send(method: String, path: String, body: String?): String =
+        withContext(Dispatchers.IO) {
+            val first = execute(method, path, body, tokenStore.accessToken())
+            if (first.code != 401) {
+                return@withContext first.bodyOrThrow()
+            }
+            first.close()
+
+            // 401: one refresh, then one replay. If the replay also 401s the
+            // session is genuinely finished, so don't loop.
+            val refreshed = refreshAccessToken()
+            val second = execute(method, path, body, refreshed)
+            if (second.code == 401) {
+                second.close()
+                tokenStore.clear()
+                throw SessionExpiredException()
+            }
+            second.bodyOrThrow()
+        }
+
+    private fun execute(
+        method: String,
+        path: String,
+        body: String?,
+        accessToken: String?,
+    ): Outcome {
+        val builder = Request.Builder().url("$baseUrl$path")
+        if (accessToken != null) {
+            builder.header("Authorization", "Bearer $accessToken")
+        }
+        when (method) {
+            "GET" -> builder.get()
+            "POST" -> builder.post((body ?: "{}").toRequestBody(JSON_MEDIA_TYPE))
+            else -> throw IllegalArgumentException("unsupported method $method")
+        }
+
+        val response = try {
+            client.newCall(builder.build()).execute()
+        } catch (e: IOException) {
+            throw ApiException("Can't reach the server. Check your connection.")
+        }
+        return Outcome(response)
+    }
+
+    /**
+     * Swaps the refresh token for a fresh pair and stores it. Returns the new
+     * access token.
+     */
+    private suspend fun refreshAccessToken(): String = refreshMutex.withLock {
+        val refreshToken = tokenStore.refreshToken() ?: run {
+            tokenStore.clear()
+            throw SessionExpiredException()
+        }
+
+        val request = Request.Builder()
+            .url("$baseUrl/auth/refresh")
+            .post(JSONObject().put("refreshToken", refreshToken).toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: IOException) {
+            throw ApiException("Can't reach the server. Check your connection.")
+        }
+
+        response.use {
+            if (!it.isSuccessful) {
+                tokenStore.clear()
+                throw SessionExpiredException()
+            }
+            val json = try {
+                JSONObject(it.body.string())
+            } catch (e: Exception) {
+                tokenStore.clear()
+                throw SessionExpiredException()
+            }
+            val access = json.optString("accessToken").takeIf { s -> s.isNotEmpty() }
+            val refresh = json.optString("refreshToken").takeIf { s -> s.isNotEmpty() }
+            if (access == null || refresh == null) {
+                tokenStore.clear()
+                throw SessionExpiredException()
+            }
+            tokenStore.saveTokens(access, refresh)
+            access
+        }
+    }
+
+    private class Outcome(private val response: okhttp3.Response) {
+        val code: Int get() = response.code
+
+        fun close() = response.close()
+
+        /** The body on success; a message the user can read on anything else. */
+        fun bodyOrThrow(): String = response.use {
+            val payload = it.body.string()
+            if (it.isSuccessful) return payload
+
+            throw ApiException(serverMessage(payload) ?: genericMessage(it.code))
+        }
+
+        /**
+         * The backend answers errors as `{"error": "..."}`, and those
+         * messages are written to be read — "trip has ended", "only the trip
+         * owner can do this". Preferring them keeps the app's wording in step
+         * with the server's rules instead of guessing at them here.
+         */
+        private fun serverMessage(payload: String): String? = try {
+            JSONObject(payload).optString("error").takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+
+        private fun genericMessage(code: Int): String = when (code) {
+            403 -> "You don't have permission to do that."
+            404 -> "That's no longer there."
+            409 -> "That can't be done right now."
+            429 -> "Slow down a moment, then try again."
+            in 500..599 -> "The server is having trouble. Try again shortly."
+            else -> "Something went wrong (HTTP $code)."
+        }
+    }
+
+    private companion object {
+        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+}
