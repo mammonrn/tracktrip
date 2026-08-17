@@ -5,7 +5,7 @@ import supertest from 'supertest';
 import { createApp } from '../src/app.js';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
-import { validatePositionInput } from '../src/routes/positions.js';
+import { validatePositionInput, POSITION_RATE_LIMIT } from '../src/routes/positions.js';
 
 const JWT_SECRET = 'test-secret';
 
@@ -180,40 +180,41 @@ test('timestamp is optional and offsets are normalized to UTC', async () => {
   assert.equal(withOffset.body.recorded_at, '2026-05-01T08:00:00.000Z');
 });
 
-test('POST rejects malformed input', async () => {
-  const { app, db, tripId, memberToken } = setup();
-  const bad = async (body, why) => {
-    const res = await post(app, tripId, memberToken, body);
-    assert.equal(res.status, 400, `expected 400 for ${why}, got ${res.status}`);
+test('validatePositionInput rejects every malformed field', () => {
+  // Exercised directly rather than over HTTP: the full matrix is more
+  // requests than the rate limit allows in one window, and the wiring
+  // between the two is covered by the test below.
+  const bad = (body, why) => {
+    const { error, value } = validatePositionInput(body);
+    assert.ok(error, `expected a rejection for ${why}`);
+    assert.equal(value, undefined, `${why} must not produce a value`);
   };
 
-  await bad({ lng: 98.9 }, 'missing lat');
-  await bad({ lat: 18.7 }, 'missing lng');
-  await bad({ ...validFix, lat: 91 }, 'lat above 90');
-  await bad({ ...validFix, lat: -91 }, 'lat below -90');
-  await bad({ ...validFix, lng: 181 }, 'lng above 180');
-  await bad({ ...validFix, lng: -181 }, 'lng below -180');
-  await bad({ ...validFix, lat: ' 18.7 ' }, 'lat as string');
-  await bad({ ...validFix, lat: null }, 'lat null');
+  bad({ lng: 98.9 }, 'missing lat');
+  bad({ lat: 18.7 }, 'missing lng');
+  bad({ ...validFix, lat: 91 }, 'lat above 90');
+  bad({ ...validFix, lat: -91 }, 'lat below -90');
+  bad({ ...validFix, lng: 181 }, 'lng above 180');
+  bad({ ...validFix, lng: -181 }, 'lng below -180');
+  bad({ ...validFix, lat: ' 18.7 ' }, 'lat as string');
+  bad({ ...validFix, lat: null }, 'lat null');
+  bad(undefined, 'no body at all');
 
-  await bad({ ...validFix, timestamp: 'not-a-date' }, 'unparseable timestamp');
-  await bad({ ...validFix, timestamp: 1746086400000 }, 'timestamp as epoch number');
-  await bad({ ...validFix, timestamp: null }, 'timestamp null');
+  bad({ ...validFix, timestamp: 'not-a-date' }, 'unparseable timestamp');
+  bad({ ...validFix, timestamp: 1746086400000 }, 'timestamp as epoch number');
+  bad({ ...validFix, timestamp: null }, 'timestamp null');
 
-  await bad({ ...validFix, accuracy: -1 }, 'negative accuracy');
-  await bad({ ...validFix, accuracy: 'high' }, 'accuracy as string');
-  await bad({ ...validFix, speed: -1 }, 'negative speed');
-  await bad({ ...validFix, heading: 361 }, 'heading above 360');
-  await bad({ ...validFix, heading: -1 }, 'negative heading');
-  await bad({ ...validFix, battery_pct: 101 }, 'battery above 100');
-  await bad({ ...validFix, battery_pct: -1 }, 'negative battery');
-  await bad({ ...validFix, battery_pct: 50.5 }, 'fractional battery');
-
-  // Nothing rejected may have been written.
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM member_positions').get().count, 0);
+  bad({ ...validFix, accuracy: -1 }, 'negative accuracy');
+  bad({ ...validFix, accuracy: 'high' }, 'accuracy as string');
+  bad({ ...validFix, speed: -1 }, 'negative speed');
+  bad({ ...validFix, heading: 361 }, 'heading above 360');
+  bad({ ...validFix, heading: -1 }, 'negative heading');
+  bad({ ...validFix, battery_pct: 101 }, 'battery above 100');
+  bad({ ...validFix, battery_pct: -1 }, 'negative battery');
+  bad({ ...validFix, battery_pct: 50.5 }, 'fractional battery');
 
   // Boundary values are valid, so these must NOT be rejected.
-  const edge = await post(app, tripId, memberToken, {
+  const edge = validatePositionInput({
     lat: -90,
     lng: 180,
     accuracy: 0,
@@ -221,9 +222,31 @@ test('POST rejects malformed input', async () => {
     heading: 360,
     battery_pct: 0,
   });
+  assert.equal(edge.error, undefined);
+  assert.equal(edge.value.heading, 360);
+  assert.equal(edge.value.battery_pct, 0);
+});
+
+test('POST answers 400 for malformed input and writes nothing', async () => {
+  const { app, db, tripId, memberToken } = setup();
+
+  for (const [body, why] of [
+    [{ lng: 98.9 }, 'missing lat'],
+    [{ ...validFix, lat: 91 }, 'lat out of range'],
+    [{ ...validFix, timestamp: 'not-a-date' }, 'unparseable timestamp'],
+    [{ ...validFix, battery_pct: 101 }, 'battery out of range'],
+  ]) {
+    const res = await post(app, tripId, memberToken, body);
+    assert.equal(res.status, 400, `expected 400 for ${why}, got ${res.status}`);
+    assert.ok(res.body.error, 'and an error message the client can show');
+  }
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM member_positions').get().count, 0);
+
+  // A valid fix on the same route still goes through.
+  const edge = await post(app, tripId, memberToken, { lat: -90, lng: 180, heading: 360 });
   assert.equal(edge.status, 200);
   assert.equal(edge.body.heading, 360);
-  assert.equal(edge.body.battery_pct, 0);
 });
 
 test('validatePositionInput leaves omitted optional fields null', () => {
@@ -405,8 +428,10 @@ test('drift while parked does not creep the total upwards', async () => {
 
   await post(app, tripId, memberToken, leg(0, 0));
 
-  // 30 fixes over five minutes, each a couple of metres from the last.
-  for (let i = 1; i <= 30; i += 1) {
+  // As many drifting fixes as one rate-limit window allows, each a couple of
+  // metres from the last. (distance.test.js runs a hundred of them straight
+  // through the rule, where no limit applies.)
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max - 1; i += 1) {
     const res = await post(app, tripId, memberToken, {
       lat: 18.79 + i * 0.000018,
       lng: 98.98,
@@ -473,6 +498,79 @@ test('distance is measured within a trip, not across two of them', async () => {
   assert.equal(bangkok.status, 200);
 
   assert.equal(totalKmOf(db, ownerId), 0);
+});
+
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+
+test('position reports are capped per minute, as a safety net against runaway clients', async () => {
+  const { app, tripId, memberToken } = setup();
+
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max; i += 1) {
+    const res = await post(app, tripId, memberToken, leg(i * 0.1, i * 0.25));
+    assert.equal(res.status, 200, `report ${i} should be within the limit`);
+  }
+
+  const capped = await post(app, tripId, memberToken, validFix);
+  assert.equal(capped.status, 429);
+  assert.deepEqual(capped.body, { error: 'too many position updates' });
+});
+
+test('the cap is per rider, so riders behind one carrier NAT do not throttle each other', async () => {
+  const { app, tripId, memberToken, ownerToken } = setup();
+  const sharedIp = '203.0.113.50';
+
+  const report = (token, i) =>
+    supertest(app)
+      .post(`/trips/${tripId}/positions`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Forwarded-For', sharedIp)
+      .send(leg(i * 0.1, i * 0.25));
+
+  // One rider burns their whole budget...
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max; i += 1) {
+    assert.equal((await report(memberToken, i)).status, 200);
+  }
+  assert.equal((await report(memberToken, 99)).status, 429);
+
+  // ...and their riding partner, on the same IP, is unaffected.
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max; i += 1) {
+    assert.equal(
+      (await report(ownerToken, i)).status,
+      200,
+      `the owner's report ${i} must not be charged to the member`
+    );
+  }
+});
+
+test('a rider at their reporting cap can still read, and use the rest of the API', async () => {
+  const { app, tripId, memberToken } = setup();
+
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max; i += 1) {
+    await post(app, tripId, memberToken, leg(i * 0.1, i * 0.25));
+  }
+  assert.equal((await post(app, tripId, memberToken, validFix)).status, 429);
+
+  // The limiter is attached to POST /positions alone. Nothing else may share
+  // its budget — the map screen especially, which polls the read side.
+  for (let i = 1; i <= POSITION_RATE_LIMIT.max * 2; i += 1) {
+    assert.equal((await get(app, tripId, memberToken)).status, 200, `read ${i} must not be capped`);
+  }
+
+  const authed = (path) => supertest(app).get(path).set('Authorization', `Bearer ${memberToken}`);
+  assert.equal((await authed('/me')).status, 200);
+  assert.equal((await authed('/me/level')).status, 200);
+  assert.equal((await authed('/trips')).status, 200);
+  assert.equal((await authed('/invites')).status, 200);
+  assert.equal((await authed(`/trips/${tripId}/waypoints`)).status, 200);
+  assert.equal(
+    (
+      await supertest(app)
+        .post(`/trips/${tripId}/waypoints`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({ name: 'Still working', lat: 18.8, lng: 98.9, type: 'live' })
+    ).status,
+    201
+  );
 });
 
 // ─── Ended trips ────────────────────────────────────────────────────────────
