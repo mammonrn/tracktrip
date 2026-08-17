@@ -193,11 +193,11 @@ Where each rider is right now. One row per rider per trip in
 `member_positions` — the latest fix, not a trail.
 
 Both routes require `Authorization: Bearer <accessToken>` **and** trip
-membership, exactly like waypoints. They differ from waypoints in one way that
-matters: **both are closed once the trip ends.** A trip with
-`status = 'ended'` has stopped tracking, so it accepts no new fixes *and*
-serves no position reads — both return `409 {"error": "trip has ended"}`.
-Membership is checked first, so a non-member still gets `403` either way.
+membership, exactly like waypoints — and follow the same ended-trip rule:
+once a trip has `status = 'ended'` it takes no new fixes (`POST` returns
+`409 {"error": "trip has ended"}`) but stays readable, so a finished ride can
+still show where everyone ended up. Membership is checked before trip status,
+so a non-member gets `403` either way; ending a trip never makes it public.
 
 Clients poll `GET`; there is no push yet.
 

@@ -116,18 +116,15 @@ export function validatePositionInput(body, now = new Date()) {
 export function createPositionsRouter({ db, config }) {
   const router = Router();
 
-  // Both routes are membership-gated like waypoints, and both are closed once
-  // the trip ends: a finished ride neither takes new fixes nor reports live
-  // ones. Mounted here rather than per-route so a route added later can't
-  // quietly miss the guard.
-  router.use(
-    '/trips/:id/positions',
-    requireAuth(db, config),
-    requireTripMembership(db),
-    requireActiveTrip()
-  );
+  router.use('/trips/:id/positions', requireAuth(db, config), requireTripMembership(db));
 
-  router.post('/trips/:id/positions', (req, res) => {
+  // Reads stay open on an ended trip; writes don't — same rule as waypoints,
+  // so a finished ride can still be looked back on (where everyone finished)
+  // while nothing new attaches to it.
+  //
+  // requireActiveTrip therefore has to be mounted per write route: any route
+  // added to this file that stores something must carry it explicitly.
+  router.post('/trips/:id/positions', requireActiveTrip(), (req, res) => {
     const { error, value } = validatePositionInput(req.body);
     if (error) {
       return res.status(400).json({ error });

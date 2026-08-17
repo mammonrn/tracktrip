@@ -345,7 +345,7 @@ test('unknown trip returns 404, malformed trip id returns 400', async () => {
 
 // ─── Ended trips ────────────────────────────────────────────────────────────
 
-test('an ended trip refuses both new positions and position reads', async () => {
+test('an ended trip refuses new positions', async () => {
   const { app, db, tripId, ownerToken, memberToken, memberId } = setup();
 
   const before = await post(app, tripId, memberToken, {
@@ -356,8 +356,8 @@ test('an ended trip refuses both new positions and position reads', async () => 
 
   assert.equal((await endTrip(app, tripId, ownerToken)).status, 200);
 
-  // This is the whole reason positions live behind requireActiveTrip: an
-  // ended trip stops tracking, for writers and readers alike.
+  // This is the whole reason positions sit behind requireActiveTrip: a
+  // finished ride stops taking location updates from its members.
   const write = await post(app, tripId, memberToken, {
     lat: 19.9,
     lng: 99.9,
@@ -366,15 +366,10 @@ test('an ended trip refuses both new positions and position reads', async () => 
   assert.equal(write.status, 409);
   assert.equal(write.body.error, 'trip has ended');
 
-  const read = await get(app, tripId, memberToken);
-  assert.equal(read.status, 409);
-  assert.equal(read.body.error, 'trip has ended');
-
   // The owner is no more privileged here than anyone else.
   assert.equal((await post(app, tripId, ownerToken, validFix)).status, 409);
-  assert.equal((await get(app, tripId, ownerToken)).status, 409);
 
-  // The rejected write must not have changed the stored fix.
+  // The rejected writes must not have changed the stored fix.
   const stored = db
     .prepare('SELECT * FROM member_positions WHERE trip_id = ? AND user_id = ?')
     .get(tripId, memberId);
@@ -382,12 +377,48 @@ test('an ended trip refuses both new positions and position reads', async () => 
   assert.equal(stored.recorded_at, '2026-05-01T08:00:00.000Z');
 });
 
-test('a non-member of an ended trip still gets 403, not 409', async () => {
+test('an ended trip stays readable, so a trip summary can show where everyone finished', async () => {
+  const { app, tripId, ownerToken, memberToken, memberId, ownerId } = setup();
+
+  await post(app, tripId, ownerToken, { ...validFix, timestamp: '2026-05-01T08:00:00.000Z' });
+  await post(app, tripId, memberToken, {
+    lat: 19.1,
+    lng: 99.2,
+    timestamp: '2026-05-01T09:00:00.000Z',
+    battery_pct: 41,
+  });
+
+  await endTrip(app, tripId, ownerToken);
+
+  // Reads stay open after the trip ends, matching waypoints.
+  for (const [who, token] of [
+    ['owner', ownerToken],
+    ['member', memberToken],
+  ]) {
+    const res = await get(app, tripId, token);
+    assert.equal(res.status, 200, `${who} should still be able to read positions`);
+    assert.deepEqual(
+      res.body.map((p) => p.user_id),
+      [memberId, ownerId]
+    );
+  }
+
+  // The final fixes are intact, not blanked out.
+  const res = await get(app, tripId, ownerToken);
+  const last = res.body.find((p) => p.user_id === memberId);
+  assert.equal(last.lat, 19.1);
+  assert.equal(last.lng, 99.2);
+  assert.equal(last.battery_pct, 41);
+  assert.equal(last.recorded_at, '2026-05-01T09:00:00.000Z');
+});
+
+test('a non-member of an ended trip still gets 403, on reads and writes alike', async () => {
   const { app, tripId, ownerToken, outsiderToken } = setup();
   await endTrip(app, tripId, ownerToken);
 
   // Membership is checked before trip status, so an outsider learns nothing
-  // about the trip beyond that they are not in it.
+  // about the trip beyond that they are not in it — and ending a trip does
+  // not make it public.
   assert.equal((await get(app, tripId, outsiderToken)).status, 403);
   assert.equal((await post(app, tripId, outsiderToken, validFix)).status, 403);
 });
