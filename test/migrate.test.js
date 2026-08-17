@@ -100,13 +100,40 @@ test('0004 upgrades a database that already holds invites, without losing them',
     );
 
     const applied = runMigrations(db, MIGRATIONS_DIR);
-    assert.deepEqual(applied, ['0004_trip_invites_accept.sql']);
+    assert.ok(applied.includes('0004_trip_invites_accept.sql'));
 
     const invite = db.prepare('SELECT * FROM trip_invites WHERE id = ?').get(inviteId);
     assert.equal(invite.email, 'friend@gmail.com'); // backfilled to match new writes
     assert.equal(invite.status, 'pending'); // and otherwise untouched
     assert.equal(invite.accepted_at, null);
     assert.equal(invite.accepted_by, null);
+
+    assert.equal(runMigrations(db, MIGRATIONS_DIR).length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('0005 gives every existing rider a zero lifetime distance', () => {
+  const db = freshDb();
+  const cleanup = migrateUpTo(db, '0005');
+  try {
+    const riderId = Number(
+      db.prepare("INSERT INTO users (google_sub, email) VALUES ('sub-rider', 'rider@gmail.com')").run()
+        .lastInsertRowid
+    );
+
+    const applied = runMigrations(db, MIGRATIONS_DIR);
+    assert.ok(applied.includes('0005_user_total_km.sql'));
+
+    // Riders who existed before the column did start from zero, not NULL —
+    // arithmetic against NULL would silently swallow every later addition.
+    const rider = db.prepare('SELECT * FROM users WHERE id = ?').get(riderId);
+    assert.equal(rider.total_km, 0);
+    assert.equal(rider.email, 'rider@gmail.com');
+
+    db.prepare('UPDATE users SET total_km = total_km + ? WHERE id = ?').run(12.5, riderId);
+    assert.equal(db.prepare('SELECT total_km FROM users WHERE id = ?').get(riderId).total_km, 12.5);
 
     assert.equal(runMigrations(db, MIGRATIONS_DIR).length, 0);
   } finally {
