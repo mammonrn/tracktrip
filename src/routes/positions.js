@@ -4,7 +4,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireSharingAllowed } from '../auth/sharingAllowed.js';
 import { countableDistanceKm } from '../trips/distance.js';
-import { isSessionOpen } from '../trips/sharing.js';
+import { isSharingOn } from '../trips/sharing.js';
 
 const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
@@ -37,14 +37,14 @@ function serializePosition(row, { tripActive, nowIso }) {
     photo_url: row.photo_url,
     role: row.role,
     // Derived, not stored, and deliberately the same condition the write
-    // guard applies: this rider may be reporting right now. On a running trip
-    // that is everyone, session or not — which is what it has always meant
-    // to a client. Once the trip ends only those who chose to carry on stay
-    // true. (It used to be a column nothing ever wrote, so it read true
-    // forever; it now answers the question it always claimed to.)
-    is_sharing: tripActive || isSessionOpen(session, nowIso),
-    // When this rider's own session lapses. null means either no session or
-    // one with no expiry — during a running trip most riders have neither.
+    // guard applies, so a client can tell in advance whether a report would
+    // be accepted. On a running trip that is everyone who hasn't paused —
+    // most riders never touch the controls, and no session means sharing.
+    // Ending the trip stops the whole group, so this is false for everyone
+    // afterwards.
+    is_sharing: tripActive && isSharingOn(session, nowIso),
+    // When this rider's session lapses on its own. null for a rider with no
+    // session, and for one set to run until they stop it.
     sharing_until: session?.expires_at ?? null,
     lat: row.lat,
     lng: row.lng,

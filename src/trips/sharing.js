@@ -53,17 +53,32 @@ export function expiryFor(durationMinutes, now = new Date()) {
 }
 
 /**
- * Whether a session row still counts as sharing.
+ * Whether a session row still counts as running.
  *
- * Expired rows are left in place rather than deleted on a timer, so this is
- * the single place that decides — used by the write guard and by the reads
- * that report who is live, which must never disagree.
+ * A row whose `expires_at` has passed is spent — either it ran out on its own
+ * or the rider stopped it, which are recorded the same way. Spent rows are
+ * left in place rather than swept on a timer, so this is the single place
+ * that decides.
  */
 export function isSessionOpen(session, nowIso = new Date().toISOString()) {
   if (!session) {
     return false;
   }
   return session.expires_at === null || session.expires_at > nowIso;
+}
+
+/**
+ * Whether this rider's location is being shared on a running trip.
+ *
+ * **No session row means yes.** Riders share by default for the whole trip;
+ * a session is only created when someone reaches for the sharing controls,
+ * so absence is the ordinary state and not an opt-out.
+ *
+ * Says nothing about the trip itself — a trip that has ended stops everyone
+ * regardless, which is the caller's business to check.
+ */
+export function isSharingOn(session, nowIso = new Date().toISOString()) {
+  return !session || isSessionOpen(session, nowIso);
 }
 
 /** Shapes a sharing session for API responses. */

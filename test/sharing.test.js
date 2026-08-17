@@ -75,11 +75,8 @@ const report = (app, tripId, token, body = { lat: 18.79, lng: 98.98 }) =>
 const readPositions = (app, tripId, token) =>
   supertest(app).get(`/trips/${tripId}/positions`).set('Authorization', `Bearer ${token}`);
 
-/** Ends the trip without going through the API, to keep tests independent. */
-const endTrip = (db, tripId) =>
-  db
-    .prepare("UPDATE trips SET status = 'ended', ended_at = ? WHERE id = ?")
-    .run(new Date().toISOString(), tripId);
+const endTripAsOwner = (app, tripId, ownerToken) =>
+  supertest(app).post(`/trips/${tripId}/end`).set('Authorization', `Bearer ${ownerToken}`).send();
 
 /** Rewinds a rider's session so it has already lapsed. */
 const expireSession = (db, tripId, userId) =>
@@ -87,7 +84,108 @@ const expireSession = (db, tripId, userId) =>
     .prepare('UPDATE sharing_sessions SET expires_at = ? WHERE trip_id = ? AND user_id = ?')
     .run('2020-01-01T00:00:00.000Z', tripId, userId);
 
-// ─── Starting and stopping ──────────────────────────────────────────────────
+// ─── Sharing is on by default ───────────────────────────────────────────────
+
+test('a rider with no session shares by default for the whole trip', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  assert.equal((await report(app, tripId, memberToken)).status, 200);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions').get().count,
+    0,
+    'reporting must not need a session'
+  );
+
+  const me = (await readPositions(app, tripId, memberToken)).body.find(
+    (m) => m.user_id === memberId
+  );
+  assert.equal(me.is_sharing, true);
+  assert.equal(me.sharing_until, null);
+});
+
+// ─── Pausing mid-trip ───────────────────────────────────────────────────────
+
+test('stopping pauses a rider who never touched the controls', async () => {
+  const { app, tripId, memberToken, memberId } = setup();
+
+  assert.equal((await report(app, tripId, memberToken)).status, 200);
+
+  const stopped = await stopSharing(app, tripId, memberToken);
+  assert.equal(stopped.status, 200);
+  assert.equal(stopped.body.sharing, false);
+
+  // The pause has to bite: a stop that left reports flowing would be a
+  // button that does nothing.
+  const blocked = await report(app, tripId, memberToken, { lat: 19.5, lng: 99.5 });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.error, 'your sharing session has ended');
+
+  const me = (await readPositions(app, tripId, memberToken)).body.find(
+    (m) => m.user_id === memberId
+  );
+  assert.equal(me.is_sharing, false, 'and the group can see they have gone dark');
+});
+
+test('stopping does not delete the session, which would switch sharing back on', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  await stopSharing(app, tripId, memberToken);
+
+  // No row is how a rider who never paused looks, and that reads as sharing.
+  // A stop therefore has to leave a trace behind.
+  const row = db
+    .prepare('SELECT * FROM sharing_sessions WHERE trip_id = ? AND user_id = ?')
+    .get(tripId, memberId);
+  assert.ok(row, 'the pause is recorded');
+  assert.ok(row.expires_at <= new Date().toISOString(), 'as a session already spent');
+});
+
+test('stopping twice reports the second as a no-op', async () => {
+  const { app, tripId, memberToken } = setup();
+
+  assert.equal((await stopSharing(app, tripId, memberToken)).status, 200);
+  assert.equal((await stopSharing(app, tripId, memberToken)).status, 409);
+});
+
+test('starting again resumes a paused rider', async () => {
+  const { app, tripId, memberToken } = setup();
+
+  await stopSharing(app, tripId, memberToken);
+  assert.equal((await report(app, tripId, memberToken)).status, 409);
+
+  const resumed = await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
+  assert.equal(resumed.status, 200);
+  assert.equal(resumed.body.sharing, true);
+  assert.equal((await report(app, tripId, memberToken, { lat: 19.1, lng: 99.1 })).status, 200);
+});
+
+test('a session that runs out pauses the rider just as a stop would', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+
+  await startSharing(app, tripId, memberToken, { duration_minutes: 30 });
+  assert.equal((await report(app, tripId, memberToken)).status, 200);
+
+  expireSession(db, tripId, memberId);
+
+  const lapsed = await report(app, tripId, memberToken, { lat: 19.5, lng: 99.5 });
+  assert.equal(lapsed.status, 409);
+  assert.equal(lapsed.body.error, 'your sharing session has ended');
+});
+
+test('one rider pausing leaves everyone else sharing', async () => {
+  const { app, tripId, ownerToken, memberToken, memberId, ownerId } = setup();
+
+  await stopSharing(app, tripId, memberToken);
+
+  assert.equal((await report(app, tripId, ownerToken)).status, 200);
+  assert.equal((await report(app, tripId, memberToken)).status, 409);
+
+  const rows = (await readPositions(app, tripId, ownerToken)).body;
+  assert.equal(rows.find((m) => m.user_id === ownerId).is_sharing, true);
+  assert.equal(rows.find((m) => m.user_id === memberId).is_sharing, false);
+});
+
+// ─── Starting ───────────────────────────────────────────────────────────────
 
 test('starting sharing with a duration sets an expiry that far ahead', async () => {
   const { app, tripId, memberToken } = setup();
@@ -97,12 +195,10 @@ test('starting sharing with a duration sets an expiry that far ahead', async () 
     const res = await startSharing(app, tripId, memberToken, { duration_minutes: minutes });
     assert.equal(res.status, 200, `duration ${minutes} should be accepted`);
     assert.equal(res.body.sharing, true);
-    assert.ok(res.body.started_at);
 
     const expiresAt = Date.parse(res.body.expires_at);
-    const expected = before + minutes * 60_000;
     assert.ok(
-      Math.abs(expiresAt - expected) < 5_000,
+      Math.abs(expiresAt - (before + minutes * 60_000)) < 5_000,
       `expiry for ${minutes} minutes was ${res.body.expires_at}`
     );
   }
@@ -116,10 +212,11 @@ test('starting with a null duration shares until stopped', async () => {
   assert.equal(res.body.sharing, true);
   assert.equal(res.body.expires_at, null);
 
-  const row = db
-    .prepare('SELECT * FROM sharing_sessions WHERE trip_id = ? AND user_id = ?')
-    .get(tripId, memberId);
-  assert.equal(row.expires_at, null);
+  assert.equal(
+    db.prepare('SELECT * FROM sharing_sessions WHERE trip_id = ? AND user_id = ?')
+      .get(tripId, memberId).expires_at,
+    null
+  );
 });
 
 test('start rejects a duration that is not on offer', async () => {
@@ -142,13 +239,12 @@ test('start rejects a duration that is not on offer', async () => {
 });
 
 test('starting again replaces the session, so a rider can change their mind', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
+  const { app, db, tripId, memberToken } = setup();
 
   const first = await startSharing(app, tripId, memberToken, { duration_minutes: 30 });
   assert.ok(first.body.expires_at);
 
   const second = await startSharing(app, tripId, memberToken, { duration_minutes: null });
-  assert.equal(second.status, 200);
   assert.equal(second.body.expires_at, null, 'switched to sharing until stopped');
 
   assert.equal(
@@ -156,24 +252,6 @@ test('starting again replaces the session, so a rider can change their mind', as
     1,
     'and did not pile up a second row'
   );
-});
-
-test('stopping clears the session, and stopping twice reports the second as a no-op', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
-
-  await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
-
-  const stopped = await stopSharing(app, tripId, memberToken);
-  assert.equal(stopped.status, 200);
-  assert.equal(stopped.body.sharing, false);
-  assert.equal(stopped.body.expires_at, null);
-  assert.equal(
-    db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions WHERE user_id = ?').get(memberId).count,
-    0
-  );
-
-  const again = await stopSharing(app, tripId, memberToken);
-  assert.equal(again.status, 409);
 });
 
 test('sharing routes need membership and authentication', async () => {
@@ -197,187 +275,130 @@ test('sharing routes 404 an unknown trip and 400 a malformed id', async () => {
   assert.equal((await stopSharing(app, 9999, memberToken)).status, 404);
 });
 
-// ─── Riding on after the trip ends ──────────────────────────────────────────
+// ─── Ending the trip stops the whole group ──────────────────────────────────
 
-test('a rider who chose to carry on keeps reporting after the trip ends', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
+test('ending a trip clears every sharing session in it', async () => {
+  const { app, db, tripId, ownerToken, memberToken } = setup();
 
-  assert.equal((await report(app, tripId, memberToken)).status, 200);
-  assert.equal(
-    (await startSharing(app, tripId, memberToken, { duration_minutes: 240 })).status,
-    200
-  );
-
-  endTrip(db, tripId);
-
-  // This is the whole change: the trip is over, the group has broken up, and
-  // this rider is still on the road.
-  const after = await report(app, tripId, memberToken, { lat: 19.2, lng: 99.3 });
-  assert.equal(after.status, 200);
-  assert.equal(after.body.lat, 19.2);
-
-  const stored = db
-    .prepare('SELECT lat FROM member_positions WHERE trip_id = ? AND user_id = ?')
-    .get(tripId, memberId);
-  assert.equal(stored.lat, 19.2);
-});
-
-test('sharing until stopped survives the trip ending, with no expiry to reach', async () => {
-  const { app, db, tripId, memberToken } = setup();
-
-  await startSharing(app, tripId, memberToken, { duration_minutes: null });
-  endTrip(db, tripId);
-
-  assert.equal((await report(app, tripId, memberToken, { lat: 19.1, lng: 99.1 })).status, 200);
-
-  // ...until they stop by hand, after which the trip's ended state applies again.
-  assert.equal((await stopSharing(app, tripId, memberToken)).status, 200);
-  const blocked = await report(app, tripId, memberToken, { lat: 19.4, lng: 99.4 });
-  assert.equal(blocked.status, 409);
-  assert.equal(blocked.body.error, 'trip has ended');
-});
-
-test('a rider who never opted in is blocked exactly as before', async () => {
-  const { app, db, tripId, memberToken, ownerToken } = setup();
-
-  // The member carries on; the owner goes home without pressing anything.
   await startSharing(app, tripId, memberToken, { duration_minutes: 240 });
-  endTrip(db, tripId);
+  await startSharing(app, tripId, ownerToken, { duration_minutes: null });
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions').get().count, 2);
 
-  assert.equal((await report(app, tripId, memberToken)).status, 200);
+  assert.equal((await endTripAsOwner(app, tripId, ownerToken)).status, 200);
 
-  const owner = await report(app, tripId, ownerToken);
-  assert.equal(owner.status, 409);
-  assert.equal(owner.body.error, 'trip has ended');
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions WHERE trip_id = ?').get(tripId).count,
+    0,
+    'ending the trip stops sharing for the whole group'
+  );
 });
 
-test('an expired session stops reporting, and says so distinctly', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
+test('nobody can report after the trip ends, whatever session they had', async () => {
+  const { app, tripId, ownerToken, memberToken } = setup();
 
-  await startSharing(app, tripId, memberToken, { duration_minutes: 30 });
-  endTrip(db, tripId);
-  assert.equal((await report(app, tripId, memberToken)).status, 200, 'still inside the window');
+  // Every shape of session, including the one that used to survive.
+  await startSharing(app, tripId, memberToken, { duration_minutes: null });
+  await startSharing(app, tripId, ownerToken, { duration_minutes: 240 });
 
-  expireSession(db, tripId, memberId);
+  await endTripAsOwner(app, tripId, ownerToken);
 
-  const lapsed = await report(app, tripId, memberToken, { lat: 19.5, lng: 99.5 });
-  assert.equal(lapsed.status, 409);
-  // Distinct from "trip has ended": the rider did opt in, their time ran out.
-  assert.equal(lapsed.body.error, 'your sharing session has ended');
+  for (const [who, token] of [
+    ['the member who was sharing indefinitely', memberToken],
+    ['the owner who had four hours left', ownerToken],
+  ]) {
+    const res = await report(app, tripId, token, { lat: 19.9, lng: 99.9 });
+    assert.equal(res.status, 409, `${who} must be stopped`);
+    assert.equal(res.body.error, 'trip has ended');
+  }
 });
 
-test('an expired session is no obstacle while the trip is still running', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
-
-  await startSharing(app, tripId, memberToken, { duration_minutes: 30 });
-  expireSession(db, tripId, memberId);
-
-  // A live trip needs no session at all, so a stale one must not get in the way.
-  assert.equal((await report(app, tripId, memberToken)).status, 200);
-});
-
-test('ending a trip leaves every session untouched, to run out on its own', async () => {
+test('a session left over from before cannot outlive the trip either', async () => {
   const { app, db, tripId, ownerToken, memberToken, memberId } = setup();
 
-  await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
-  const before = db
-    .prepare('SELECT * FROM sharing_sessions WHERE trip_id = ? AND user_id = ?')
-    .get(tripId, memberId);
+  await endTripAsOwner(app, tripId, ownerToken);
 
-  // Through the real endpoint, so it is the owner's action being tested.
-  assert.equal(
-    (await supertest(app).post(`/trips/${tripId}/end`).set('Authorization', `Bearer ${ownerToken}`))
-      .status,
-    200
-  );
+  // Forced straight into the table, standing in for a row that somehow
+  // escaped the clear-out. The guard checks the trip first, so it changes
+  // nothing.
+  db.prepare(
+    'INSERT INTO sharing_sessions (trip_id, user_id, started_at, expires_at) VALUES (?, ?, ?, NULL)'
+  ).run(tripId, memberId, new Date().toISOString());
 
-  const after = db
-    .prepare('SELECT * FROM sharing_sessions WHERE trip_id = ? AND user_id = ?')
-    .get(tripId, memberId);
-  assert.deepEqual(after, before, 'ending a trip must not stop anyone sharing');
+  const res = await report(app, tripId, memberToken);
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, 'trip has ended');
 });
 
-test('sharing can be switched on after the trip has already ended', async () => {
-  const { app, db, tripId, memberToken } = setup();
+test('sharing cannot be started or stopped once the trip has ended', async () => {
+  const { app, tripId, ownerToken, memberToken } = setup();
 
-  endTrip(db, tripId);
-  assert.equal((await report(app, tripId, memberToken)).status, 409);
+  await endTripAsOwner(app, tripId, ownerToken);
 
-  // Forgot to press it before the owner ended the trip — still allowed.
-  const started = await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
-  assert.equal(started.status, 200);
-  assert.equal((await report(app, tripId, memberToken, { lat: 19.7, lng: 99.7 })).status, 200);
+  const started = await startSharing(app, tripId, memberToken, { duration_minutes: 240 });
+  assert.equal(started.status, 409);
+  assert.equal(started.body.error, 'trip has ended');
+
+  assert.equal((await stopSharing(app, tripId, memberToken)).status, 409);
 });
 
-test('distance still accrues for a rider carrying on alone', async () => {
-  const { app, db, tripId, memberToken, memberId } = setup();
+test('after the trip ends nobody reads as sharing', async () => {
+  const { app, tripId, ownerToken, memberToken } = setup();
 
   await startSharing(app, tripId, memberToken, { duration_minutes: 240 });
-  await report(app, tripId, memberToken, {
-    lat: 18.79,
-    lng: 98.98,
-    timestamp: '2026-05-01T08:00:00.000Z',
-  });
-  endTrip(db, tripId);
+  await report(app, tripId, memberToken);
+  await report(app, tripId, ownerToken);
 
-  await report(app, tripId, memberToken, {
-    lat: 18.89,
-    lng: 98.98,
-    timestamp: '2026-05-01T08:15:00.000Z',
-  });
+  await endTripAsOwner(app, tripId, ownerToken);
 
-  const totalKm = db.prepare('SELECT total_km FROM users WHERE id = ?').get(memberId).total_km;
-  assert.ok(totalKm > 10 && totalKm < 12, `expected ~11 km, got ${totalKm}`);
+  const rows = (await readPositions(app, tripId, ownerToken)).body;
+  assert.equal(rows.length, 2, 'reads stay open on an ended trip');
+  for (const member of rows) {
+    assert.equal(member.is_sharing, false, `${member.display_name} must read as not sharing`);
+    assert.equal(member.sharing_until, null);
+    assert.ok(member.lat !== null, 'their last position is still on the map');
+  }
+});
+
+test('ending one trip does not stop sharing on another', async () => {
+  const { app, db, tripId, ownerToken, ownerId } = setup();
+
+  const otherTripId = Number(
+    db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Still riding', ?, 'active')").run(
+      ownerId
+    ).lastInsertRowid
+  );
+  db.prepare('INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, ?)').run(
+    otherTripId,
+    ownerId,
+    'owner'
+  );
+  await startSharing(app, otherTripId, ownerToken, { duration_minutes: 240 });
+
+  await endTripAsOwner(app, tripId, ownerToken);
+
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM sharing_sessions WHERE trip_id = ?').get(otherTripId)
+      .count,
+    1
+  );
+  assert.equal((await report(app, otherTripId, ownerToken)).status, 200);
 });
 
 // ─── What the map sees ──────────────────────────────────────────────────────
 
-test('GET positions reports everyone as sharing while the trip runs', async () => {
-  const { app, tripId, ownerToken, memberToken } = setup();
-
-  await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
-
-  const res = await readPositions(app, tripId, ownerToken);
-  assert.equal(res.status, 200);
-  for (const member of res.body) {
-    assert.equal(member.is_sharing, true, 'a running trip needs no session from anyone');
-  }
-
-  // The member's own expiry is still reported, so a client can show it.
-  const withSession = res.body.find((m) => m.sharing_until !== null);
-  assert.ok(withSession, 'the rider who set a timer has an expiry to show');
-});
-
-test('after the trip ends, only riders still sharing read as sharing', async () => {
-  const { app, db, tripId, ownerToken, memberToken, memberId, ownerId } = setup();
-
-  await startSharing(app, tripId, memberToken, { duration_minutes: 240 });
-  endTrip(db, tripId);
-
-  const res = await readPositions(app, tripId, ownerToken);
-  assert.equal(res.status, 200, 'reads stay open on an ended trip');
-
-  const member = res.body.find((m) => m.user_id === memberId);
-  const owner = res.body.find((m) => m.user_id === ownerId);
-  assert.equal(member.is_sharing, true);
-  assert.ok(member.sharing_until, 'and shows when they will drop off');
-  assert.equal(owner.is_sharing, false);
-  assert.equal(owner.sharing_until, null);
-
-  // Once the member's time is up, the map agrees with the write guard.
-  expireSession(db, tripId, memberId);
-  const later = await readPositions(app, tripId, ownerToken);
-  assert.equal(later.body.find((m) => m.user_id === memberId).is_sharing, false);
-});
-
 test('POST positions answers with the reporter own sharing state', async () => {
-  const { app, db, tripId, memberToken } = setup();
+  const { app, tripId, memberToken } = setup();
+
+  const plain = await report(app, tripId, memberToken);
+  assert.equal(plain.body.is_sharing, true);
+  assert.equal(plain.body.sharing_until, null, 'no session, nothing to count down');
 
   await startSharing(app, tripId, memberToken, { duration_minutes: 60 });
-  endTrip(db, tripId);
-
-  const res = await report(app, tripId, memberToken);
-  assert.equal(res.status, 200);
-  assert.equal(res.body.is_sharing, true);
-  assert.ok(res.body.sharing_until);
+  const timed = await report(app, tripId, memberToken, {
+    lat: 19.1,
+    lng: 99.1,
+    timestamp: new Date(Date.now() + 1000).toISOString(),
+  });
+  assert.equal(timed.body.is_sharing, true);
+  assert.ok(timed.body.sharing_until, 'and now there is');
 });
