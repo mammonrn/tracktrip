@@ -73,6 +73,16 @@ class MeApi(private val client: ApiClient) {
 
     suspend fun profile(): UserProfile = JSONObject(client.get("/me")).toUserProfile()
 
+    /**
+     * How far the rider has ridden and what that makes them.
+     *
+     * Kept apart from [profile] because the server derives it from `total_km`
+     * rather than storing it, and because a failure to load a badge must not
+     * be able to blank out a rider's own account details.
+     */
+    suspend fun levelProgress(): LevelProgress =
+        JSONObject(client.get("/me/level")).toLevelProgress()
+
     suspend fun updateProfile(patch: ProfilePatch): UserProfile =
         JSONObject(client.patch("/me", patch.toJson())).toUserProfile()
 

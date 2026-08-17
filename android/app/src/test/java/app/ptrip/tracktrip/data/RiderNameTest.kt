@@ -46,6 +46,7 @@ class RiderNameTest {
             sharingUntil = null,
             lat = null,
             lng = null,
+            speedMps = null,
             batteryPct = null,
             recordedAt = null,
         )

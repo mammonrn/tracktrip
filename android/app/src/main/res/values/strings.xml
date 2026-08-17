@@ -73,6 +73,11 @@
     <string name="profile_save">Save</string>
     <string name="profile_change_photo">Tap the photo to change it</string>
     <string name="profile_image_unreadable">That file couldn\'t be read as an image.</string>
+    <string name="profile_level">Rider level</string>
+    <string name="profile_total_km">Ridden</string>
+    <string name="profile_km_value">%1$s km</string>
+    <string name="profile_level_next">%1$s km to %2$s</string>
+    <string name="profile_level_top">Top of the table — nothing left to climb.</string>
 
     <!-- Sharing state -->
     <string name="sharing_on">Sharing location</string>
@@ -93,6 +98,16 @@
     <string name="map_last_seen">Last known position</string>
     <string name="map_you">%1$s (you)</string>
     <string name="map_no_location">Couldn\'t work out where you are. Check that location is on.</string>
+    <string name="map_speed_kmh">%1$d km/h</string>
+    <!-- No speed to show: an older build, or a fix whose provider had none. -->
+    <string name="map_speed_unknown">—</string>
+    <string name="map_own_speed">Your speed</string>
+    <!--
+      The list order is worked out from which way the group is heading, not
+      from distance along a road — the app has no route to measure against.
+      The row says so, because a bare "in front first" would read as a fact.
+    -->
+    <string name="map_order_leader_first">In front first · estimated from heading</string>
 
     <!-- Location permission -->
     <string name="location_permission_rationale">Tracktrip needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>

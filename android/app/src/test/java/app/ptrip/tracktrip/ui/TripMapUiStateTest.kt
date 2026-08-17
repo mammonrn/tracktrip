@@ -1,8 +1,11 @@
 package app.ptrip.tracktrip.ui
 
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.riderLabel
+import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.ui.theme.riderColor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,6 +30,7 @@ class TripMapUiStateTest {
             sharingUntil = null,
             lat = lat,
             lng = lng,
+            speedMps = null,
             batteryPct = null,
             recordedAt = null,
         )
@@ -73,6 +77,28 @@ class TripMapUiStateTest {
 
         assertTrue(state.placed.isEmpty())
         assertTrue(state.unplaced.isEmpty())
+    }
+
+    @Test
+    fun `the map calls a rider what the rest of the app calls them`() {
+        // Both the pin and the row read MemberPosition.label, which is
+        // riderLabel — so a rider who chose a handle is that handle on the
+        // map, not the legal name Google supplied.
+        val rider = member(1, 18.79, 98.98)
+            .copy(displayName = "Poom Sukjai", username = "speedy")
+
+        assertEquals("speedy", rider.label)
+        assertEquals(riderLabel("speedy", "Poom Sukjai", "Rider 1"), rider.label)
+        assertEquals("Poom Sukjai", rider.copy(username = null).label)
+        assertEquals("Poom Sukjai", rider.copy(username = "  ").label)
+    }
+
+    @Test
+    fun `a member's fix converts to a plain point, and a missing one does not`() {
+        // What the camera, the marker slide and the ordering all read from.
+        assertEquals(LatLng(18.79, 98.98), member(1, 18.79, 98.98).latLng)
+        assertNull(member(2).latLng)
+        assertNull(member(3, lat = 18.79).latLng)
     }
 
     @Test

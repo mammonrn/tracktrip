@@ -182,6 +182,31 @@ accepting an emailed invite. All routes require
   Owner-only to match `POST /trips/:id/invites`: these are suggestions *for*
   that form, and a member tapping one would get a `403`.
 
+- `GET /trips/:id/member-levels` — **any member**. Every rider on the trip and
+  the level their lifetime distance earns them, in one call:
+
+  ```json
+  [
+    {
+      "user_id": 2, "total_km": 1600,
+      "level": { "name": "Wanderer", "min_km": 1500 },
+      "next_level": { "name": "Voyager", "min_km": 3500 },
+      "km_to_next": 1900
+    }
+  ]
+  ```
+
+  Each row is `user_id` plus exactly what [`GET /me/level`](#profile) returns
+  for that rider — same `progressFor`, so the map and the profile screen can
+  never disagree about where somebody stands.
+
+  A batch because the map lists a level beside every name: `/me/level` only
+  ever answers for the caller, and a trip of eight would otherwise be eight
+  requests from a phone that is already polling positions. Readable by any
+  member, not just the owner — they can already see each other's names and
+  positions, and a level is the least private thing on that screen. Works on
+  an ended trip: a level is a lifetime figure, not a live one.
+
 #### Join codes
 
 A short-lived code, shown as a QR, for adding someone standing next to you
@@ -314,7 +339,7 @@ Clients poll `GET`; there is no push yet.
   | `lng` | number, −180 to 180 |
   | `timestamp` | optional ISO 8601 string — when the *device* took the fix, not when the request arrived. Defaults to now, and is normalized to UTC. |
   | `accuracy` | optional number, 0 or greater (metres) |
-  | `speed` | optional number, 0 or greater |
+  | `speed` | optional number, 0 or greater — **metres per second** |
   | `heading` | optional number, 0 to 360 |
   | `battery_pct` | optional integer, 0 to 100 |
 
@@ -365,6 +390,13 @@ Clients poll `GET`; there is no push yet.
 
   `username` is the handle the rider chose, or `null`. Clients show it in
   preference to `display_name`, which is whatever Google supplied.
+
+  `speed` is **metres per second**, stored exactly as the device reported it —
+  which is the unit Android's `Location.getSpeed()` uses. Converting on the
+  way in would have put a unit in the database that nothing else in the system
+  uses, so the conversion to km/h happens once, in the client, at the point of
+  display. `null` means the phone never sent a speed for this fix; a rider
+  stopped at a light sends a real `0`, and the two are not the same thing.
 
   `is_sharing` answers exactly what the write guard would: *may this rider be
   reporting right now?* On a running trip that is everyone. Once the trip ends

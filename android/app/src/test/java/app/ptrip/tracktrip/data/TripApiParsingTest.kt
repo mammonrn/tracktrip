@@ -114,8 +114,50 @@ class TripApiParsingTest {
         assertEquals(19.1, member.lat!!, 1e-9)
         assertEquals(99.2, member.lng!!, 1e-9)
         assertEquals(63, member.batteryPct)
+        // Metres per second, exactly as stored. The conversion to km/h is the
+        // display's job — see map/Speed.kt.
+        assertEquals(22.4, member.speedMps!!, 1e-9)
         assertEquals("2026-05-01T09:00:00.000Z", member.recordedAt)
         assertFalse(member.isOwner)
+    }
+
+    @Test
+    fun `a rider whose phone sent no speed parses as no speed, not as stopped`() {
+        // Both cases arrive as the same shape from an older build, so this is
+        // the line between "not reported" and "reported as standing still".
+        val payload = """
+            [{"user_id":2,"display_name":"Friend","photo_url":null,"role":"member",
+              "is_sharing":true,"sharing_until":null,"lat":19.1,"lng":99.2,"accuracy":null,
+              "speed":null,"heading":null,"battery_pct":null,
+              "recorded_at":"2026-05-01T09:00:00.000Z"},
+             {"user_id":3,"display_name":"Stopped","photo_url":null,"role":"member",
+              "is_sharing":true,"sharing_until":null,"lat":19.1,"lng":99.2,"accuracy":null,
+              "speed":0,"heading":null,"battery_pct":null,
+              "recorded_at":"2026-05-01T09:00:00.000Z"}]
+        """.trimIndent()
+
+        val members = JSONArray(payload).map { it.toMemberPosition() }
+
+        assertNull(members[0].speedMps)
+        assertEquals(0.0, members[1].speedMps!!, 1e-9)
+    }
+
+    @Test
+    fun `GET member-levels parses one row per rider`() {
+        val payload = """
+            [{"user_id":1,"total_km":589.01,"level":{"name":"Rookie Rider","min_km":500},
+              "next_level":{"name":"Wanderer","min_km":1500},"km_to_next":910.99},
+             {"user_id":2,"total_km":0,"level":{"name":"Novice","min_km":0},
+              "next_level":{"name":"Rookie Rider","min_km":500},"km_to_next":500}]
+        """.trimIndent()
+
+        val levels = JSONArray(payload).map { it.toRiderLevel() }.associateBy { it.userId }
+
+        assertEquals(2, levels.size)
+        assertEquals("Rookie Rider", levels[1L]!!.levelName)
+        assertEquals(589.01, levels[1L]!!.totalKm, 1e-9)
+        assertEquals("Novice", levels[2L]!!.levelName)
+        assertEquals(0.0, levels[2L]!!.totalKm, 1e-9)
     }
 
     @Test
