@@ -352,6 +352,107 @@ class TripApiParsingTest {
     }
 
     @Test
+    fun `the progress bar fills between the two thresholds, not from zero`() {
+        // 1,600 km is a fifth of the way from Wanderer (1,500) to Voyager
+        // (3,500) — not 1600/3500. A bar measured from zero would jump to
+        // nearly full on every promotion, which reads as "almost there" at
+        // exactly the moment a rider has furthest to go.
+        val progress = LevelProgress(
+            totalKm = 1600.0,
+            levelName = "Wanderer",
+            nextLevelName = "Voyager",
+            kmToNext = 1900.0,
+            levelMinKm = 1500.0,
+            nextLevelMinKm = 3500.0,
+        )
+
+        assertEquals(0.05f, progress.fractionThroughLevel, 1e-6f)
+    }
+
+    @Test
+    fun `a rider who has just been promoted starts the bar empty`() {
+        val progress = LevelProgress(
+            totalKm = 1500.0,
+            levelName = "Wanderer",
+            nextLevelName = "Voyager",
+            kmToNext = 2000.0,
+            levelMinKm = 1500.0,
+            nextLevelMinKm = 3500.0,
+        )
+
+        assertEquals(0f, progress.fractionThroughLevel, 1e-6f)
+    }
+
+    @Test
+    fun `the top of the table is a full bar, not an empty one`() {
+        // Nothing left to fill towards is a finished ladder, and an empty bar
+        // would read as a rider who had somehow lost all their distance.
+        val progress = JSONObject(
+            """{"total_km":25000.0,"level":{"name":"Legendary","min_km":20000},
+                "next_level":null,"km_to_next":null}"""
+        ).toLevelProgress()
+
+        assertEquals(1f, progress.fractionThroughLevel, 1e-6f)
+    }
+
+    @Test
+    fun `a malformed level table cannot divide by zero`() {
+        // Defensive: the thresholds come from a table the backend expects to
+        // retune, and two levels accidentally sharing a minimum must not put
+        // NaN into a layout.
+        val progress = LevelProgress(
+            totalKm = 500.0,
+            levelName = "Rookie Rider",
+            nextLevelName = "Wanderer",
+            kmToNext = 0.0,
+            levelMinKm = 500.0,
+            nextLevelMinKm = 500.0,
+        )
+
+        assertEquals(1f, progress.fractionThroughLevel, 1e-6f)
+    }
+
+    @Test
+    fun `GET waypoints parses planned stops and live drops apart`() {
+        val payload = """
+            {"planned":[
+               {"id":1,"trip_id":7,"name":"Mae Rim","lat":18.9,"lng":98.9,
+                "type":"planned","order_index":0,"added_by":1,
+                "created_at":"2026-05-01T08:00:00.000Z"},
+               {"id":2,"trip_id":7,"name":"Samoeng","lat":18.8,"lng":98.7,
+                "type":"planned","order_index":1,"added_by":1,
+                "created_at":"2026-05-01T08:01:00.000Z"}],
+             "live":[
+               {"id":3,"trip_id":7,"name":"Coffee","lat":18.85,"lng":98.8,
+                "type":"live","order_index":null,"added_by":2,
+                "created_at":"2026-05-01T09:00:00.000Z"}]}
+        """.trimIndent()
+
+        val waypoints = JSONObject(payload).toTripWaypoints()
+
+        assertEquals(2, waypoints.planned.size)
+        assertEquals(1, waypoints.live.size)
+        assertEquals(3, waypoints.all.size)
+
+        // Planned stops keep their route position; a live drop has none, and
+        // the two must not be conflated — order_index 0 is a real first stop.
+        assertEquals(0, waypoints.planned[0].orderIndex)
+        assertTrue(waypoints.planned[0].isPlanned)
+        assertNull(waypoints.live[0].orderIndex)
+        assertFalse(waypoints.live[0].isPlanned)
+        assertEquals("Coffee", waypoints.live[0].name)
+        assertEquals(18.85, waypoints.live[0].lat, 1e-9)
+    }
+
+    @Test
+    fun `a trip with no waypoints parses as empty rather than failing`() {
+        val waypoints = JSONObject("""{"planned":[],"live":[]}""").toTripWaypoints()
+
+        assertTrue(waypoints.isEmpty)
+        assertTrue(waypoints.all.isEmpty())
+    }
+
+    @Test
     fun `an empty list parses as an empty list, not a failure`() {
         assertTrue(JSONArray("[]").map { it.toTrip() }.isEmpty())
         assertTrue(JSONArray("[]").map { it.toInvite() }.isEmpty())

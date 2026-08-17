@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.CameraTarget
 import app.ptrip.tracktrip.map.FALLBACK_CENTRE
 import app.ptrip.tracktrip.map.FALLBACK_ZOOM
@@ -43,6 +44,7 @@ import app.ptrip.tracktrip.map.MarkerMotion
 import app.ptrip.tracktrip.map.RiderMarker
 import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
+import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.initialCamera
 import app.ptrip.tracktrip.ui.theme.HudBlack
 import app.ptrip.tracktrip.ui.theme.HudCyan
@@ -146,6 +148,7 @@ fun TripMapScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 RiderMap(
                     members = state.placed,
+                    waypoints = state.waypoints.all,
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = { focused = it },
@@ -271,6 +274,7 @@ private const val MEMBER_LIST_WEIGHT = 0.55f
 @Composable
 private fun RiderMap(
     members: List<MemberPosition>,
+    waypoints: List<Waypoint>,
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
@@ -309,6 +313,10 @@ private fun RiderMap(
     // where that rider is until their slide has finished.
     val markers = remember { mutableMapOf<Long, Marker>() }
     val drawn = remember { mutableMapOf<Long, LatLng>() }
+
+    // Kept apart from the rider markers so the two can never be confused for
+    // one another — by this code or by the person reading the screen.
+    val waypointMarkers = remember { mutableListOf<Marker>() }
     var framedOnRiders by remember { mutableStateOf(false) }
     var framedOnMe by remember { mutableStateOf(false) }
 
@@ -339,6 +347,13 @@ private fun RiderMap(
     LaunchedEffect(members) {
         val targets = syncMarkers(mapView, members, markers, drawn, onMarkerTap)
         slideMarkers(mapView, markers, drawn, targets)
+    }
+
+    // Waypoints are rebuilt wholesale rather than diffed and animated: a stop
+    // does not move, so there is never anything to slide, and there are few
+    // enough of them that redrawing costs nothing.
+    LaunchedEffect(waypoints) {
+        syncWaypoints(mapView, waypoints, waypointMarkers)
     }
 
     // The opening camera: it follows this phone's own position while the trip
@@ -438,6 +453,40 @@ private fun syncMarkers(
 
     view.invalidate()
     return placed.associate { it.first.userId to it.second }
+}
+
+/**
+ * Draws the trip's waypoints, replacing whatever was drawn before.
+ *
+ * They are added to the map *before* the rider markers in z-order terms only
+ * incidentally — osmdroid draws overlays in list order, and since these are
+ * removed and re-added on each change they end up on top. That is acceptable:
+ * a stop is a fixed thing a rider is looking for, and a pin passing over it
+ * for a second and a half is the transient one.
+ */
+private fun syncWaypoints(
+    view: MapView,
+    waypoints: List<Waypoint>,
+    drawn: MutableList<Marker>,
+) {
+    drawn.forEach { view.overlays.remove(it) }
+    drawn.clear()
+
+    waypoints.forEach { waypoint ->
+        val marker = Marker(view).apply {
+            position = GeoPoint(waypoint.lat, waypoint.lng)
+            setAnchor(Marker.ANCHOR_CENTER, WaypointMarker.anchorV(view.resources))
+            icon = WaypointMarker.forWaypoint(waypoint, view.resources)
+            title = waypoint.name
+            // Tapping a stop does nothing: it is not a rider, so there is no
+            // row to highlight, and the name is already drawn on the pin.
+            setOnMarkerClickListener { _, _ -> true }
+        }
+        drawn.add(marker)
+        view.overlays.add(marker)
+    }
+
+    view.invalidate()
 }
 
 /**

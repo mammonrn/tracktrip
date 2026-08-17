@@ -6,7 +6,11 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -291,6 +296,11 @@ private fun LevelCard(level: LevelProgress) {
                 value = stringResource(R.string.profile_km_value, formatKm(level.totalKm)),
             )
         }
+        LevelProgressBar(
+            fraction = level.fractionThroughLevel,
+            modifier = Modifier.padding(top = 14.dp),
+        )
+
         Text(
             // At the top of the table there is no next level — which the
             // server sends as null, distinct from "0 km to go".
@@ -303,10 +313,41 @@ private fun LevelCard(level: LevelProgress) {
             } ?: stringResource(R.string.profile_level_top),
             style = MaterialTheme.typography.labelSmall,
             color = HudTextDim,
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(top = 8.dp),
         )
     }
 }
+
+/**
+ * How far through the current level the rider is.
+ *
+ * Two boxes rather than Material's LinearProgressIndicator: that one is built
+ * for an operation in flight and animates itself accordingly, where this is a
+ * standing fact about how far somebody has ridden.
+ */
+@Composable
+private fun LevelProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(PROGRESS_BAR_HEIGHT)
+            .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
+            .background(HudTextDim.copy(alpha = 0.25f))
+    ) {
+        // coerceAtLeast keeps a sliver visible at the bottom of a level, so a
+        // rider one kilometre in sees that they have started rather than an
+        // empty trough that looks like nothing was recorded.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f).coerceAtLeast(0.015f))
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
+                .background(HudAmber)
+        )
+    }
+}
+
+private val PROGRESS_BAR_HEIGHT = 6.dp
 
 /** Whole kilometres, grouped. The decimals the server keeps are for its own sums. */
 private fun formatKm(km: Double): String = "%,d".format(km.roundToLong())

@@ -8,6 +8,7 @@ import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
+import app.ptrip.tracktrip.data.TripWaypoints
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RideOrder
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,8 @@ data class TripMapUiState(
     val members: List<MemberPosition> = emptyList(),
     /** Each member's rider level, keyed by user id. Empty until it loads. */
     val levels: Map<Long, RiderLevel> = emptyMap(),
+    /** The trip's planned stops and live drops. Drawn, never listed as members. */
+    val waypoints: TripWaypoints = TripWaypoints(),
     /**
      * Whether [members] is ordered leader-first rather than by how recently
      * each rider reported.
@@ -122,6 +125,7 @@ class TripMapViewModel(
                 }
 
                 loadLevels(members)
+                loadWaypoints()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
@@ -154,6 +158,28 @@ class TripMapViewModel(
             return
         }
         _uiState.update { it.copy(levels = levels) }
+    }
+
+    /**
+     * The trip's waypoints, re-read on every poll.
+     *
+     * Unlike levels, these do change during a ride: a rider dropping a live
+     * point at a viewpoint expects it on everyone's map within a poll or two,
+     * not on the next app restart. The payload is a handful of rows.
+     *
+     * Its failure is swallowed for the same reason levels' is — a map that
+     * still shows every rider is not broken because the stops did not load.
+     */
+    private suspend fun loadWaypoints() {
+        val waypoints = try {
+            tripApi.waypoints(tripId)
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            return
+        } catch (e: ApiException) {
+            return
+        }
+        _uiState.update { it.copy(waypoints = waypoints) }
     }
 
     /** Rolls each rider's fix forward, keeping the one before it. */
