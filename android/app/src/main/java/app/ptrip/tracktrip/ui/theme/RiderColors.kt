@@ -11,8 +11,8 @@ import androidx.compose.ui.graphics.Color
  * when the whole point is telling riders apart at a glance.
  */
 private val RIDER_PALETTE = listOf(
-    Color(0xFF5FE3F0), // arc cyan
-    Color(0xFFFFB53F), // instrument amber
+    HudCyan, // arc cyan
+    HudAmber, // instrument amber
     Color(0xFF7CFF9B), // signal green
     Color(0xFFFF7BD5), // magenta
     Color(0xFF9B8CFF), // violet

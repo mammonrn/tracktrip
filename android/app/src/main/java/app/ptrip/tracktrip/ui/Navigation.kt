@@ -17,6 +17,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 sealed interface Screen {
     data object Trips : Screen
     data object CreateTrip : Screen
+    data object Settings : Screen
     data class TripDetail(val tripId: Long) : Screen
 }
 

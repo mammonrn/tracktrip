@@ -15,6 +15,8 @@ data class AuthSession(
     val accessToken: String,
     val refreshToken: String,
     val displayName: String?,
+    val email: String?,
+    val photoUrl: String?,
 )
 
 /** Any failure worth showing the user a message about. */
@@ -79,11 +81,20 @@ class AuthApi(
             throw AuthApiException("Server response was missing sign-in tokens.")
         }
 
-        val displayName = json.optJSONObject("user")
-            ?.optString("display_name")
-            ?.takeIf { it.isNotEmpty() && it != "null" }
+        // `optString` returns the literal "null" for a JSON null, which is a
+        // real possibility here: display_name and photo_url are both nullable
+        // columns, and Google doesn't always supply a picture.
+        val user = json.optJSONObject("user")
+        fun field(name: String): String? =
+            user?.optString(name)?.takeIf { it.isNotEmpty() && it != "null" }
 
-        return AuthSession(accessToken, refreshToken, displayName)
+        return AuthSession(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            displayName = field("display_name"),
+            email = field("email"),
+            photoUrl = field("photo_url"),
+        )
     }
 
     private companion object {

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one colour the platform needs before Compose starts. Everything else
+  lives in ui/theme/Theme.kt; keep this in step with `HudBlack` there.
+-->
+<resources>
+    <color name="hud_background">#0B0E1A</color>
+</resources>

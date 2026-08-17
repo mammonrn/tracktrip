@@ -29,6 +29,8 @@ import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
 import app.ptrip.tracktrip.ui.Screen
+import app.ptrip.tracktrip.ui.SettingsScreen
+import app.ptrip.tracktrip.ui.SettingsViewModel
 import app.ptrip.tracktrip.ui.SignInScreen
 import app.ptrip.tracktrip.ui.SignInUiState
 import app.ptrip.tracktrip.ui.SignInViewModel
@@ -98,7 +100,7 @@ private fun TracktripApp(container: AppContainer, modifier: Modifier = Modifier)
         is SignInUiState.SignedIn -> SignedInNavigation(
             container = container,
             backStack = backStack,
-            displayName = current.displayName,
+            user = current,
             onSignOut = {
                 backStack.resetToRoot()
                 signInViewModel.signOut()
@@ -152,7 +154,7 @@ private fun TracktripApp(container: AppContainer, modifier: Modifier = Modifier)
 private fun SignedInNavigation(
     container: AppContainer,
     backStack: BackStack,
-    displayName: String?,
+    user: SignInUiState.SignedIn,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -167,14 +169,30 @@ private fun SignedInNavigation(
     when (val screen = backStack.current) {
         Screen.Trips -> TripListScreen(
             state = tripsState,
-            displayName = displayName,
+            displayName = user.displayName,
             onOpenTrip = { backStack.push(Screen.TripDetail(it.id)) },
             onCreateTrip = { backStack.push(Screen.CreateTrip) },
             onAcceptInvite = tripsViewModel::acceptInvite,
             onRefresh = tripsViewModel::refresh,
-            onSignOut = onSignOut,
+            onOpenSettings = { backStack.push(Screen.Settings) },
             modifier = modifier,
         )
+
+        Screen.Settings -> {
+            val settingsViewModel: SettingsViewModel = viewModel()
+            val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+
+            SettingsScreen(
+                state = settingsState,
+                displayName = user.displayName,
+                email = user.email,
+                onLanguageChange = settingsViewModel::setLanguage,
+                onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
+                onSignOut = onSignOut,
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
 
         Screen.CreateTrip -> {
             val createViewModel: CreateTripViewModel =

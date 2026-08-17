@@ -44,6 +44,22 @@
     <!-- Profile -->
     <string name="profile_title">Profile</string>
 
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_profile">Profile</string>
+    <string name="settings_language">Language</string>
+    <!--
+      Language names stay in their own language: someone looking for Thai is
+      looking for "ไทย", not for the English word for it.
+    -->
+    <string name="language_thai">ไทย</string>
+    <string name="language_english">English</string>
+    <string name="settings_sharing_duration">Default sharing duration</string>
+    <string name="duration_30_minutes">30 minutes</string>
+    <string name="duration_1_hour">1 hour</string>
+    <string name="duration_4_hours">4 hours</string>
+    <string name="duration_until_stopped">Until I stop it</string>
+
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
     <!--
