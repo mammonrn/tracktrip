@@ -32,6 +32,7 @@ import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.ui.theme.HudAvatar
 import app.ptrip.tracktrip.ui.theme.HudChevronIcon
 import app.ptrip.tracktrip.ui.theme.HudClockIcon
+import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
@@ -60,6 +61,8 @@ fun SettingsScreen(
     state: SettingsUiState,
     displayName: String?,
     email: String?,
+    photoUrl: String?,
+    onOpenProfile: () -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onSharingDurationChange: (SharingDuration) -> Unit,
     onSignOut: () -> Unit,
@@ -67,6 +70,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var openSection by rememberSaveable { mutableStateOf(SECTION_NONE) }
+    var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
 
     fun toggle(section: String) {
         openSection = if (openSection == section) SECTION_NONE else section
@@ -82,7 +86,12 @@ fun SettingsScreen(
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             HudDivider()
 
-            ProfileRow(displayName = displayName, email = email)
+            ProfileRow(
+                displayName = displayName,
+                email = email,
+                photoUrl = photoUrl,
+                onClick = onOpenProfile,
+            )
 
             HudDivider()
 
@@ -131,23 +140,44 @@ fun SettingsScreen(
 
         HudDangerButton(
             text = stringResource(R.string.sign_out),
-            onClick = onSignOut,
+            onClick = { confirmingSignOut = true },
             modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 24.dp),
+        )
+    }
+
+    // Signing out drops the stored tokens, so the way back is a full Google
+    // sign-in. Worth one tap of confirmation.
+    if (confirmingSignOut) {
+        HudConfirmDialog(
+            title = stringResource(R.string.sign_out_confirm_title),
+            message = stringResource(R.string.sign_out_confirm_message),
+            confirmText = stringResource(R.string.sign_out),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                confirmingSignOut = false
+                onSignOut()
+            },
+            onDismiss = { confirmingSignOut = false },
         )
     }
 }
 
-/**
- * Who is signed in. Not a link: there is no profile screen to open yet, and a
- * chevron that goes nowhere is worse than none.
- */
+/** Who is signed in, and the way into editing it. */
 @Composable
-private fun ProfileRow(displayName: String?, email: String?) {
+private fun ProfileRow(
+    displayName: String?,
+    email: String?,
+    photoUrl: String?,
+    onClick: () -> Unit,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HudAvatar(name = displayName)
+        HudAvatar(name = displayName, photoUrl = photoUrl)
         Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
             Text(
                 text = displayName ?: stringResource(R.string.signed_in),
@@ -160,6 +190,7 @@ private fun ProfileRow(displayName: String?, email: String?) {
                 color = HudTextDim,
             )
         }
+        HudChevronIcon()
     }
 }
 
@@ -245,6 +276,8 @@ private fun SettingsPreview() {
             state = SettingsUiState(),
             displayName = "Poom",
             email = "rider@gmail.com",
+            photoUrl = null,
+            onOpenProfile = {},
             onLanguageChange = {},
             onSharingDurationChange = {},
             onSignOut = {},

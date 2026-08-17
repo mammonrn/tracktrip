@@ -59,6 +59,40 @@
     <string name="duration_1_hour">1 hour</string>
     <string name="duration_4_hours">4 hours</string>
     <string name="duration_until_stopped">Until I stop it</string>
+    <string name="sign_out_confirm_title">Sign out?</string>
+    <string name="sign_out_confirm_message">You\'ll need to sign in with Google again to get back to your trips.</string>
+
+    <!-- Profile -->
+    <string name="profile_optional">Optional</string>
+    <string name="profile_first_name">First name</string>
+    <string name="profile_last_name">Last name</string>
+    <string name="profile_username">Username</string>
+    <string name="profile_username_hint">Letters, digits, underscores and dots</string>
+    <string name="profile_phone">Phone</string>
+    <string name="profile_birth_date">Date of birth</string>
+    <string name="profile_save">Save</string>
+    <string name="profile_change_photo">Tap the photo to change it</string>
+    <string name="profile_image_unreadable">That file couldn\'t be read as an image.</string>
+
+    <!-- Sharing state -->
+    <string name="sharing_on">Sharing location</string>
+    <string name="sharing_off">Not sharing</string>
+
+    <!-- Invitations and QR -->
+    <string name="invite_suggestions">Ridden with before</string>
+    <string name="qr_invite_action">Invite with QR</string>
+    <string name="qr_invite_title">Invite with QR</string>
+    <string name="qr_invite_intro">Show this code to someone standing next to you and they can join the trip without swapping email addresses.</string>
+    <string name="qr_generate">Show a code</string>
+    <string name="qr_generate_again">New code</string>
+    <string name="qr_expires_in">Expires in %1$s</string>
+    <string name="qr_expired">This code has expired.</string>
+    <string name="qr_expired_short">Expired</string>
+    <string name="qr_scan_title">Scan to join</string>
+    <string name="qr_scan_hint">Point the camera at a trip\'s invite code.</string>
+    <string name="qr_camera_needed">Scanning needs the camera.</string>
+    <string name="qr_camera_denied">Camera access is off for Tracktrip. Turn it on in Android\'s app settings, then try again.</string>
+    <string name="qr_camera_allow">Allow camera</string>
 
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
