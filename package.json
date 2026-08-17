@@ -1,0 +1,26 @@
+{
+  "name": "trip-tracker",
+  "version": "0.1.0",
+  "description": "Backend for a motorcycle trip location-sharing Android app",
+  "type": "module",
+  "main": "src/index.js",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "cleanup": "node scripts/cleanup-history.js",
+    "test": "node --test",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart trip-tracker",
+    "pm2:stop": "pm2 stop trip-tracker"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
