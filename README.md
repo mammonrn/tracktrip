@@ -6,9 +6,9 @@ motorcycle trip. Node.js + Express + better-sqlite3 + `ws`, run under PM2.
 This is a monorepo: the backend lives at the root, and the Kotlin/Compose
 Android client lives in [`android/`](./android/README.md).
 
-Google Sign-In based auth, a basic profile API, and the trip lifecycle
-(create → invite → accept → end) are implemented. The live WebSocket position
-feed is still a stub.
+Google Sign-In based auth, a basic profile API, the trip lifecycle
+(create → invite → accept → end), and rider position sharing over REST are
+implemented. Positions are polled; the WebSocket push feed is still a stub.
 
 ## Stack
 
@@ -49,6 +49,7 @@ src/
     trips.js             # /trips, /trips/:id/invites, /trips/:id/end
     invites.js           # /invites, /invites/:id/accept
     waypoints.js         # /trips/:id/waypoints
+    positions.js          # /trips/:id/positions
   ws/                # WebSocket server (stub)
 scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
@@ -185,6 +186,64 @@ return `409` while `GET` keeps working.
   (`added_by`); any other member gets `403`. A waypoint that belongs to a
   different trip than `:id` is treated as `404`, so it can't be deleted through
   the wrong trip's URL.
+
+### Positions
+
+Where each rider is right now. One row per rider per trip in
+`member_positions` — the latest fix, not a trail.
+
+Both routes require `Authorization: Bearer <accessToken>` **and** trip
+membership, exactly like waypoints. They differ from waypoints in one way that
+matters: **both are closed once the trip ends.** A trip with
+`status = 'ended'` has stopped tracking, so it accepts no new fixes *and*
+serves no position reads — both return `409 {"error": "trip has ended"}`.
+Membership is checked first, so a non-member still gets `403` either way.
+
+Clients poll `GET`; there is no push yet.
+
+- `POST /trips/:id/positions` — the caller reports their own position. Returns
+  `200` with the stored position.
+
+  | Field | Rule |
+  |---|---|
+  | `lat` | number, −90 to 90 |
+  | `lng` | number, −180 to 180 |
+  | `timestamp` | optional ISO 8601 string — when the *device* took the fix, not when the request arrived. Defaults to now, and is normalized to UTC. |
+  | `accuracy` | optional number, 0 or greater (metres) |
+  | `speed` | optional number, 0 or greater |
+  | `heading` | optional number, 0 to 360 |
+  | `battery_pct` | optional integer, 0 to 100 |
+
+  `200` rather than `201`: there is one row per rider, so this creates it the
+  first time and replaces it after that. The caller can only ever write their
+  own position — the row is keyed on the authenticated user, not on anything
+  in the body.
+
+  **Older fixes are ignored.** A retry, or a phone flushing a backlog after
+  losing signal, can deliver an old fix after a newer one; the stored row only
+  moves forward in time, so the map never jumps backwards. The response body
+  is always what the server now holds, which is *not* the submitted fix when a
+  stale one was dropped. A fix bearing the same timestamp does overwrite, so a
+  correction isn't stuck.
+
+- `GET /trips/:id/positions` — the latest position of **every** member, as a
+  flat array for the map and the friend list:
+
+  ```json
+  [
+    {
+      "user_id": 2, "display_name": "Member", "photo_url": "member.jpg",
+      "role": "member", "is_sharing": true,
+      "lat": 19.1, "lng": 99.2, "accuracy": 12.5, "speed": 22.4,
+      "heading": 275.5, "battery_pct": 84,
+      "recorded_at": "2026-05-01T09:00:00.000Z"
+    }
+  ]
+  ```
+
+  Sorted freshest first. Members who have never reported are **still listed**,
+  with every position field `null`, and sort last — the friend list shows them
+  as not yet tracking rather than dropping them. Emails are not included.
 
 ## Setup
 
