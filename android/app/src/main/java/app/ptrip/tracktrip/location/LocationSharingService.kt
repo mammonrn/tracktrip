@@ -145,6 +145,11 @@ class LocationSharingService : Service() {
             lng = fix.longitude,
             timestamp = Instant.ofEpochMilli(fix.time).toString(),
             accuracy = fix.accuracy.takeIf { fix.hasAccuracy() },
+            // Metres per second, as Android gives it and as the server stores
+            // it. Omitted rather than sent as 0 when the provider had no
+            // speed to give — 0 is a rider stopped at a light, and the two
+            // must stay tellable apart.
+            speed = fix.speed.takeIf { fix.hasSpeed() },
             batteryPct = batteryPercent(),
         )
         ReportOutcome.OK

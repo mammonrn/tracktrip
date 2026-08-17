@@ -314,7 +314,7 @@ Clients poll `GET`; there is no push yet.
   | `lng` | number, −180 to 180 |
   | `timestamp` | optional ISO 8601 string — when the *device* took the fix, not when the request arrived. Defaults to now, and is normalized to UTC. |
   | `accuracy` | optional number, 0 or greater (metres) |
-  | `speed` | optional number, 0 or greater |
+  | `speed` | optional number, 0 or greater — **metres per second** |
   | `heading` | optional number, 0 to 360 |
   | `battery_pct` | optional integer, 0 to 100 |
 
@@ -365,6 +365,13 @@ Clients poll `GET`; there is no push yet.
 
   `username` is the handle the rider chose, or `null`. Clients show it in
   preference to `display_name`, which is whatever Google supplied.
+
+  `speed` is **metres per second**, stored exactly as the device reported it —
+  which is the unit Android's `Location.getSpeed()` uses. Converting on the
+  way in would have put a unit in the database that nothing else in the system
+  uses, so the conversion to km/h happens once, in the client, at the point of
+  display. `null` means the phone never sent a speed for this fix; a rider
+  stopped at a light sends a real `0`, and the two are not the same thing.
 
   `is_sharing` answers exactly what the write guard would: *may this rider be
   reporting right now?* On a running trip that is everyone. Once the trip ends

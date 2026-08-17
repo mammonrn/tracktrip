@@ -60,6 +60,15 @@ data class MemberPosition(
     val sharingUntil: String?,
     val lat: Double?,
     val lng: Double?,
+    /**
+     * Ground speed at the last fix, in **metres per second** — the unit
+     * Android's Location reports and the one the server stores. Converted for
+     * display by `map/Speed.kt`, and nowhere else.
+     *
+     * Null means no speed was ever sent for this fix, which is not the same
+     * as a rider who is stopped: that one reports 0.
+     */
+    val speedMps: Double?,
     val batteryPct: Int?,
     val recordedAt: String?,
 ) {
@@ -112,6 +121,19 @@ data class SharingSession(
     val tripId: Long,
     val sharing: Boolean,
     val expiresAt: String?,
+)
+
+/**
+ * One rider's level, from GET /trips/:id/member-levels.
+ *
+ * Only the name and the lifetime total: the map lists a level beside a name,
+ * and how far *someone else* is from their next promotion is their business,
+ * not something to put on a stranger's screen.
+ */
+data class RiderLevel(
+    val userId: Long,
+    val levelName: String,
+    val totalKm: Double,
 )
 
 /** The profile screen's challenge widget, from GET /me/level. */
@@ -187,12 +209,18 @@ class TripApi(private val client: ApiClient) {
     suspend fun stopSharing(tripId: Long): SharingSession =
         JSONObject(client.post("/trips/$tripId/share/stop")).toSharingSession()
 
+    /**
+     * Reports one fix. [speed] is metres per second, straight from the
+     * Location that produced the fix — see `map/Speed.kt` for why no
+     * conversion happens on this side of the wire.
+     */
     suspend fun reportPosition(
         tripId: Long,
         lat: Double,
         lng: Double,
         timestamp: String,
         accuracy: Float?,
+        speed: Float?,
         batteryPct: Int?,
     ) {
         val body = JSONObject()
@@ -200,12 +228,22 @@ class TripApi(private val client: ApiClient) {
             .put("lng", lng)
             .put("timestamp", timestamp)
         accuracy?.let { body.put("accuracy", it.toDouble()) }
+        speed?.let { body.put("speed", it.toDouble()) }
         batteryPct?.let { body.put("battery_pct", it) }
         client.post("/trips/$tripId/positions", body)
     }
 
-    suspend fun levelProgress(): LevelProgress =
-        JSONObject(client.get("/me/level")).toLevelProgress()
+    /**
+     * Every member's level in one call.
+     *
+     * A batch rather than one request per rider: `/me/level` only ever answers
+     * for the caller, and a trip of eight would otherwise be eight requests
+     * from a phone that is already polling positions.
+     */
+    suspend fun memberLevels(tripId: Long): Map<Long, RiderLevel> =
+        JSONArray(client.get("/trips/$tripId/member-levels"))
+            .map { it.toRiderLevel() }
+            .associateBy { it.userId }
 }
 
 internal inline fun <T> JSONArray.map(transform: (JSONObject) -> T): List<T> =
@@ -247,6 +285,7 @@ internal fun JSONObject.toMemberPosition() = MemberPosition(
     sharingUntil = optStringOrNull("sharing_until"),
     lat = optDoubleOrNull("lat"),
     lng = optDoubleOrNull("lng"),
+    speedMps = optDoubleOrNull("speed"),
     batteryPct = optIntOrNull("battery_pct"),
     recordedAt = optStringOrNull("recorded_at"),
 )
@@ -272,6 +311,15 @@ internal fun JSONObject.toSharingSession() = SharingSession(
     tripId = optLong("trip_id"),
     sharing = optBoolean("sharing", false),
     expiresAt = optStringOrNull("expires_at"),
+)
+
+internal fun JSONObject.toRiderLevel() = RiderLevel(
+    userId = optLong("user_id"),
+    // The server always sends a level — the table starts at zero kilometres,
+    // so there is no such thing as a rider without one. The fallback is for a
+    // response mangled in transit, not for a real state.
+    levelName = optJSONObject("level")?.optStringOrNull("name") ?: "Novice",
+    totalKm = optDouble("total_km", 0.0),
 )
 
 internal fun JSONObject.toLevelProgress(): LevelProgress {
