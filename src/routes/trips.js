@@ -17,9 +17,6 @@ import { serializeTrip, serializeInvite } from '../trips/serialize.js';
 const NAME_MIN_LENGTH = 1;
 const NAME_MAX_LENGTH = 60;
 
-/** How many past companions the invite screen offers. */
-const SUGGESTED_INVITEE_LIMIT = 10;
-
 /**
  * Redeeming a code is the one endpoint where guessing pays, so it gets its own
  * budget — tighter than sign-in's, because no honest rider redeems ten codes a
@@ -150,6 +147,13 @@ export function createTripsRouter({ db, config }) {
    * adding someone. Owner-only, matching POST /trips/:id/invites: these are
    * suggestions *for* that form, and offering them to a member who would get a
    * 403 on tapping one would be a worse experience than not offering them.
+   *
+   * Ordered by how many trips the two have shared, not by recency. The person
+   * ridden with twenty times is the one being looked for, even if somebody met
+   * once last weekend is more recent — and recency is the tiebreaker for
+   * everyone on the same count. Unlimited: the list is bounded by how many
+   * people this rider has actually ridden with, the client scrolls it, and a
+   * cap of ten silently hid exactly the regulars a long-standing group has.
    */
   router.get(
     '/trips/:id/suggested-invitees',
@@ -162,8 +166,10 @@ export function createTripsRouter({ db, config }) {
           `SELECT users.id            AS user_id,
                   users.email         AS email,
                   users.display_name  AS display_name,
+                  users.username      AS username,
                   users.photo_url     AS photo_url,
-                  MAX(theirs.joined_at) AS last_ridden_together
+                  COUNT(DISTINCT mine.trip_id) AS trips_together,
+                  MAX(theirs.joined_at)        AS last_ridden_together
            FROM trip_members AS mine
            JOIN trip_members AS theirs
              ON theirs.trip_id = mine.trip_id
@@ -176,17 +182,18 @@ export function createTripsRouter({ db, config }) {
                SELECT user_id FROM trip_members WHERE trip_id = ?
              )
            GROUP BY users.id
-           ORDER BY last_ridden_together DESC, users.id DESC
-           LIMIT ?`
+           ORDER BY trips_together DESC, last_ridden_together DESC, users.id DESC`
         )
-        .all(req.user.id, req.trip.id, SUGGESTED_INVITEE_LIMIT);
+        .all(req.user.id, req.trip.id);
 
       res.json(
         suggestions.map((row) => ({
           user_id: row.user_id,
           email: row.email,
           display_name: row.display_name,
+          username: row.username,
           photo_url: row.photo_url,
+          trips_together: row.trips_together,
         }))
       );
     }

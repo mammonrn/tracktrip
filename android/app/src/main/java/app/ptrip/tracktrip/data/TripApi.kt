@@ -39,6 +39,8 @@ data class Invite(
 data class MemberPosition(
     val userId: Long,
     val displayName: String?,
+    /** The rider's own handle, when they have set one. Preferred over [displayName]. */
+    val username: String?,
     val photoUrl: String?,
     val role: String,
     /**
@@ -63,7 +65,7 @@ data class MemberPosition(
 ) {
     val hasPosition: Boolean get() = lat != null && lng != null
     val isOwner: Boolean get() = role == Trip.ROLE_OWNER
-    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: "Rider $userId"
+    val label: String get() = riderLabel(username, displayName, "Rider $userId")
 
     /** Sharing with no end time — the rider stops it by hand. */
     val isSharingIndefinitely: Boolean get() = isSharing && sharingUntil == null
@@ -77,9 +79,12 @@ data class SuggestedInvitee(
     val userId: Long,
     val email: String,
     val displayName: String?,
+    val username: String?,
     val photoUrl: String?,
+    /** How many trips this rider and the caller have shared. Orders the list. */
+    val tripsTogether: Int,
 ) {
-    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: email
+    val label: String get() = riderLabel(username, displayName, email)
 }
 
 /** A short-lived code that puts whoever redeems it on the trip. */
@@ -95,6 +100,18 @@ data class JoinResult(
     val trip: Trip,
     /** True when the rider was already on this trip — a no-op, not a failure. */
     val alreadyMember: Boolean,
+)
+
+/**
+ * A rider's sharing session on one trip.
+ *
+ * [expiresAt] null means two different things, which [sharing] tells apart:
+ * running until the rider stops it, and no session at all.
+ */
+data class SharingSession(
+    val tripId: Long,
+    val sharing: Boolean,
+    val expiresAt: String?,
 )
 
 /** The profile screen's challenge widget, from GET /me/level. */
@@ -154,6 +171,22 @@ class TripApi(private val client: ApiClient) {
         )
     }
 
+    /**
+     * Starts (or restarts) sharing on a trip.
+     *
+     * [durationMinutes] must be one of the offered durations, or null for
+     * "until I stop it" — the server rejects anything else, and refuses an
+     * omitted field outright so a client that forgot to send one can't
+     * silently get an unlimited session.
+     */
+    suspend fun startSharing(tripId: Long, durationMinutes: Int?): SharingSession {
+        val body = JSONObject().put("duration_minutes", durationMinutes ?: JSONObject.NULL)
+        return JSONObject(client.post("/trips/$tripId/share/start", body)).toSharingSession()
+    }
+
+    suspend fun stopSharing(tripId: Long): SharingSession =
+        JSONObject(client.post("/trips/$tripId/share/stop")).toSharingSession()
+
     suspend fun reportPosition(
         tripId: Long,
         lat: Double,
@@ -205,6 +238,7 @@ internal fun JSONObject.toInvite() = Invite(
 internal fun JSONObject.toMemberPosition() = MemberPosition(
     userId = getLong("user_id"),
     displayName = optStringOrNull("display_name"),
+    username = optStringOrNull("username"),
     photoUrl = optStringOrNull("photo_url"),
     role = optStringOrNull("role") ?: "member",
     // Defaults to false: a member row that arrives without the field is
@@ -221,13 +255,23 @@ internal fun JSONObject.toSuggestedInvitee() = SuggestedInvitee(
     userId = optLong("user_id"),
     email = optStringOrNull("email").orEmpty(),
     displayName = optStringOrNull("display_name"),
+    username = optStringOrNull("username"),
     photoUrl = optStringOrNull("photo_url"),
+    // A build that predates the count still sorts sensibly: everyone ties at
+    // one, and the server's own ordering is preserved.
+    tripsTogether = optIntOrNull("trips_together") ?: 1,
 )
 
 internal fun JSONObject.toJoinCode() = JoinCode(
     tripId = optLong("trip_id"),
     code = optStringOrNull("code").orEmpty(),
     expiresAt = optStringOrNull("expires_at").orEmpty(),
+)
+
+internal fun JSONObject.toSharingSession() = SharingSession(
+    tripId = optLong("trip_id"),
+    sharing = optBoolean("sharing", false),
+    expiresAt = optStringOrNull("expires_at"),
 )
 
 internal fun JSONObject.toLevelProgress(): LevelProgress {

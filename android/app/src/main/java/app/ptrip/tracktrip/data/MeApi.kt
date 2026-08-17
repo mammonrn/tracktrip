@@ -22,7 +22,7 @@ data class UserProfile(
     val totalKm: Double,
 ) {
     /** What to show when there is no name yet — never a blank line. */
-    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: email ?: "Rider $id"
+    val label: String get() = riderLabel(username, displayName, email ?: "Rider $id")
 }
 
 /**
