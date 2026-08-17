@@ -42,6 +42,9 @@ src/
   trips/
     email.js         # normalizes invite email addresses
     serialize.js     # shapes trip / invite rows for API responses
+    distance.js      # haversine + the GPS-jitter rules for counting km
+  users/
+    levels.js        # the rider level table and progress towards the next one
   routes/
     index.js          # health check
     auth.js            # POST /auth/google, /auth/refresh, /auth/logout
@@ -79,9 +82,22 @@ All `/auth/*` routes are rate-limited to 20 requests/minute per IP.
 
 Requires `Authorization: Bearer <accessToken>`.
 
-- `GET /me` — current user.
+- `GET /me` — current user, including their lifetime `total_km`.
 - `PATCH /me` — body `{ display_name }` (1–40 characters after trimming).
   Photo uploads aren't supported yet; `photo_url` can't be changed via the API.
+- `GET /me/level` — the profile screen's challenge widget:
+
+  ```json
+  {
+    "total_km": 1234.57,
+    "level": { "name": "Rookie Rider", "min_km": 500 },
+    "next_level": { "name": "Wanderer", "min_km": 1500 },
+    "km_to_next": 265.43
+  }
+  ```
+
+  At the top of the table `next_level` and `km_to_next` are both `null` —
+  distinct from `0`, which would mean a promotion is one metre away.
 
 Access tokens are JWTs valid for 1 hour. Refresh tokens are opaque 32-byte
 random values valid for 60 days; only their SHA-256 hash is stored in the
@@ -219,6 +235,9 @@ Clients poll `GET`; there is no push yet.
   own position — the row is keyed on the authenticated user, not on anything
   in the body.
 
+  **Each accepted fix also credits distance** towards the rider's lifetime
+  `users.total_km` — see [Lifetime distance](#lifetime-distance) below.
+
   **Older fixes are ignored.** A retry, or a phone flushing a backlog after
   losing signal, can deliver an old fix after a newer one; the stored row only
   moves forward in time, so the map never jumps backwards. The response body
@@ -244,6 +263,38 @@ Clients poll `GET`; there is no push yet.
   Sorted freshest first. Members who have never reported are **still listed**,
   with every position field `null`, and sort last — the friend list shows them
   as not yet tracking rather than dropping them. Emails are not included.
+
+### Lifetime distance
+
+`users.total_km` is each rider's lifetime distance, and it drives the levels
+behind `GET /me/level`.
+
+It is accumulated as fixes arrive rather than derived on read, because it
+can't be derived later: `member_positions` only holds each rider's *latest*
+fix, so the gap between two fixes is gone the moment the next one overwrites
+it. On every accepted `POST /trips/:id/positions`, the great-circle distance
+(haversine) from the rider's previous fix **on that same trip** is added to
+their total, inside the same transaction that stores the fix.
+
+Distance is measured per trip, never across two of them, so parking in Chiang
+Mai and starting the next ride in Bangkok doesn't credit the flight.
+
+A segment is **not** counted when:
+
+| Case | Why |
+|---|---|
+| It's the rider's first fix on the trip | nothing to measure from |
+| Shorter than `JITTER.MIN_DISTANCE_KM` (10 m) | a parked phone's position wanders by a few metres; at one fix every few seconds that drift alone would add kilometres over a lunch stop |
+| Implies a speed above `JITTER.MAX_SPEED_KMH` (200 km/h) | a fix that lands far away far too quickly is a bad fix — a lost signal reacquired in the wrong place — not a fast rider |
+| The timestamp didn't move forward | a same-instant fix corrects where the rider already was; an older one is a late arrival that isn't stored either |
+
+Both thresholds are balance knobs, exported together as `JITTER` from
+`src/trips/distance.js`. Raising the floor discards more genuine slow riding;
+at 10 m, anything above roughly 4 km/h still registers on a 10-second poll.
+Set it to `0` to count every segment.
+
+Rejected segments are dropped silently — the fix is still stored and the map
+still moves, only the distance isn't credited.
 
 ## Setup
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
+import { countableDistanceKm } from '../trips/distance.js';
 
 const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
@@ -116,6 +117,58 @@ export function validatePositionInput(body, now = new Date()) {
 export function createPositionsRouter({ db, config }) {
   const router = Router();
 
+  const selectPrevious = db.prepare(
+    'SELECT lat, lng, recorded_at FROM member_positions WHERE trip_id = ? AND user_id = ?'
+  );
+
+  const upsertPosition = db.prepare(
+    `INSERT INTO member_positions
+       (trip_id, user_id, lat, lng, accuracy, speed, heading, battery_pct, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (trip_id, user_id) DO UPDATE SET
+       lat = excluded.lat,
+       lng = excluded.lng,
+       accuracy = excluded.accuracy,
+       speed = excluded.speed,
+       heading = excluded.heading,
+       battery_pct = excluded.battery_pct,
+       recorded_at = excluded.recorded_at
+     WHERE excluded.recorded_at >= member_positions.recorded_at`
+  );
+
+  const addLifetimeKm = db.prepare('UPDATE users SET total_km = total_km + ? WHERE id = ?');
+
+  /**
+   * Stores a rider's fix and credits the ground they covered getting to it.
+   *
+   * One transaction, because the two writes are one fact: crediting distance
+   * without storing the fix it was measured to would credit the same stretch
+   * again on the next post.
+   *
+   * The previous fix is read here rather than by the caller so that the
+   * measure-then-overwrite pair can't be split by anything else.
+   */
+  const recordFix = db.transaction((tripId, userId, value) => {
+    const previous = selectPrevious.get(tripId, userId);
+    const km = countableDistanceKm(previous, value);
+
+    upsertPosition.run(
+      tripId,
+      userId,
+      value.lat,
+      value.lng,
+      value.accuracy,
+      value.speed,
+      value.heading,
+      value.battery_pct,
+      value.recorded_at
+    );
+
+    if (km > 0) {
+      addLifetimeKm.run(km, userId);
+    }
+  });
+
   router.use('/trips/:id/positions', requireAuth(db, config), requireTripMembership(db));
 
   // Reads stay open on an ended trip; writes don't — same rule as waypoints,
@@ -133,30 +186,7 @@ export function createPositionsRouter({ db, config }) {
     // One row per rider per trip. A retry or a flushed backlog can deliver an
     // older fix after a newer one, so the stored row only moves forward in
     // time — otherwise the map would jump backwards.
-    db.prepare(
-      `INSERT INTO member_positions
-         (trip_id, user_id, lat, lng, accuracy, speed, heading, battery_pct, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (trip_id, user_id) DO UPDATE SET
-         lat = excluded.lat,
-         lng = excluded.lng,
-         accuracy = excluded.accuracy,
-         speed = excluded.speed,
-         heading = excluded.heading,
-         battery_pct = excluded.battery_pct,
-         recorded_at = excluded.recorded_at
-       WHERE excluded.recorded_at >= member_positions.recorded_at`
-    ).run(
-      req.trip.id,
-      req.user.id,
-      value.lat,
-      value.lng,
-      value.accuracy,
-      value.speed,
-      value.heading,
-      value.battery_pct,
-      value.recorded_at
-    );
+    recordFix(req.trip.id, req.user.id, value);
 
     const stored = db
       .prepare(
