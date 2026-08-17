@@ -9,7 +9,15 @@
 
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
-    <string name="error_no_google_account">No Google account available on this device.</string>
+    <!--
+      Deliberately does NOT say "no Google account on this device". Credential
+      Manager reports NoCredentialException both when there genuinely is no
+      account and when Play Services declines to offer one because this build
+      isn't a recognised OAuth client — and the second is far more common. The
+      old wording sent people looking at their phone instead of at their
+      Cloud Console setup.
+    -->
+    <string name="error_no_credential">Google didn\'t offer an account for this app. If you\'re signed in to Google on this device, this build\'s package name and signing certificate probably aren\'t registered in the Google Cloud project yet.</string>
     <string name="error_sign_in_failed">Google sign-in failed. Please try again.</string>
     <string name="error_unexpected_credential">Got an unexpected credential type from Google.</string>
 </resources>

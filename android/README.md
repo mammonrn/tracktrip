@@ -119,9 +119,70 @@ Relevant files:
 | `data/AuthApi.kt` | OkHttp call to `POST /auth/google` |
 | `data/TokenStore.kt` | Encrypted token storage |
 
-Every failure path — no Google account, user dismissed the sheet, network
+Every failure path — no credential offered, user dismissed the sheet, network
 down, non-2xx from the backend, malformed response — is caught and turned
 into a short message on screen. Nothing throws to the top level.
+
+### Credential Manager fallback chain
+
+`auth/GoogleSignInHelper.kt` tries three strategies in order, stopping at the
+first that yields a token (a user cancellation stops the chain immediately):
+
+1. `GetGoogleIdOption` with `setFilterByAuthorizedAccounts(true)` — quiet
+   path for users who've signed in before.
+2. `GetGoogleIdOption` with the filter **off** — required for a first-ever
+   sign-in, when nobody has authorized the app yet.
+3. `GetSignInWithGoogleOption` — the explicit button flow, which always shows
+   the account chooser and can succeed where the ID-token options return
+   nothing.
+
+Each step logs to logcat under the tag **`TracktripSignIn`**, including the
+concrete exception class and message. Filter logcat on that tag when
+diagnosing sign-in problems.
+
+### "Google didn't offer an account for this app"
+
+This is `NoCredentialException` after all three strategies. The name is
+misleading: it very rarely means the device has no Google account. The usual
+cause is that **this build isn't a recognised OAuth client** — its package
+name plus signing certificate SHA-1 aren't registered as an Android OAuth
+client in the Google Cloud project that owns the server client ID.
+
+The trap is the debug build. `applicationIdSuffix = ".debug"` means debug
+installs are `app.ptrip.tracktrip.debug`, signed with the debug keystore — a
+*different* package name and a *different* SHA-1 from release. Registering
+only the release pair produces exactly this error in debug while release
+works. Register both:
+
+| Build | Package name | Certificate |
+|---|---|---|
+| debug | `app.ptrip.tracktrip.debug` | `~/.android/debug.keystore` (alias `androiddebugkey`, password `android`) |
+| release | `app.ptrip.tracktrip` | your release keystore |
+
+```bash
+# debug SHA-1
+keytool -list -v -keystore ~/.android/debug.keystore \
+  -alias androiddebugkey -storepass android | grep SHA1:
+
+# release SHA-1
+./scripts/keystore-sha1.sh
+```
+
+Also confirm the web client ID in `config.xml` and the backend's
+`GOOGLE_CLIENT_ID` are the *same* client, from the *same* Cloud project as
+the Android clients above. A client ID from a different project fails the
+same way.
+
+### Devices without genuine Google Play Services (microG, Huawei) — unsupported
+
+On devices running microG or Huawei Mobile Services instead of real Google
+Play Services, the account chooser may appear but every account is rejected
+with **"Account abnormality"**. That's the reimplementation failing Google's
+account checks; it happens before our code sees any result and there is
+nothing to fix on our side.
+
+**Genuine Google Play Services is a requirement.** Devices without it aren't
+supported, and this isn't tracked as a bug.
 
 Tokens are stored but **not yet used**: there's no authenticated request or
 refresh-on-401 logic, since no screen calls a protected endpoint yet.
