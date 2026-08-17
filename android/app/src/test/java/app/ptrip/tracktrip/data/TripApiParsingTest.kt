@@ -106,6 +106,7 @@ class TripApiParsingTest {
         assertEquals(2L, member.userId)
         assertEquals("Friend", member.displayName)
         assertEquals("friend.jpg", member.photoUrl)
+        assertEquals(null, member.username)
         assertTrue(member.isSharing)
         assertEquals("2026-08-17T17:18:22.441Z", member.sharingUntil)
         assertFalse(member.isSharingIndefinitely)

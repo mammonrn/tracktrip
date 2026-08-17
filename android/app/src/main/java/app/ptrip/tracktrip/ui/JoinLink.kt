@@ -27,6 +27,20 @@ private const val CODE_PARAM = "code"
 fun joinLinkFor(code: String): String = "$JOIN_SCHEME://$JOIN_HOST?$CODE_PARAM=$code"
 
 /**
+ * The web form of the same invite, for pasting into a chat.
+ *
+ * A QR code is scanned by this app, so the custom scheme is enough there. A
+ * link sent to LINE or SMS is not: chat apps linkify `https://` and leave a
+ * custom scheme as plain text, and the person receiving it may not have
+ * Tracktrip installed at all. The manifest claims this path, so a phone that
+ * does have the app opens it there.
+ *
+ * The domain does not serve this path yet — see the PR notes. Until it does,
+ * the code in the message body is what a recipient acts on.
+ */
+fun joinWebLinkFor(code: String): String = "https://ptrip.app/join/$code"
+
+/**
  * The join code inside a scanned string, or null if it isn't one of ours.
  *
  * Accepts the link form and a bare code. Everything else — a URL to somewhere
@@ -40,6 +54,16 @@ fun joinCodeFrom(scanned: String?): String? {
     val candidate = when {
         text.startsWith("$JOIN_SCHEME://", ignoreCase = true) ->
             text.substringAfter("$CODE_PARAM=", missingDelimiterValue = "").substringBefore('&')
+
+        // The shared web form: .../join/CODE, with whatever query or fragment
+        // a chat app decided to staple on the end.
+        text.startsWith("http://", ignoreCase = true) ||
+            text.startsWith("https://", ignoreCase = true) ->
+            text.substringAfter("/$JOIN_HOST/", missingDelimiterValue = "")
+                .substringBefore('?')
+                .substringBefore('#')
+                .substringBefore('/')
+
         else -> text
     }
 

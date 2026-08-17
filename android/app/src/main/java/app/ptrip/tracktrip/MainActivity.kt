@@ -1,19 +1,24 @@
 package app.ptrip.tracktrip
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -26,10 +31,15 @@ import app.ptrip.tracktrip.auth.GoogleSignInFailure
 import app.ptrip.tracktrip.auth.GoogleSignInResult
 import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AppContainer
+import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
 import app.ptrip.tracktrip.ui.JoinTripViewModel
+import app.ptrip.tracktrip.ui.joinCodeFrom
+import app.ptrip.tracktrip.ui.joinWebLinkFor
+import app.ptrip.tracktrip.ui.rememberSharingPermissionRequest
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
 import app.ptrip.tracktrip.ui.ProfileScreen
 import app.ptrip.tracktrip.ui.ProfileViewModel
@@ -37,6 +47,7 @@ import app.ptrip.tracktrip.ui.ScanQrScreen
 import app.ptrip.tracktrip.ui.Screen
 import app.ptrip.tracktrip.ui.SettingsScreen
 import app.ptrip.tracktrip.ui.SettingsViewModel
+import app.ptrip.tracktrip.ui.SharingDuration
 import app.ptrip.tracktrip.ui.SignInScreen
 import app.ptrip.tracktrip.ui.SignInUiState
 import app.ptrip.tracktrip.ui.SignInViewModel
@@ -47,6 +58,7 @@ import app.ptrip.tracktrip.ui.TripQrScreen
 import app.ptrip.tracktrip.ui.TripsViewModel
 import app.ptrip.tracktrip.ui.rememberBackStack
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 private const val CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
@@ -61,13 +73,26 @@ private const val CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 private fun String.looksLikeGoogleClientId(): Boolean =
     isNotBlank() && endsWith(CLIENT_ID_SUFFIX) && length > CLIENT_ID_SUFFIX.length + 10
 
-class MainActivity : ComponentActivity() {
+/**
+ * An [AppCompatActivity], not a bare [ComponentActivity], for one reason: the
+ * per-app language API. Below Android 13, `AppCompatDelegate` is what stores
+ * the chosen locale and recreates the activity to apply it, and it can only do
+ * that to an activity it owns.
+ */
+class MainActivity : AppCompatActivity() {
 
-    private val container: AppContainer by lazy { AppContainer(this) }
+    private val container: AppContainer by lazy { AppContainer.from(this) }
+
+    /** A join code from a link the app was opened with, awaiting a signed-in rider. */
+    private val pendingJoinCode = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The stored language is already in force — TracktripApplication puts
+        // it there before any activity exists.
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        pendingJoinCode.value = joinCodeFrom(intent?.dataString)
+
         setContent {
             TracktripTheme {
                 // Avatars are stored as paths, so the one place that turns
@@ -80,6 +105,7 @@ class MainActivity : ComponentActivity() {
                     ) { innerPadding ->
                         TracktripApp(
                             container = container,
+                            pendingJoinCode = pendingJoinCode,
                             modifier = Modifier.padding(innerPadding),
                         )
                     }
@@ -87,10 +113,27 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * A second invite link, tapped while the app was already open.
+     *
+     * The activity is `singleTask`, so this arrives here instead of as a new
+     * instance — without it, the first link would keep being handled forever
+     * and later ones would do nothing.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        joinCodeFrom(intent.dataString)?.let { pendingJoinCode.value = it }
+    }
 }
 
 @Composable
-private fun TracktripApp(container: AppContainer, modifier: Modifier = Modifier) {
+private fun TracktripApp(
+    container: AppContainer,
+    pendingJoinCode: MutableStateFlow<String?>,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -113,6 +156,7 @@ private fun TracktripApp(container: AppContainer, modifier: Modifier = Modifier)
             container = container,
             backStack = backStack,
             user = current,
+            pendingJoinCode = pendingJoinCode,
             onSignOut = {
                 backStack.resetToRoot()
                 signInViewModel.signOut()
@@ -167,6 +211,7 @@ private fun SignedInNavigation(
     container: AppContainer,
     backStack: BackStack,
     user: SignInUiState.SignedIn,
+    pendingJoinCode: MutableStateFlow<String?>,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -184,12 +229,39 @@ private fun SignedInNavigation(
     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
     val profile = profileState.user
 
+    // What the location service is broadcasting. Read here rather than in each
+    // screen so the trip list, the trip screen and settings cannot disagree.
+    val sharing by container.sharingController.active.collectAsStateWithLifecycle()
+
+    val joinViewModel: JoinTripViewModel =
+        viewModel(factory = joinTripViewModelFactory(container, onSignOut))
+    val joinState by joinViewModel.uiState.collectAsStateWithLifecycle()
+
+    // An invite link the app was opened with. Redeemed once a rider is signed
+    // in — which is now, since this whole branch only exists then.
+    val linkCode by pendingJoinCode.collectAsStateWithLifecycle()
+    LaunchedEffect(linkCode) {
+        val code = linkCode ?: return@LaunchedEffect
+        pendingJoinCode.value = null
+        joinViewModel.join(code) { trip ->
+            tripsViewModel.refresh()
+            backStack.resetToRoot()
+            backStack.push(Screen.TripDetail(trip.id))
+        }
+    }
+
+    // A sharing action waiting on the permission dialog's answer: a toggle
+    // from settings, or a duration picked on the trip screen.
+    var pendingToggle by remember { mutableStateOf<Pair<Trip, Boolean>?>(null) }
+    var pendingDuration by remember { mutableStateOf<SharingDuration?>(null) }
+
     BackHandler(enabled = backStack.canGoBack) { backStack.pop() }
 
     when (val screen = backStack.current) {
         Screen.Trips -> TripListScreen(
             state = tripsState,
-            displayName = profile?.displayName ?: user.displayName,
+            displayName = profile?.label ?: user.displayName,
+            sharingTripName = sharing?.tripName,
             onOpenTrip = { backStack.push(Screen.TripDetail(it.id)) },
             onCreateTrip = { backStack.push(Screen.CreateTrip) },
             onAcceptInvite = tripsViewModel::acceptInvite,
@@ -200,17 +272,39 @@ private fun SignedInNavigation(
         )
 
         Screen.Settings -> {
-            val settingsViewModel: SettingsViewModel = viewModel()
+            val settingsViewModel: SettingsViewModel =
+                viewModel(factory = settingsViewModelFactory(container, onSignOut))
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+
+            // Applying the language is the screen's side of the setting: the
+            // view model persists the choice, AppCompat enacts it (and, below
+            // Android 13, recreates this activity to do so).
+            LaunchedEffect(settingsState.language) {
+                AppLocale.apply(settingsState.language.tag)
+            }
+
+            val requestSharingPermission = rememberSharingPermissionRequest(
+                onGranted = { pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) } },
+                onDenied = settingsViewModel::onPermissionDenied,
+            )
 
             SettingsScreen(
                 state = settingsState,
-                displayName = profile?.displayName ?: user.displayName,
+                displayName = profile?.label ?: user.displayName,
                 email = profile?.email ?: user.email,
                 photoUrl = profile?.photoUrl ?: user.photoUrl,
+                sharingTripId = sharing?.tripId,
                 onOpenProfile = { backStack.push(Screen.Profile) },
                 onLanguageChange = settingsViewModel::setLanguage,
                 onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
+                onToggleSharing = { trip, on ->
+                    if (on) {
+                        pendingToggle = trip to true
+                        requestSharingPermission()
+                    } else {
+                        settingsViewModel.toggleSharing(trip, false)
+                    }
+                },
                 onSignOut = onSignOut,
                 onBack = { backStack.pop() },
                 modifier = modifier,
@@ -232,10 +326,6 @@ private fun SignedInNavigation(
         )
 
         Screen.ScanQr -> {
-            val joinViewModel: JoinTripViewModel =
-                viewModel(factory = joinTripViewModelFactory(container, onSignOut))
-            val joinState by joinViewModel.uiState.collectAsStateWithLifecycle()
-
             ScanQrScreen(
                 joining = joinState.joining,
                 error = joinState.error,
@@ -282,9 +372,51 @@ private fun SignedInNavigation(
             )
             val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
 
+            val context = LocalContext.current
+            val shareSubject = stringResource(R.string.invite_share_subject)
+            val shareChooser = stringResource(R.string.invite_share_chooser)
+            val tripName = detailState.trip?.name ?: stringResource(R.string.untitled_trip)
+            val shareBodyTemplate = stringResource(R.string.invite_share_body)
+
+            // The share sheet opens once a code has been issued for it, then
+            // the request is cleared so a recomposition can't reopen it.
+            LaunchedEffect(detailState.pendingShareCode) {
+                val code = detailState.pendingShareCode ?: return@LaunchedEffect
+                detailViewModel.shareLinkConsumed()
+                context.startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                shareBodyTemplate.format(
+                                    tripName,
+                                    code.code,
+                                    joinWebLinkFor(code.code),
+                                ),
+                            )
+                        },
+                        shareChooser,
+                    )
+                )
+            }
+
+            val requestSharingPermission = rememberSharingPermissionRequest(
+                onGranted = { pendingDuration?.let(detailViewModel::startSharing) },
+                onDenied = detailViewModel::onPermissionDenied,
+            )
+
             TripDetailScreen(
                 state = detailState,
                 currentUserId = profile?.id,
+                sharing = sharing?.tripId == screen.tripId,
+                onStartSharing = { duration ->
+                    pendingDuration = duration
+                    requestSharingPermission()
+                },
+                onStopSharing = detailViewModel::stopSharing,
+                onShareInviteLink = detailViewModel::requestShareLink,
                 onInviteEmailChange = detailViewModel::onInviteEmailChange,
                 onSendInvite = detailViewModel::sendInvite,
                 onUseSuggestion = detailViewModel::useSuggestion,
@@ -353,7 +485,28 @@ private fun tripDetailViewModelFactory(
     tripId: Long,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { TripDetailViewModel(tripId, container.tripApi, onSessionExpired) }
+    factoryOf {
+        TripDetailViewModel(
+            tripId = tripId,
+            tripApi = container.tripApi,
+            sharingController = container.sharingController,
+            settings = container.settings,
+            onSessionExpired = onSessionExpired,
+        )
+    }
+
+private fun settingsViewModelFactory(
+    container: AppContainer,
+    onSessionExpired: () -> Unit,
+): ViewModelProvider.Factory =
+    factoryOf {
+        SettingsViewModel(
+            settings = container.settings,
+            tripApi = container.tripApi,
+            sharingController = container.sharingController,
+            onSessionExpired = onSessionExpired,
+        )
+    }
 
 private fun profileViewModelFactory(
     container: AppContainer,
