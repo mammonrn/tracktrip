@@ -14,6 +14,6 @@ const app = createApp({ db, config, verifyGoogleIdToken });
 const server = http.createServer(app);
 attachWebSocketServer(server);
 
-server.listen(config.port, () => {
-  console.log(`trip-tracker listening on port ${config.port}`);
+server.listen(config.port, config.host, () => {
+  console.log(`trip-tracker listening on ${config.host}:${config.port}`);
 });

@@ -146,6 +146,7 @@ All variables are documented in `.env.example`:
 
 | Variable                  | Description                                                                 | Default                    |
 |----------------------------|-------------------------------------------------------------------------------|-----------------------------|
+| `HOST`                    | Address the server binds to. Keep `127.0.0.1` in production so the port is reachable only through nginx, not directly from the internet. | `127.0.0.1`   |
 | `PORT`                    | Port the Express + WebSocket server listens on. Choose one free on the VPS. | `4100`                     |
 | `JWT_SECRET`              | Secret used to sign/verify JWTs issued to the Android app.                 | *(required, no default)*   |
 | `GOOGLE_CLIENT_ID`        | Comma-separated OAuth client ID(s) accepted when verifying Google Sign-In tokens (e.g. web + Android client IDs). | *(required, no default)*   |

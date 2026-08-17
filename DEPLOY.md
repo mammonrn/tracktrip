@@ -68,6 +68,7 @@ nano .env
 
 | Variable | What to put |
 |---|---|
+| `HOST` | Leave as `127.0.0.1`. This makes the app reachable only via nginx on this same machine — not directly from the internet, which would bypass nginx and TLS entirely. |
 | `PORT` | A port nothing else on the VPS is using. Default `4100` is fine unless something's already bound to it — check with `sudo ss -tlnp`. |
 | `JWT_SECRET` | The value from `openssl rand -hex 32` above. |
 | `GOOGLE_CLIENT_ID` | Your Google OAuth client ID(s), comma-separated if you have more than one (e.g. web + Android). |
@@ -127,7 +128,9 @@ sudo ln -s /root/tracktrip/deploy/nginx-api.ptrip.app.conf /etc/nginx/sites-enab
 ```
 
 If you changed `PORT` away from the default `4100` in step 3, edit the
-`proxy_pass` line so it matches before continuing:
+`proxy_pass` line so it matches before continuing (keep the
+`127.0.0.1` host as-is — see the note in that file about why it isn't
+`localhost`):
 
 ```bash
 sudo nano /etc/nginx/sites-enabled/api.ptrip.app.conf

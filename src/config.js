@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 
 export const config = {
+  host: process.env.HOST || '127.0.0.1',
   port: Number(process.env.PORT || 4100),
   jwtSecret: process.env.JWT_SECRET,
   googleClientIds: (process.env.GOOGLE_CLIENT_ID || '')
