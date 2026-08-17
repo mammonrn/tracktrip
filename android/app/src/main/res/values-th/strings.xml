@@ -70,6 +70,18 @@
     <string name="map_last_seen">ตำแหน่งล่าสุดที่ทราบ</string>
     <string name="map_you">%1$s (คุณ)</string>
     <string name="map_no_location">หาตำแหน่งของคุณไม่ได้ ลองเช็คว่าเปิด location อยู่ไหม</string>
+    <string name="map_speed_kmh">%1$d กม./ชม.</string>
+    <string name="map_speed_unknown">—</string>
+    <string name="map_own_speed">ความเร็วคุณ</string>
+    <string name="map_order_leader_first">เรียงจากคนนำ · ประมาณจากทิศทางกลุ่ม</string>
+
+    <!-- Profile -->
+    <string name="profile_title">โปรไฟล์</string>
+    <string name="profile_level">ยศนักขี่</string>
+    <string name="profile_total_km">ระยะสะสม</string>
+    <string name="profile_km_value">%1$s กม.</string>
+    <string name="profile_level_next">อีก %1$s กม. ถึง %2$s</string>
+    <string name="profile_level_top">สูงสุดของตารางแล้ว ไม่มียศให้ไต่ต่อ</string>
 
     <!-- Inviting -->
     <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
