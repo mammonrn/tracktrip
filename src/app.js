@@ -5,6 +5,7 @@ import { createMeRouter } from './routes/me.js';
 import { createTripsRouter } from './routes/trips.js';
 import { createInvitesRouter } from './routes/invites.js';
 import { createWaypointsRouter } from './routes/waypoints.js';
+import { createPositionsRouter } from './routes/positions.js';
 
 export function createApp({ db, config, verifyGoogleIdToken }) {
   const app = express();
@@ -19,6 +20,7 @@ export function createApp({ db, config, verifyGoogleIdToken }) {
   app.use(createTripsRouter({ db, config }));
   app.use(createInvitesRouter({ db, config }));
   app.use(createWaypointsRouter({ db, config }));
+  app.use(createPositionsRouter({ db, config }));
   return app;
 }
 
