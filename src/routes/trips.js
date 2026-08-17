@@ -1,12 +1,32 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
+import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireTripOwner } from '../auth/tripOwnership.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
 import { normalizeEmail } from '../trips/email.js';
+import {
+  generateJoinCode,
+  isJoinCodeLive,
+  joinCodeExpiry,
+  normalizeJoinCode,
+  serializeJoinCode,
+} from '../trips/joinCodes.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
 
 const NAME_MIN_LENGTH = 1;
 const NAME_MAX_LENGTH = 60;
+
+/** How many past companions the invite screen offers. */
+const SUGGESTED_INVITEE_LIMIT = 10;
+
+/**
+ * Redeeming a code is the one endpoint where guessing pays, so it gets its own
+ * budget — tighter than sign-in's, because no honest rider redeems ten codes a
+ * minute. 40 bits of code and 15 minutes of life make a blind search hopeless
+ * already; this is what keeps it from being worth starting.
+ */
+const JOIN_ATTEMPTS_PER_MINUTE = 10;
 
 /**
  * Validates a POST /trips body. Returns { error } with a message, or { value }
@@ -122,6 +142,159 @@ export function createTripsRouter({ db, config }) {
     const created = db.prepare('SELECT * FROM trip_invites WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(serializeInvite(created));
   });
+
+  /**
+   * People this rider has ridden with before, who aren't on this trip yet.
+   *
+   * Saves typing an email address from memory, which is the slowest part of
+   * adding someone. Owner-only, matching POST /trips/:id/invites: these are
+   * suggestions *for* that form, and offering them to a member who would get a
+   * 403 on tapping one would be a worse experience than not offering them.
+   */
+  router.get(
+    '/trips/:id/suggested-invitees',
+    auth,
+    requireTripOwner(db),
+    requireActiveTrip(),
+    (req, res) => {
+      const suggestions = db
+        .prepare(
+          `SELECT users.id            AS user_id,
+                  users.email         AS email,
+                  users.display_name  AS display_name,
+                  users.photo_url     AS photo_url,
+                  MAX(theirs.joined_at) AS last_ridden_together
+           FROM trip_members AS mine
+           JOIN trip_members AS theirs
+             ON theirs.trip_id = mine.trip_id
+            AND theirs.user_id != mine.user_id
+           JOIN users ON users.id = theirs.user_id
+           WHERE mine.user_id = ?
+             AND users.email IS NOT NULL
+             AND users.email != ''
+             AND theirs.user_id NOT IN (
+               SELECT user_id FROM trip_members WHERE trip_id = ?
+             )
+           GROUP BY users.id
+           ORDER BY last_ridden_together DESC, users.id DESC
+           LIMIT ?`
+        )
+        .all(req.user.id, req.trip.id, SUGGESTED_INVITEE_LIMIT);
+
+      res.json(
+        suggestions.map((row) => ({
+          user_id: row.user_id,
+          email: row.email,
+          display_name: row.display_name,
+          photo_url: row.photo_url,
+        }))
+      );
+    }
+  );
+
+  /**
+   * Issues a join code for the QR screen.
+   *
+   * Any member may issue one, not just the owner: the rider who has met
+   * someone at a fuel stop is the one holding a phone, and making them find
+   * the owner first defeats the point.
+   *
+   * Issuing retires the trip's previous codes in the same transaction, so at
+   * most one is live at a time. A QR left on a screen ten minutes ago stops
+   * working the moment a new one is shown, which is the behaviour someone
+   * regenerating a code is asking for.
+   */
+  const issueJoinCode = db.transaction((tripId, userId, code, expiresAt, nowIso) => {
+    db.prepare('UPDATE trip_join_codes SET expires_at = ? WHERE trip_id = ? AND expires_at > ?').run(
+      nowIso,
+      tripId,
+      nowIso
+    );
+    db.prepare(
+      'INSERT INTO trip_join_codes (trip_id, code, expires_at, created_by) VALUES (?, ?, ?, ?)'
+    ).run(tripId, code, expiresAt, userId);
+  });
+
+  router.post(
+    '/trips/:id/join-code',
+    auth,
+    requireTripMembership(db),
+    requireActiveTrip(),
+    (req, res) => {
+      const now = new Date();
+      const code = generateJoinCode();
+      issueJoinCode(req.trip.id, req.user.id, code, joinCodeExpiry(now), now.toISOString());
+
+      const created = db.prepare('SELECT * FROM trip_join_codes WHERE code = ?').get(code);
+      res.status(201).json(serializeJoinCode(created));
+    }
+  );
+
+  /**
+   * Redeems a join code.
+   *
+   * A code is not consumed by being used — a QR held up to four riders should
+   * add four riders. It expires on time, and on the next code being issued,
+   * and those are the only two ways it stops working.
+   */
+  const joinByCode = db.transaction((tripId, userId) => {
+    db.prepare(
+      `INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'member')
+       ON CONFLICT (trip_id, user_id) DO NOTHING`
+    ).run(tripId, userId);
+  });
+
+  router.post(
+    '/trips/join',
+    rateLimit({
+      windowMs: 60 * 1000,
+      max: JOIN_ATTEMPTS_PER_MINUTE,
+      standardHeaders: true,
+      legacyHeaders: false,
+    }),
+    auth,
+    (req, res) => {
+      const code = normalizeJoinCode((req.body || {}).code);
+      if (!code) {
+        return res.status(400).json({ error: 'a join code is required' });
+      }
+
+      const row = db.prepare('SELECT * FROM trip_join_codes WHERE code = ?').get(code);
+      if (!row) {
+        return res.status(404).json({ error: 'join code not found' });
+      }
+      if (!isJoinCodeLive(row)) {
+        // 410 rather than 404: the difference between "never existed" and
+        // "you were a minute too late" is the difference between retyping it
+        // and asking for a new one.
+        return res.status(410).json({ error: 'this join code has expired' });
+      }
+
+      const trip = db.prepare('SELECT * FROM trips WHERE id = ?').get(row.trip_id);
+      if (!trip || trip.status === 'ended') {
+        return res.status(409).json({ error: 'trip has ended' });
+      }
+
+      const existing = db
+        .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
+        .get(trip.id, req.user.id);
+
+      // Already a member is a success, not a conflict: two riders scanning the
+      // same QR twice should both end up looking at the trip.
+      if (!existing) {
+        joinByCode(trip.id, req.user.id);
+      }
+
+      const membership = db
+        .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
+        .get(trip.id, req.user.id);
+
+      res.json({
+        trip: serializeTrip(trip, { role: membership.role }),
+        already_member: Boolean(existing),
+      });
+    }
+  );
 
   /**
    * Ending a trip stops location sharing for the whole group.

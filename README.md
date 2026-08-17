@@ -45,13 +45,16 @@ src/
     serialize.js     # shapes trip / invite rows for API responses
     distance.js      # haversine + the GPS-jitter rules for counting km
     sharing.js       # sharing-session durations, expiry, and the on/off predicate
+    joinCodes.js     # QR join codes: generation, expiry, normalisation
   users/
     levels.js        # the rider level table and progress towards the next one
+    profile.js       # validation for the editable profile fields
+    avatar.js        # avatar storage: magic-byte sniffing, random filenames
   routes/
     index.js          # health check
     auth.js            # POST /auth/google, /auth/refresh, /auth/logout
-    me.js               # GET/PATCH /me
-    trips.js             # /trips, /trips/:id/invites, /trips/:id/end
+    me.js               # GET/PATCH /me, POST /me/avatar
+    trips.js             # /trips, /trips/:id/invites, /trips/:id/end, join codes
     invites.js           # /invites, /invites/:id/accept
     waypoints.js         # /trips/:id/waypoints
     positions.js          # /trips/:id/positions
@@ -85,9 +88,38 @@ All `/auth/*` routes are rate-limited to 20 requests/minute per IP.
 
 Requires `Authorization: Bearer <accessToken>`.
 
-- `GET /me` — current user, including their lifetime `total_km`.
-- `PATCH /me` — body `{ display_name }` (1–40 characters after trimming).
-  Photo uploads aren't supported yet; `photo_url` can't be changed via the API.
+- `GET /me` — current user, including their lifetime `total_km` and the
+  optional profile fields (`first_name`, `last_name`, `username`, `phone`,
+  `birth_date`). Those are always present in the response and `null` until the
+  rider fills them in.
+- `PATCH /me` — a **partial** update. Every field is optional; only the keys
+  present in the body are written, and unknown keys are ignored rather than
+  rejected. An empty body is a no-op, not a `400`.
+
+  | Field | Rules |
+  |---|---|
+  | `display_name` | 1–40 characters after trimming. May be changed but **not** cleared — it is what other riders see in the member list. |
+  | `first_name`, `last_name` | Up to 40 characters. `null` or `""` clears. |
+  | `username` | 3–20 characters, letters/digits/underscores and single dots between them. Unique case-insensitively; a clash is a `409`. `null` or `""` clears. |
+  | `phone` | Digits with optional `+` and separators, 8–15 digits. Deliberately loose — it is read by humans, not dialled by the server. `null` or `""` clears. |
+  | `birth_date` | `YYYY-MM-DD`, a real calendar date, in the past and within 120 years. `null` or `""` clears. |
+
+- `POST /me/avatar` — `multipart/form-data` with one `avatar` file. Replaces
+  the rider's photo and returns the updated user.
+
+  - At most **5 MB** (`413` over that), and only JPEG or PNG (`415`
+    otherwise). The declared `Content-Type` is a first pass; the decision is
+    made from the file's magic bytes, so a shell script labelled `image/png`
+    is refused.
+  - The uploaded filename is **discarded**, not sanitised — the file is stored
+    under a fresh UUID, which is what makes path traversal a non-question.
+  - Written to `UPLOADS_DIR/avatars/` (default `~/tracktrip/uploads`), and
+    `users.photo_url` is set to the path `/uploads/avatars/<uuid>.jpg`. The
+    previous upload is deleted; a Google URL from sign-in is left alone.
+  - **The app does not serve that path.** nginx does — see the
+    `location /uploads/` block in `deploy/nginx-api.ptrip.app.conf` and the
+    step in `DEPLOY.md`. Until that is applied, uploads succeed and the images
+    404.
 - `GET /me/level` — the profile screen's challenge widget:
 
   ```json
@@ -133,6 +165,45 @@ accepting an emailed invite. All routes require
 - `POST /trips/:id/end` — **owner only**. Sets `status = 'ended'` and stamps
   `ended_at`. Returns `200` with the trip; ending an already-ended trip is
   `409`.
+- `GET /trips/:id/suggested-invitees` — **owner only**, running trips only.
+  Riders the caller has shared a trip with before who are **not** already on
+  this one, most recently ridden with first, at most 10. Returns
+  `[{ user_id, email, display_name, photo_url }]`.
+
+  Owner-only to match `POST /trips/:id/invites`: these are suggestions *for*
+  that form, and a member tapping one would get a `403`.
+
+#### Join codes
+
+A short-lived code, shown as a QR, for adding someone standing next to you
+without knowing their email address.
+
+- `POST /trips/:id/join-code` — **any member** of a running trip. Returns
+  `201 { trip_id, code, expires_at }`.
+
+  The code is 8 characters over a 32-symbol alphabet with `I`, `O`, `0` and
+  `1` left out (40 bits, drawn from `crypto.randomBytes`), and lives for 15
+  minutes. Issuing one **retires the trip's previous codes** in the same
+  transaction, so at most one is live at a time.
+
+  Any member, not just the owner: the rider who met someone at a fuel stop is
+  the one holding a phone.
+
+- `POST /trips/join` — body `{ code }`. Puts the caller on the trip. Rate
+  limited to 10 attempts/minute per IP.
+
+  | Case | Response |
+  |---|---|
+  | Live code | `200 { trip, already_member: false }` |
+  | Caller is already a member | `200 { trip, already_member: true }` — the outcome they wanted, reached sooner |
+  | Code not found | `404` |
+  | Code expired or retired | `410` — distinct from `404`, because "a minute too late" and "never existed" have different next steps |
+  | Trip has ended | `409` |
+  | Missing or malformed code | `400`, without reaching the lookup |
+
+  A code is **not** consumed by being redeemed: one QR held up to four riders
+  should add four riders. It stops working on expiry, and when the next code
+  is issued.
 
 Once a trip has ended it is **read-only**: members can still read it, but
 every write to it — positions and live waypoint drops included — returns
@@ -421,6 +492,7 @@ All variables are documented in `.env.example`:
 | `JWT_SECRET`              | Secret used to sign/verify JWTs issued to the Android app.                 | *(required, no default)*   |
 | `GOOGLE_CLIENT_ID`        | Comma-separated OAuth client ID(s) accepted when verifying Google Sign-In tokens (e.g. web + Android client IDs). | *(required, no default)*   |
 | `DB_PATH`                 | Path to the SQLite database file.                                          | `./data/trip-tracker.db`   |
+| `UPLOADS_DIR`             | Where uploaded avatars are written. Must be outside the repo (a deploy replaces the checkout) and must match the `root` in nginx's `location /uploads/` block. | `~/tracktrip/uploads` |
 | `HISTORY_RETENTION_DAYS`  | Days of `position_history` to keep for ended trips before cleanup deletes it. | `30`                     |
 
 Never commit a real `.env` file — it's excluded via `.gitignore`.
