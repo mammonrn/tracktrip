@@ -39,11 +39,70 @@ jobs:
         with:
           build-root-directory: android
 
+      - name: Decode debug keystore
+        id: debug_keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        # Without a pinned keystore, AGP generates a throwaway one per runner,
+        # so every build is signed with a different, unregistered certificate
+        # and Google Sign-In fails. The build is still allowed to proceed —
+        # the APK is fine for anything that doesn't involve Google Sign-In —
+        # but the run is annotated so it's obvious from the summary.
+        run: |
+          if [ -n "${DEBUG_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            if [ ! -s "$RUNNER_TEMP/debug.keystore" ]; then
+              echo "::error::ANDROID_DEBUG_KEYSTORE_BASE64 is set but did not decode to a file. Re-generate it with 'base64 -w0' (Linux/macOS) or 'certutil -encode' (Windows) and update the secret."
+              exit 1
+            fi
+            echo "path=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing debug build with the pinned keystore from ANDROID_DEBUG_KEYSTORE_BASE64."
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secret ANDROID_DEBUG_KEYSTORE_BASE64 is not set. Gradle will generate a throwaway debug keystore with a random SHA-1, so GOOGLE SIGN-IN WILL NOT WORK in this APK. See android/README.md."
+          fi
+
       - name: Build debug APK
         working-directory: android
-        # Release signing is deliberately not done here: the keystore is kept
-        # off GitHub entirely. See android/README.md for how to add it later.
+        env:
+          # Empty when no secret is configured, which makes build.gradle.kts
+          # fall back to AGP's default debug signing.
+          DEBUG_KEYSTORE_PATH: ${{ steps.debug_keystore.outputs.path }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+        # Release signing is deliberately not done here: that keystore is kept
+        # off GitHub entirely. See android/README.md.
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Report signing certificate
+        # The fingerprint that must be registered in Google Cloud Console for
+        # this build's package name. Printed on every run so a mismatch is
+        # visible without downloading and inspecting the APK by hand.
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          APK="$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)"
+          echo "APK: $APK"
+          "$APKSIGNER" verify --print-certs "$APK" | grep -iE 'DN:|SHA-1 digest' | tee /tmp/certs.txt
+          SHA1="$(grep -im1 'SHA-1 digest' /tmp/certs.txt | sed 's/.*: //' | tr -d ' \r')"
+          COLONED="$(echo "$SHA1" | tr 'a-z' 'A-Z' | sed 's/../&:/g; s/:$//')"
+          {
+            echo "### Debug APK signing certificate"
+            echo ""
+            echo "\`\`\`"
+            echo "SHA-1: $COLONED"
+            echo "\`\`\`"
+            echo ""
+            if [ -n "${{ steps.debug_keystore.outputs.path }}" ]; then
+              echo "Signed with the **pinned** keystore from \`ANDROID_DEBUG_KEYSTORE_BASE64\`."
+              echo "Google Sign-In works only if this fingerprint is registered in Google Cloud"
+              echo "Console for package \`app.ptrip.tracktrip.debug\`."
+            else
+              echo "⚠️ Signed with a **throwaway auto-generated** keystore — this fingerprint"
+              echo "changes on every run, so **Google Sign-In will not work** in this APK."
+              echo "Set the \`ANDROID_DEBUG_KEYSTORE_BASE64\` secret to fix it."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
