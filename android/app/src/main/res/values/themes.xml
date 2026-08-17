@@ -4,14 +4,20 @@
       Dark, and with the HUD background painted on the window itself.
 
       This is the theme the system uses for the window before Compose has
-      drawn anything; on the light parent it showed a white flash on every
+      drawn anything; on a light parent it showed a white flash on every
       cold start, straight into a near-black app.
+
+      The parent is AppCompat because the activity is an AppCompatActivity,
+      which is what the per-app language API (AppCompatDelegate) needs to
+      recreate the activity below Android 13. DayNight rather than a fixed
+      dark parent so the platform widgets AppCompat brings — the date picker
+      on the profile screen — follow the system instead of being forced.
 
       The colour is duplicated from Theme.kt on purpose — a Compose Color is
       not reachable from a resource file — so the two have to be changed
       together. It is the only copy of it outside that file.
     -->
-    <style name="Theme.Tracktrip" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Tracktrip" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/hud_background</item>
         <item name="android:colorBackground">@color/hud_background</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
