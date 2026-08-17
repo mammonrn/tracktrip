@@ -12,7 +12,7 @@ WebSocket position feed is still a stub.
 - SQLite via `better-sqlite3`
 - `ws` for the WebSocket server (stubbed for now)
 - PM2 for process management in production
-- Caddy as the reverse proxy / TLS terminator in front of the app
+- nginx + certbot as the reverse proxy / TLS terminator in front of the app
 
 ## Project layout
 
@@ -41,7 +41,8 @@ scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
 test/                 # node:test unit tests
 data/                 # SQLite DB file lives here (gitignored)
-Caddyfile             # reverse proxy config for api.ptrip.app
+deploy/
+  nginx-api.ptrip.app.conf  # nginx reverse proxy site config
 ```
 
 ## API
@@ -112,43 +113,29 @@ Only history belonging to trips with `status = 'ended'` and an `ended_at`
 older than the retention window is affected; active trips are never
 touched. Wire this into a cron/PM2 scheduled job on the VPS once deployed.
 
-## Deploying (Ubuntu 24.04 VPS, alongside other Node apps)
+## Deploying (Ubuntu 24.04 VPS, alongside other Node apps + an existing nginx)
 
-This app is designed to run next to other PM2-managed Node apps on the
-same box without colliding:
+For full step-by-step, first-time deployment instructions (including
+getting a TLS cert with certbot and how to roll back), see
+[`DEPLOY.md`](./DEPLOY.md). Summary, for a VPS that already has
+Node/PM2/nginx/certbot set up and other sites running:
 
 1. Pick a `PORT` in `.env` that isn't already in use by another app on
-   the VPS.
-2. Clone the repo and set up `.env`:
-   ```bash
-   git clone <repo-url> /opt/trip-tracker
-   cd /opt/trip-tracker
-   npm ci --omit=dev
-   cp .env.example .env   # edit with production values
-   npm run migrate
-   ```
-3. Start it under PM2 using the app-specific name declared in
-   `ecosystem.config.cjs` (`trip-tracker`), so `pm2 restart`/`pm2 stop`
+   the VPS, and set a unique `JWT_SECRET` — see `DEPLOY.md` for why it
+   must not be reused from another app on the same box.
+2. `git clone`, `npm ci --omit=dev`, set up `.env`, `npm run migrate`.
+3. Start it under PM2 using the process name already set in
+   `ecosystem.config.cjs` (`tracktrip-api`), so `pm2 restart`/`pm2 stop`
    only ever target this app, not others already running:
    ```bash
    pm2 start ecosystem.config.cjs
    pm2 save
    ```
-4. Put Caddy in front so the app is reachable at `https://api.ptrip.app`.
-   The included `Caddyfile` reverse-proxies that domain to
-   `localhost:<PORT>` (match the port to your `.env` if you didn't use the
-   default `4100`) and Caddy will request/renew the TLS certificate
-   automatically — this **requires DNS for `api.ptrip.app` to point at the
-   VPS and ports 80 and 443 to be open** (allow them in `ufw`/your cloud
-   firewall if they aren't already). If Caddy isn't already running on the
-   box:
-   ```bash
-   sudo cp Caddyfile /etc/caddy/Caddyfile   # or append this site block to the existing one
-   sudo systemctl reload caddy
-   ```
-   If another site already runs on this Caddy instance, merge the
-   `api.ptrip.app { ... }` block into the existing Caddyfile instead of
-   overwriting it.
+4. Symlink `deploy/nginx-api.ptrip.app.conf` into
+   `/etc/nginx/sites-enabled/`, run `sudo nginx -t` (always, before every
+   reload — a bad config can take down the other sites nginx is already
+   serving), then `sudo systemctl reload nginx`, then run
+   `sudo certbot --nginx -d api.ptrip.app` to get the TLS certificate.
 5. Schedule `npm run cleanup -- --confirm` periodically (e.g. a daily
    cron entry or a PM2 cron restart job) to enforce
    `HISTORY_RETENTION_DAYS`.

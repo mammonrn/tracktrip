@@ -5,7 +5,10 @@ import { createMeRouter } from './routes/me.js';
 
 export function createApp({ db, config, verifyGoogleIdToken }) {
   const app = express();
-  app.set('trust proxy', 1);
+  // nginx runs on the same host and connects over loopback, so trusting
+  // only loopback addresses is enough for req.ip / X-Forwarded-For to
+  // reflect the real client IP (needed for the /auth/* rate limiter).
+  app.set('trust proxy', 'loopback');
   app.use(express.json());
   app.use(healthRouter);
   app.use(createAuthRouter({ db, config, verifyGoogleIdToken }));
