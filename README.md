@@ -114,6 +114,10 @@ touched. Wire this into a cron/PM2 scheduled job on the VPS once deployed.
 
 ## Deploying (Ubuntu 24.04 VPS, alongside other Node apps)
 
+For a detailed, step-by-step first-time deployment walkthrough (including
+installing Caddy and rollback instructions), see [`DEPLOY.md`](./DEPLOY.md).
+The summary below assumes you're already comfortable with the stack:
+
 This app is designed to run next to other PM2-managed Node apps on the
 same box without colliding:
 
