@@ -4,16 +4,20 @@ import android.app.DatePickerDialog
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -34,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.data.LevelProgress
 import app.ptrip.tracktrip.data.ProfilePatch
 import app.ptrip.tracktrip.data.UserProfile
 import app.ptrip.tracktrip.ui.theme.AppPrimary
@@ -41,13 +47,19 @@ import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudAvatar
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudGap
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudReadout
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTopBar
+import app.ptrip.tracktrip.ui.theme.RankIcon
+import app.ptrip.tracktrip.ui.theme.RiderRank
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
+import app.ptrip.tracktrip.ui.theme.rankTint
 import java.util.Calendar
+import kotlin.math.roundToLong
 import kotlinx.coroutines.launch
 
 /**
@@ -173,6 +185,8 @@ private fun ProfileForm(
             }
         }
 
+        state.level?.let { LevelCard(it) }
+
         HudSurface {
             ProfileField(
                 value = firstName,
@@ -261,6 +275,91 @@ private fun patchFor(
         birthDate = changed(birthDate, user.birthDate),
     )
 }
+
+/**
+ * The rider's rank, and how far it took to get there.
+ *
+ * Absent rather than empty while it loads, and absent if it failed: a profile
+ * without a badge still works, and a badge showing "Novice" because a request
+ * fell over would be a lie about a rider's own riding.
+ */
+@Composable
+private fun LevelCard(level: LevelProgress) {
+    // The badge is drawn from the rank the server named, and lends the card
+    // its tint — so a rider's rank is legible from across the screen, before
+    // its name is read.
+    val rank = RiderRank.fromApiName(level.levelName)
+    val tint = rankTint(rank)
+
+    HudSurface(accent = tint.copy(alpha = 0.4f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RankIcon(rank = rank, modifier = Modifier.padding(end = 14.dp))
+            HudReadout(
+                label = stringResource(R.string.profile_level),
+                value = level.levelName,
+                valueColor = tint,
+            )
+            HudGap()
+            HudReadout(
+                label = stringResource(R.string.profile_total_km),
+                value = stringResource(R.string.profile_km_value, formatKm(level.totalKm)),
+            )
+        }
+        LevelProgressBar(
+            fraction = level.fractionThroughLevel,
+            modifier = Modifier.padding(top = 14.dp),
+        )
+
+        Text(
+            // At the top of the table there is no next level — which the
+            // server sends as null, distinct from "0 km to go".
+            text = level.nextLevelName?.let { next ->
+                stringResource(
+                    R.string.profile_level_next,
+                    formatKm(level.kmToNext ?: 0.0),
+                    next,
+                )
+            } ?: stringResource(R.string.profile_level_top),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+/**
+ * How far through the current level the rider is.
+ *
+ * Two boxes rather than Material's LinearProgressIndicator: that one is built
+ * for an operation in flight and animates itself accordingly, where this is a
+ * standing fact about how far somebody has ridden.
+ */
+@Composable
+private fun LevelProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(PROGRESS_BAR_HEIGHT)
+            .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
+            .background(AppTextMuted.copy(alpha = 0.25f))
+    ) {
+        // coerceAtLeast keeps a sliver visible at the bottom of a level, so a
+        // rider one kilometre in sees that they have started rather than an
+        // empty trough that looks like nothing was recorded.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f).coerceAtLeast(0.015f))
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(PROGRESS_BAR_HEIGHT / 2))
+                .background(AppPrimary)
+        )
+    }
+}
+
+private val PROGRESS_BAR_HEIGHT = 6.dp
+
+/** Whole kilometres, grouped. The decimals the server keeps are for its own sums. */
+private fun formatKm(km: Double): String = "%,d".format(km.roundToLong())
 
 @Composable
 private fun ProfileField(
@@ -365,6 +464,14 @@ private fun ProfilePreview() {
                     phone = null,
                     birthDate = "1994-03-17",
                     totalKm = 412.5,
+                ),
+                level = LevelProgress(
+                    totalKm = 412.5,
+                    levelName = "Novice",
+                    nextLevelName = "Rookie Rider",
+                    kmToNext = 87.5,
+                    levelMinKm = 0.0,
+                    nextLevelMinKm = 500.0,
                 ),
             ),
             onSave = {},

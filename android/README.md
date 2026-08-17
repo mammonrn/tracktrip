@@ -5,9 +5,12 @@ same monorepo as the Node backend; this folder is a self-contained Gradle
 project.
 
 **Current state:** signed-in riders can see their trips, create one, accept
-an invitation, and open a trip to invite riders by email, see who's on it, and
-(as owner) end it. There is a settings screen for the profile, language and
-sharing defaults, and signing out. Live tracking is not here yet.
+an invitation, and open a trip to invite riders by email, QR code or a shared
+link, see who's on it, and (as owner) end it. **Location sharing works**: a
+rider picks how long to share for and a foreground service reports their
+position every ten minutes until it lapses, they stop it, or the trip ends.
+There is a settings screen for the profile, language, sharing defaults and
+per-trip sharing toggles, and signing out.
 
 Google sign-in is wired end to end — Credential Manager obtains a Google ID
 token, it's exchanged at the backend's `POST /auth/google`, and the returned
@@ -21,9 +24,10 @@ inline message rather than crashing.
 | Sign-in | `POST /auth/google` |
 | Trip list, with pending invitations above it | `GET /trips`, `GET /invites`, `POST /invites/:id/accept` |
 | Create trip | `POST /trips` |
-| Trip detail — members, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees` |
-| Settings — profile, language, sharing default, sign out | `GET /me` |
+| Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
+| Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
+| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
@@ -66,6 +70,96 @@ the line work and saves pulling in an icon dependency for six glyphs.
 The one colour outside `Theme.kt` is `hud_background` in `res/values/colors.xml`:
 the window background the system paints before Compose starts. Keep it in step
 with `HudBlack`.
+
+## Location sharing
+
+Starting sharing is three things in a fixed order, which is why the sequence
+lives in one place ([`location/SharingController.kt`](
+app/src/main/java/app/ptrip/tracktrip/location/SharingController.kt)) rather
+than in each screen that offers it:
+
+1. Ask for `ACCESS_FINE_LOCATION` (coarse is accepted) and, on Android 13+,
+   `POST_NOTIFICATIONS` — in one prompt sequence, because the notification is
+   not decoration: it is how a rider knows they are being tracked and how they
+   stop it.
+2. `POST /trips/:id/share/start` with the chosen duration. The **server**
+   decides the expiry.
+3. Start [`LocationSharingService`](
+   app/src/main/java/app/ptrip/tracktrip/location/LocationSharingService.kt)
+   with that expiry, so the phone and the server stop at the same moment rather
+   than at two clocks' idea of an hour.
+
+Stopping runs the other way — service down first, then the server — so a
+failed network call still leaves the phone silent.
+
+The service reports every ten minutes via `LocationManager` (not Play
+Services' fused provider: at that cadence the accuracy is not worth another
+dependency, and this keeps working on a phone whose Play Services are
+unhealthy, which is the phone that ends up on a mountain road). It stops
+itself when the session lapses, when the rider stops it from the notification,
+and when a report comes back saying the trip has ended.
+
+**The service is the app's authority on whether this phone is sharing.**
+[`SharingState`](app/src/main/java/app/ptrip/tracktrip/location/SharingState.kt)
+publishes it and every screen reads from there. Deliberately *not* the server's
+`is_sharing`, which answers a different question — "would a report from this
+rider be accepted" — and is `true` on every running trip for a rider who has
+never touched the controls, since sharing is the default there. A toggle built
+on that would read ON while the phone sent nothing.
+
+This is also why [`AppContainer`](
+app/src/main/java/app/ptrip/tracktrip/data/AppContainer.kt) is a process
+singleton: the service and the UI are separate entry points into the same
+process, and two `ApiClient`s would mean two refresh mutexes — enough for a
+401 in each to rotate the refresh token twice, which the backend treats as
+theft and answers by revoking every token the rider has.
+
+## The map
+
+OpenStreetMap tiles through **osmdroid**, chosen over the Maps SDK for one
+reason: no API key and no billing account to attach to a hobby project.
+
+That comes with an obligation. The tiles are donated bandwidth run by a
+charity, and their [usage policy](
+https://operations.osmfoundation.org/policies/tiles/) requires a User-Agent
+identifying the app. osmdroid's default is the literal string `osmdroid`,
+shared with every app that never changed it and **blocked at the server** for
+exactly that reason — an app sending it collects 429s and eventually a ban on
+the shared identity. [`map/MapConfig.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/MapConfig.kt) sets it to
+`app.ptrip.tracktrip/<version>` before any map is built, and points the tile
+cache at the app's own cache directory rather than osmdroid's default of
+external storage.
+
+There is no dark tile source without running a tile server, so the standard
+tiles go through osmdroid's own night-mode colour matrix
+(`TilesOverlay.INVERT_COLORS`) and then a thin navy scrim, which lands close
+enough to the HUD palette to belong to the app. Labels stay readable, which
+was the thing to protect.
+
+Pins are drawn at runtime in [`map/RiderMarker.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RiderMarker.kt) from
+`riderColor(userId)` — the same function the member list's dots use, so a
+rider is one colour everywhere and stays that colour across refreshes and
+restarts. Panning follows an explicit tap, never the poll: re-centring every
+45 seconds would fight a rider who has dragged the map somewhere.
+
+## Language
+
+The language setting is stored in `SharedPreferences` and applied through
+`AppCompatDelegate.setApplicationLocales` — Android's own per-app language API.
+On Android 13+ it hands the choice to the system, so it also appears under
+Settings › Apps › Tracktrip › Language; below that, AppCompat stores it and
+recreates the activity. That is why `MainActivity` is an `AppCompatActivity`
+and the theme has an AppCompat parent, and why the locale is applied in
+[`TracktripApplication`](
+app/src/main/java/app/ptrip/tracktrip/TracktripApplication.kt) — before any
+activity exists, so there is nothing on screen to recreate.
+
+`values-th/strings.xml` is a **starter set**, not the full translation: the
+strings a rider meets first, so a working switch can be told from a broken one.
+Everything else falls back to English per string, so translating one is a
+matter of adding it to that file.
 
 ## Session handling
 

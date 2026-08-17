@@ -3,6 +3,7 @@ package app.ptrip.tracktrip.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
+import app.ptrip.tracktrip.data.LevelProgress
 import app.ptrip.tracktrip.data.MeApi
 import app.ptrip.tracktrip.data.ProfilePatch
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -16,6 +17,8 @@ import kotlinx.coroutines.launch
 data class ProfileUiState(
     val loading: Boolean = true,
     val user: UserProfile? = null,
+    /** Lifetime distance and the rank it earns. Null until it loads, or if it fails. */
+    val level: LevelProgress? = null,
     val error: String? = null,
     val saving: Boolean = false,
     val uploadingAvatar: Boolean = false,
@@ -53,10 +56,34 @@ class ProfileViewModel(
                 _uiState.update { it.copy(loading = false, user = user, error = null) }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
+                return@launch
             } catch (e: ApiException) {
                 _uiState.update { it.copy(loading = false, error = e.message) }
+                return@launch
             }
+
+            loadLevel()
         }
+    }
+
+    /**
+     * The rider's rank and lifetime distance.
+     *
+     * Loaded after the account and allowed to fail quietly: a badge that
+     * didn't arrive is a profile screen without a badge, not an error banner
+     * over a rider's own details. It is a separate request because the server
+     * derives it rather than storing it — see GET /me/level.
+     */
+    private suspend fun loadLevel() {
+        val level = try {
+            meApi.levelProgress()
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            return
+        } catch (e: ApiException) {
+            return
+        }
+        _uiState.update { it.copy(level = level) }
     }
 
     /** Sends only what changed. An empty patch is a no-op, not a request. */

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Thai strings — a starter set, not the full translation.
+
+  The language switch needs at least one translated locale to be worth
+  anything: with no values-th at all, choosing Thai changes the configuration
+  and nothing else, and there is no way to tell a working switch from a broken
+  one. So the strings a rider meets first are here, and the rest fall back to
+  values/strings.xml until the translation pass lands.
+
+  Anything not in this file is not missing by accident — Android falls back to
+  English per string, so adding a translation here is all it takes to switch
+  one over.
+-->
+<resources>
+    <!-- Navigation and the trip list -->
+    <string name="trips_title">ทริป</string>
+    <string name="signed_in">เข้าสู่ระบบแล้ว</string>
+    <string name="signed_in_as">เข้าสู่ระบบเป็น %1$s</string>
+    <string name="new_trip">ทริปใหม่</string>
+    <string name="refresh">รีเฟรช</string>
+    <string name="your_trips_title">ทริปของคุณ</string>
+    <string name="invitations_title">คำเชิญ</string>
+    <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
+    <string name="accept_invite">รับคำเชิญ</string>
+    <string name="untitled_trip">ทริปไม่มีชื่อ</string>
+    <string name="status_active">กำลังเดินทาง</string>
+    <string name="status_ended">จบแล้ว</string>
+    <string name="role_owner">เจ้าของทริป</string>
+    <string name="role_member">สมาชิก</string>
+    <string name="back">ย้อนกลับ</string>
+    <string name="cancel">ยกเลิก</string>
+
+    <!-- Settings -->
+    <string name="settings_title">ตั้งค่า</string>
+    <string name="settings_profile">โปรไฟล์</string>
+    <string name="settings_language">ภาษา</string>
+    <string name="language_system">ตามเครื่อง</string>
+    <string name="settings_sharing_duration">ระยะเวลาแชร์ตำแหน่งเริ่มต้น</string>
+    <string name="duration_30_minutes">30 นาที</string>
+    <string name="duration_1_hour">1 ชั่วโมง</string>
+    <string name="duration_4_hours">4 ชั่วโมง</string>
+    <string name="duration_until_stopped">จนกว่าจะกดหยุด</string>
+    <string name="sign_out">ออกจากระบบ</string>
+    <string name="sign_out_confirm_title">ออกจากระบบ?</string>
+    <string name="sign_out_confirm_message">ต้องเข้าสู่ระบบด้วย Google อีกครั้งถึงจะกลับมาดูทริปได้</string>
+
+    <!-- Location sharing -->
+    <string name="settings_sharing">แชร์ตำแหน่ง</string>
+    <string name="sharing_on">กำลังแชร์ตำแหน่ง</string>
+    <string name="sharing_off">ไม่ได้แชร์</string>
+    <string name="sharing_on_trip">กำลังแชร์ · %1$s</string>
+    <string name="sharing_start">แชร์ตำแหน่งของฉัน</string>
+    <string name="sharing_stop">หยุดแชร์</string>
+    <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
+    <string name="sharing_no_active_trips">ต้องมีทริปที่กำลังเดินทางก่อนถึงจะแชร์ได้ สร้างทริปใหม่ หรือเข้าร่วมทริปของเพื่อน</string>
+    <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
+    <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
+    <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>
+    <string name="sharing_channel_name">การแชร์ตำแหน่ง</string>
+    <string name="sharing_channel_description">แสดงระหว่างที่กำลังแชร์ตำแหน่งให้ทริป</string>
+    <string name="sharing_notification_title">กำลังแชร์ตำแหน่งของคุณ</string>
+    <string name="sharing_notification_stop">หยุด</string>
+
+    <!-- Map -->
+    <string name="map_title">แผนที่สด</string>
+    <string name="map_riders_placed">มีตำแหน่ง %1$d จาก %2$d คน</string>
+    <string name="map_center_on_me">กลับมาที่ตำแหน่งฉัน</string>
+    <string name="map_no_position">ยังไม่มีตำแหน่ง</string>
+    <string name="map_last_seen">ตำแหน่งล่าสุดที่ทราบ</string>
+    <string name="map_you">%1$s (คุณ)</string>
+    <string name="map_no_location">หาตำแหน่งของคุณไม่ได้ ลองเช็คว่าเปิด location อยู่ไหม</string>
+    <string name="map_speed_kmh">%1$d กม./ชม.</string>
+    <string name="map_speed_unknown">—</string>
+    <string name="map_own_speed">ความเร็วคุณ</string>
+    <string name="map_order_leader_first">เรียงจากคนนำ · ประมาณจากทิศทางกลุ่ม</string>
+
+    <!-- Profile -->
+    <string name="profile_title">โปรไฟล์</string>
+    <string name="profile_level">ยศนักขี่</string>
+    <string name="profile_total_km">ระยะสะสม</string>
+    <string name="profile_km_value">%1$s กม.</string>
+    <string name="profile_level_next">อีก %1$s กม. ถึง %2$s</string>
+    <string name="profile_level_top">สูงสุดของตารางแล้ว ไม่มียศให้ไต่ต่อ</string>
+
+    <!-- Inviting -->
+    <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
+    <string name="invite_suggestions">เคยร่วมทริปกันมาก่อน</string>
+    <string name="send_invite">เชิญ</string>
+    <string name="qr_invite_action">เชิญด้วย QR</string>
+    <string name="invite_share_link">แชร์ลิงก์เชิญ</string>
+    <string name="qr_scan_title">สแกนเพื่อเข้าร่วม</string>
+    <string name="members_title">สมาชิก</string>
+</resources>

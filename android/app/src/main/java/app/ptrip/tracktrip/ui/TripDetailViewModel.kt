@@ -3,12 +3,15 @@ package app.ptrip.tracktrip.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
+import app.ptrip.tracktrip.data.AppSettings
 import app.ptrip.tracktrip.data.JoinCode
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
+import app.ptrip.tracktrip.location.ActiveSharing
+import app.ptrip.tracktrip.location.SharingController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,13 +34,34 @@ data class TripDetailUiState(
     val joinCodeLoading: Boolean = false,
     /** Kept apart from [error] so a QR failure doesn't sit on the trip screen. */
     val joinCodeError: String? = null,
-)
+    /** Riders invited since this screen opened, so they can sink down the list. */
+    val invitedThisSession: Set<Long> = emptySet(),
+    /** Set when a code has been issued *to share*, cleared once the sheet opens. */
+    val pendingShareCode: JoinCode? = null,
+    val sharingPending: Boolean = false,
+) {
+    /**
+     * Suggestions with the ones already invited moved to the end.
+     *
+     * Moved rather than removed: inviting the wrong Nut is easy, and a chip
+     * that vanishes on tap leaves no way to notice, let alone to invite the
+     * right one afterwards. The sort is stable, so the server's frequency
+     * order survives within each group.
+     */
+    val orderedSuggestions: List<SuggestedInvitee>
+        get() = suggestions.sortedBy { it.userId in invitedThisSession }
+}
 
 class TripDetailViewModel(
     private val tripId: Long,
     private val tripApi: TripApi,
+    private val sharingController: SharingController,
+    private val settings: AppSettings,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
+
+    /** What this phone is broadcasting, straight from the location service. */
+    val activeSharing: StateFlow<ActiveSharing?> = sharingController.active
 
     private val _uiState = MutableStateFlow(TripDetailUiState())
     val uiState: StateFlow<TripDetailUiState> = _uiState.asStateFlow()
@@ -131,8 +155,17 @@ class TripDetailViewModel(
             _uiState.update { it.copy(invitePending = true, error = null, inviteSentTo = null) }
             try {
                 val invite = tripApi.invite(tripId, email)
-                _uiState.update {
-                    it.copy(invitePending = false, inviteEmail = "", inviteSentTo = invite.email)
+                _uiState.update { state ->
+                    val invited = state.suggestions
+                        .firstOrNull { it.email.equals(invite.email, ignoreCase = true) }
+                    state.copy(
+                        invitePending = false,
+                        inviteEmail = "",
+                        inviteSentTo = invite.email,
+                        invitedThisSession = invited
+                            ?.let { state.invitedThisSession + it.userId }
+                            ?: state.invitedThisSession,
+                    )
                 }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
@@ -149,6 +182,9 @@ class TripDetailViewModel(
             _uiState.update { it.copy(endPending = true, error = null) }
             try {
                 val ended = tripApi.endTrip(tripId)
+                // The server has just cleared every sharing session on this
+                // trip, this phone's included.
+                onTripEnded()
                 _uiState.update { it.copy(endPending = false, trip = ended) }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
@@ -156,6 +192,94 @@ class TripDetailViewModel(
                 _uiState.update { it.copy(endPending = false, error = e.message) }
             }
         }
+    }
+
+    /**
+     * Starts sharing this rider's location on this trip.
+     *
+     * The permission check happens on the way in, at the screen — by the time
+     * this runs the answer is yes, and the only thing left that can fail is
+     * the network.
+     */
+    fun startSharing(duration: SharingDuration) {
+        if (_uiState.value.sharingPending) return
+        val trip = _uiState.value.trip ?: return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(sharingPending = true, error = null) }
+            try {
+                sharingController.start(trip, duration.minutes)
+                // Worth remembering: the duration a rider picks here is
+                // almost always the one they want next time too.
+                settings.defaultSharingMinutes = duration.minutes
+                _uiState.update { it.copy(sharingPending = false) }
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(sharingPending = false, error = e.message) }
+            }
+        }
+    }
+
+    fun stopSharing() {
+        if (_uiState.value.sharingPending) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(sharingPending = true, error = null) }
+            try {
+                sharingController.stop(tripId)
+                _uiState.update { it.copy(sharingPending = false) }
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(sharingPending = false, error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Issues a code and hands it back for the share sheet.
+     *
+     * A fresh one every time rather than reusing whatever the QR screen last
+     * showed: issuing retires the previous code, so a link sent from a stale
+     * one would be dead on arrival.
+     */
+    fun requestShareLink() {
+        if (_uiState.value.joinCodeLoading) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
+            try {
+                val code = tripApi.createJoinCode(tripId)
+                _uiState.update {
+                    it.copy(joinCodeLoading = false, joinCode = code, pendingShareCode = code)
+                }
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(joinCodeLoading = false, error = e.message) }
+            }
+        }
+    }
+
+    /** Called once the share sheet has been opened, so it opens only once. */
+    fun shareLinkConsumed() {
+        _uiState.update { it.copy(pendingShareCode = null) }
+    }
+
+    /**
+     * Ending a trip clears every rider's sharing session on the server, so the
+     * phone must stop too rather than carry on reporting into a 409.
+     */
+    fun onTripEnded() {
+        if (sharingController.active.value?.tripId == tripId) {
+            sharingController.stopLocally()
+        }
+    }
+
+    /** A refused location permission, said out loud rather than silently. */
+    fun onPermissionDenied(message: String) {
+        _uiState.update { it.copy(error = message) }
     }
 
     fun dismissError() {

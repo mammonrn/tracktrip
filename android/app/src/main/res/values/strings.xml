@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PTrips</string>
+    <!--
+      The app's name. Not translated in any locale — it is a brand, and a
+      transliterated one would break every place a rider looks for it: the
+      launcher, the app list, Play.
+    -->
+    <string name="app_name" translatable="false">PTrips</string>
     <string name="sign_in_with_google">Sign in with Google</string>
     <string name="sign_out">Sign out</string>
     <string name="trips_title">Trips</string>
@@ -73,10 +78,53 @@
     <string name="profile_save">Save</string>
     <string name="profile_change_photo">Tap the photo to change it</string>
     <string name="profile_image_unreadable">That file couldn\'t be read as an image.</string>
+    <string name="profile_level">Rider level</string>
+    <string name="profile_total_km">Ridden</string>
+    <string name="profile_km_value">%1$s km</string>
+    <string name="profile_level_next">%1$s km to %2$s</string>
+    <string name="profile_level_top">Top of the table — nothing left to climb.</string>
 
     <!-- Sharing state -->
     <string name="sharing_on">Sharing location</string>
     <string name="sharing_off">Not sharing</string>
+    <string name="sharing_on_trip">Sharing · %1$s</string>
+    <string name="sharing_start">Share my location</string>
+    <string name="sharing_stop">Stop sharing</string>
+    <string name="sharing_choose_duration">Share my location for…</string>
+    <string name="sharing_until">Until %1$s</string>
+    <string name="sharing_no_active_trips">Sharing needs a running trip. Create one, or join a friend\'s.</string>
+    <string name="settings_sharing">Location sharing</string>
+
+    <!-- Map -->
+    <string name="map_title">Live map</string>
+    <string name="map_riders_placed">%1$d of %2$d riders on the map</string>
+    <string name="map_center_on_me">Centre on me</string>
+    <string name="map_no_position">No position yet</string>
+    <string name="map_last_seen">Last known position</string>
+    <string name="map_you">%1$s (you)</string>
+    <string name="map_no_location">Couldn\'t work out where you are. Check that location is on.</string>
+    <string name="map_speed_kmh">%1$d km/h</string>
+    <!-- No speed to show: an older build, or a fix whose provider had none. -->
+    <string name="map_speed_unknown">—</string>
+    <string name="map_own_speed">Your speed</string>
+    <!--
+      The list order is worked out from which way the group is heading, not
+      from distance along a road — the app has no route to measure against.
+      The row says so, because a bare "in front first" would read as a fact.
+    -->
+    <string name="map_order_leader_first">In front first · estimated from heading</string>
+
+    <!-- Location permission -->
+    <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
+    <string name="location_permission_denied">Location access is off for PTrips. Turn it on in Android\'s app settings to share your position with your group.</string>
+    <string name="location_permission_allow">Allow location</string>
+
+    <!-- The tracking notification -->
+    <string name="sharing_channel_name">Location sharing</string>
+    <string name="sharing_channel_description">Shown while your location is being shared with a trip.</string>
+    <string name="sharing_notification_title">Sharing your location</string>
+    <string name="sharing_notification_text">%1$s</string>
+    <string name="sharing_notification_stop">Stop</string>
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">Ridden with before</string>
@@ -93,6 +141,11 @@
     <string name="qr_camera_needed">Scanning needs the camera.</string>
     <string name="qr_camera_denied">Camera access is off for PTrips. Turn it on in Android\'s app settings, then try again.</string>
     <string name="qr_camera_allow">Allow camera</string>
+    <string name="invite_share_link">Share invite link</string>
+    <string name="invite_share_subject">Join my trip on PTrips</string>
+    <string name="invite_share_body">Join my trip \"%1$s\" on PTrips.\n\nCode: %2$s\nOpen: %3$s\n\nThe code works for 15 minutes.</string>
+    <string name="invite_share_chooser">Share invite</string>
+    <string name="language_system">Match my phone</string>
 
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>

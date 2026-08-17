@@ -127,31 +127,77 @@ test('someone I have never ridden with is not suggested', async () => {
   assert.deepEqual(res.body, []);
 });
 
-test('a rider met on several trips is offered once, at their most recent', async () => {
+test('a rider met on several trips is offered once, with the count', async () => {
   const { app, addUser, addTrip, tokenFor } = setup();
   const me = addUser('me');
   const often = addUser('often');
   const once = addUser('once');
 
   addTrip('Ages ago', me, [often]);
-  // `once` joined later than `often` did on the first trip, but `often` shows
-  // up again after that — so `often` should sort ahead.
   addTrip('A while back', me, [once]);
   addTrip('Recently', me, [often, once]);
   const mine = addTrip('Mine', me);
 
   const res = await suggestions(app, mine, tokenFor(me));
 
+  // Each appears once, carrying how many trips we have shared — both were on
+  // two, so their order here is decided by the recency tiebreaker rather than
+  // by the count, and is checked separately.
   assert.equal(res.body.length, 2, JSON.stringify(res.body));
-  assert.equal(new Set(res.body.map((each) => each.user_id)).size, 2);
+  assert.deepEqual(
+    Object.fromEntries(res.body.map((each) => [each.user_id, each.trips_together])),
+    { [often]: 2, [once]: 2 }
+  );
 });
 
-test('at most ten are offered, most recently ridden with first', async () => {
+test('the rider ridden with most often comes first, not the most recent', async () => {
+  const { app, addUser, addTrip, tokenFor } = setup();
+  const me = addUser('me');
+  const regular = addUser('regular');
+  const metOnce = addUser('metonce');
+
+  addTrip('January', me, [regular]);
+  addTrip('February', me, [regular]);
+  addTrip('March', me, [regular]);
+  // The most recent trip, but the only one with this rider on it.
+  addTrip('April', me, [metOnce]);
+  const mine = addTrip('Mine', me);
+
+  const res = await suggestions(app, mine, tokenFor(me));
+
+  assert.deepEqual(
+    res.body.map((each) => [each.user_id, each.trips_together]),
+    [
+      [regular, 3],
+      [metOnce, 1],
+    ]
+  );
+});
+
+test('riders on the same count fall back to who was ridden with most recently', async () => {
+  const { app, addUser, addTrip, tokenFor } = setup();
+  const me = addUser('me');
+  const earlier = addUser('earlier');
+  const later = addUser('later');
+
+  addTrip('First', me, [earlier]);
+  addTrip('Second', me, [later]);
+  const mine = addTrip('Mine', me);
+
+  const res = await suggestions(app, mine, tokenFor(me));
+
+  assert.deepEqual(
+    res.body.map((each) => each.user_id),
+    [later, earlier]
+  );
+});
+
+test('everyone is offered — there is no cap', async () => {
   const { app, addUser, addTrip, tokenFor } = setup();
   const me = addUser('me');
 
-  // Fifteen past companions, one trip each, in ascending order of when we
-  // last rode together — so friend14 is the most recent.
+  // Fifteen past companions, one trip each. The old ten-item cap hid exactly
+  // the long tail a rider with a big circle wants to search.
   const companions = [];
   for (let i = 0; i < 15; i += 1) {
     const friend = addUser(`friend${i}`);
@@ -162,11 +208,26 @@ test('at most ten are offered, most recently ridden with first', async () => {
   const mine = addTrip('Mine', me);
   const res = await suggestions(app, mine, tokenFor(me));
 
-  assert.equal(res.body.length, 10);
+  assert.equal(res.body.length, 15);
+  // All on one trip each, so recency decides: the last-met come first.
   assert.deepEqual(
     res.body.map((each) => each.user_id),
-    companions.slice(-10).reverse()
+    [...companions].reverse()
   );
+});
+
+test('suggestions carry the username the app prefers to show', async () => {
+  const { app, db, addUser, addTrip, tokenFor } = setup();
+  const me = addUser('me');
+  const friend = addUser('friend');
+  db.prepare('UPDATE users SET username = ? WHERE id = ?').run('speedy', friend);
+  addTrip('Last year', me, [friend]);
+  const mine = addTrip('Mine', me);
+
+  const res = await suggestions(app, mine, tokenFor(me));
+
+  assert.equal(res.body[0].username, 'speedy');
+  assert.equal(res.body[0].display_name, 'friend');
 });
 
 test('members cannot see suggestions for a trip they do not own', async () => {

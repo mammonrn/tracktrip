@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Needed to talk to the trip-tracker API. Location and
-         foreground-service permissions are deliberately not declared yet —
-         they arrive with the tracking phase. -->
+    <!-- Needed to talk to the trip-tracker API, and to fetch map tiles. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- osmdroid checks connectivity before reaching for a tile, so that a
+         phone with no signal draws its cache instead of stalling. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Reading a trip's invite QR code. Requested at the moment the scanner
          screen opens, never at launch. -->
@@ -16,10 +18,30 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- Location sharing. Fine is what the map is worth showing; coarse is
+         accepted because Android lets a rider grant only that. Both are
+         requested at the moment sharing is first started, never at launch. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Reading location with the phone in a pocket means a foreground
+         service, and from Android 14 a service that reads location must
+         declare this alongside its type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- The tracking notification is how a rider knows their location is going
+         out, and how they stop it. Without this grant on Android 13+ the
+         service still runs but its notification is hidden, so it is asked for
+         together with location. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
+        android:name=".TracktripApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Tracktrip">
@@ -28,12 +50,37 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Tracktrip">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Invite links. The app's own scheme always works; the https
+                 form is what goes into a message, so a phone without the app
+                 installed has somewhere to land once ptrip.app serves that
+                 path. Verified App Links need an assetlinks.json on the
+                 domain — until that exists Android will offer a chooser
+                 rather than opening the app directly, which still works. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="ptrip.app" android:pathPrefix="/join" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tracktrip" android:host="join" />
+            </intent-filter>
         </activity>
+
+        <service
+            android:name=".location.LocationSharingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 
 </manifest>

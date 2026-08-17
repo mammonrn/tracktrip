@@ -161,6 +161,14 @@ jobs:
           fi
           exit 1
 
+      - name: Run unit tests
+        working-directory: android
+        # Before the APK, so a broken test stops the build rather than being
+        # discovered after an artifact has been published. These are plain JVM
+        # tests — no emulator, no device — and they are the only automated
+        # check the Android side has.
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build debug APK
         working-directory: android
         env:

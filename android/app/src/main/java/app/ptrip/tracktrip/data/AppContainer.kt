@@ -2,16 +2,21 @@ package app.ptrip.tracktrip.data
 
 import android.content.Context
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.location.SharingController
 
 /**
  * The app's shared, long-lived objects, built once and handed to whatever
  * needs them.
  *
- * One [TokenStore] and one [ApiClient] for the whole process is the point:
- * the client serialises token refreshes through a mutex, which only works if
- * everyone is going through the same instance.
+ * **One instance per process**, obtained through [from]. That is not tidiness:
+ * [ApiClient] serialises token refreshes through a mutex, and the backend
+ * rotates the refresh token on every use and treats a re-presented one as
+ * theft — by revoking every token the user has. Two clients means two mutexes,
+ * which means a 401 in the location service and a 401 on screen can refresh at
+ * once and sign the rider out. The service and the UI are separate entry
+ * points into the same process, so they must meet here.
  */
-class AppContainer(context: Context) {
+class AppContainer private constructor(context: Context) {
 
     private val appContext = context.applicationContext
 
@@ -26,4 +31,18 @@ class AppContainer(context: Context) {
     val meApi: MeApi by lazy { MeApi(apiClient) }
 
     val authApi: AuthApi by lazy { AuthApi(baseUrl = baseUrl) }
+
+    val settings: AppSettings by lazy { AppSettings(appContext) }
+
+    val sharingController: SharingController by lazy { SharingController(appContext, tripApi) }
+
+    companion object {
+        @Volatile
+        private var instance: AppContainer? = null
+
+        fun from(context: Context): AppContainer =
+            instance ?: synchronized(this) {
+                instance ?: AppContainer(context).also { instance = it }
+            }
+    }
 }

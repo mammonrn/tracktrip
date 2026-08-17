@@ -8,6 +8,12 @@
       flashing a different colour into the app; it used to be a near-black
       HUD ground, and is now the same off-white the app itself sits on.
 
+      The parent is AppCompat because the activity is an AppCompatActivity,
+      which is what the per-app language API (AppCompatDelegate) needs to
+      recreate the activity below Android 13. Light rather than DayNight: the
+      app itself no longer has a dark variant, and a DayNight parent would
+      hand a rider in dark mode a black date picker inside a white app.
+
       windowLightStatusBar asks the system for *dark* status-bar icons: the
       bar is transparent, so they are drawn over this background and would
       otherwise be white on white. The navigation bar's equivalent is API 27
@@ -18,7 +24,7 @@
       not reachable from a resource file — so the two have to be changed
       together. It is the only copy of it outside that file.
     -->
-    <style name="Theme.Tracktrip" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Tracktrip" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowBackground">@color/app_background</item>
         <item name="android:colorBackground">@color/app_background</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

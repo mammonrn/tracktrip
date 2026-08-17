@@ -36,6 +36,7 @@ import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudScanIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
+import app.ptrip.tracktrip.ui.theme.HudStatusBadge
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
@@ -49,6 +50,7 @@ import app.ptrip.tracktrip.ui.theme.TracktripTheme
 fun TripListScreen(
     state: TripsUiState,
     displayName: String?,
+    sharingTripName: String?,
     onOpenTrip: (Trip) -> Unit,
     onCreateTrip: () -> Unit,
     onAcceptInvite: (Invite) -> Unit,
@@ -74,6 +76,19 @@ fun TripListScreen(
                 icon = { HudGearIcon() },
             )
         }
+
+        // Whether this phone is broadcasting, on the screen a rider opens
+        // first. It answers the question they actually have — "is my location
+        // going out right now?" — which the service is the only thing that
+        // knows; the trip screen's own copy of this is now the start/stop
+        // control there.
+        HudStatusBadge(
+            text = sharingTripName
+                ?.let { stringResource(R.string.sharing_on_trip, it) }
+                ?: stringResource(R.string.sharing_off),
+            on = sharingTripName != null,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
 
         state.error?.let { HudError(it) }
 
@@ -222,6 +237,7 @@ private fun TripListPreview() {
                 invites = listOf(Invite(9, 3, "rider@gmail.com", "Mae Hong Son")),
             ),
             displayName = "Rider",
+            sharingTripName = "Chiang Mai loop",
             onOpenTrip = {},
             onCreateTrip = {},
             onAcceptInvite = {},

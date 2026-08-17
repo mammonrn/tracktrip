@@ -29,8 +29,19 @@ class JoinLinkTest {
     }
 
     @Test
+    fun `the shared web link resolves to the same code`() {
+        assertEquals("K7M2QRX9", joinCodeFrom(joinWebLinkFor("K7M2QRX9")))
+        assertEquals("K7M2QRX9", joinCodeFrom("https://ptrip.app/join/K7M2QRX9"))
+        // Chat apps append their own tracking on the way through.
+        assertEquals("K7M2QRX9", joinCodeFrom("https://ptrip.app/join/K7M2QRX9?utm_source=line"))
+        assertEquals("K7M2QRX9", joinCodeFrom("https://ptrip.app/join/K7M2QRX9#open"))
+        assertEquals("K7M2QRX9", joinCodeFrom("https://ptrip.app/join/K7M2QRX9/"))
+    }
+
+    @Test
     fun `somebody else's QR code is not an error, just not ours`() {
         assertNull(joinCodeFrom("https://example.com/"))
+        assertNull(joinCodeFrom("https://ptrip.app/about"))
         assertNull(joinCodeFrom("WIFI:S:CafeWifi;T:WPA;P:hunter2;;"))
         assertNull(joinCodeFrom("867530912345678"))
         assertNull(joinCodeFrom(""))

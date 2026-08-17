@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The languages the app offers.
+
+  Android 13+ reads this to put Tracktrip in Settings › Apps › Tracktrip ›
+  Language, so the phone's own per-app language picker and the app's own
+  setting agree instead of fighting. Add a locale here when its strings land.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="th" />
+</locale-config>

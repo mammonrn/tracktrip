@@ -1,14 +1,21 @@
 package app.ptrip.tracktrip.ui
 
+import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -29,6 +36,7 @@ import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudChip
@@ -39,7 +47,6 @@ import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
-import app.ptrip.tracktrip.ui.theme.HudStatusBadge
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
@@ -49,6 +56,11 @@ import app.ptrip.tracktrip.ui.theme.riderColor
 fun TripDetailScreen(
     state: TripDetailUiState,
     currentUserId: Long?,
+    sharing: Boolean,
+    onStartSharing: (SharingDuration) -> Unit,
+    onStopSharing: () -> Unit,
+    onShareInviteLink: () -> Unit,
+    onOpenMap: () -> Unit,
     onInviteEmailChange: (String) -> Unit,
     onSendInvite: () -> Unit,
     onUseSuggestion: (SuggestedInvitee) -> Unit,
@@ -60,9 +72,7 @@ fun TripDetailScreen(
     val trip = state.trip
     var confirmingEnd by remember { mutableStateOf(false) }
 
-    // The rider's own row in the member list is where their sharing state
-    // lives — the same field the map and the write guard read.
-    val me = currentUserId?.let { id -> state.members.firstOrNull { it.userId == id } }
+    var choosingDuration by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         HudTopBar(
@@ -99,21 +109,6 @@ fun TripDetailScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp),
         ) {
-            // Whether this rider's own location is going out right now. Shown
-            // only once the member list has loaded, so it can't briefly claim
-            // "not sharing" while the answer is still unknown.
-            if (me != null) {
-                item {
-                    HudStatusBadge(
-                        text = stringResource(
-                            if (me.isSharing) R.string.sharing_on else R.string.sharing_off
-                        ),
-                        on = me.isSharing,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-            }
-
             item {
                 HudSectionHeader(
                     text = stringResource(R.string.members_title),
@@ -137,11 +132,12 @@ fun TripDetailScreen(
                         email = state.inviteEmail,
                         pending = state.invitePending,
                         sentTo = state.inviteSentTo,
-                        suggestions = state.suggestions,
+                        suggestions = state.orderedSuggestions,
                         onEmailChange = onInviteEmailChange,
                         onSend = onSendInvite,
                         onUseSuggestion = onUseSuggestion,
                         onShowQr = onShowQr,
+                        onShareLink = onShareInviteLink,
                     )
                 }
             }
@@ -149,6 +145,36 @@ fun TripDetailScreen(
 
         if (trip != null) {
             Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+                // The map is the point of the trip while it is running, and
+                // the record of it afterwards — so it is offered either way,
+                // and the wording changes rather than the button disappearing.
+                HudSecondaryButton(
+                    text = stringResource(
+                        if (trip.isActive) R.string.start_sharing
+                        else R.string.view_final_positions
+                    ),
+                    onClick = onOpenMap,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                )
+
+                // Sharing is the thing a rider comes to this screen to start,
+                // so it sits above the owner-only controls rather than below.
+                if (trip.isActive) {
+                    if (sharing) {
+                        HudDangerButton(
+                            text = stringResource(R.string.sharing_stop),
+                            onClick = onStopSharing,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        HudPrimaryButton(
+                            text = stringResource(R.string.sharing_start),
+                            onClick = { choosingDuration = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
                 if (trip.isOwner && trip.isActive) {
                     if (confirmingEnd) {
                         Text(
@@ -183,7 +209,72 @@ fun TripDetailScreen(
             }
         }
     }
+
+    if (choosingDuration) {
+        SharingDurationDialog(
+            onPick = { duration ->
+                choosingDuration = false
+                onStartSharing(duration)
+            },
+            onDismiss = { choosingDuration = false },
+        )
+    }
 }
+
+/**
+ * How long to share for.
+ *
+ * The four the server accepts, no more: a free-form duration would make "how
+ * long could this rider still be broadcasting?" unanswerable without reading
+ * the row, which is the question the whole feature turns on.
+ */
+@Composable
+private fun SharingDurationDialog(
+    onPick: (SharingDuration) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.sharing_choose_duration),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        },
+        text = {
+            Column {
+                SharingDuration.entries.forEach { duration ->
+                    Text(
+                        text = stringResource(duration.durationLabelRes),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = AppText,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(duration) }
+                            .padding(vertical = 14.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            HudSecondaryButton(text = stringResource(R.string.cancel), onClick = onDismiss)
+        },
+    )
+}
+
+@get:StringRes
+private val SharingDuration.durationLabelRes: Int
+    get() = when (this) {
+        SharingDuration.THIRTY_MINUTES -> R.string.duration_30_minutes
+        SharingDuration.ONE_HOUR -> R.string.duration_1_hour
+        SharingDuration.FOUR_HOURS -> R.string.duration_4_hours
+        SharingDuration.UNTIL_STOPPED -> R.string.duration_until_stopped
+    }
 
 @Composable
 private fun MemberRow(member: MemberPosition) {
@@ -233,11 +324,16 @@ private fun InvitePanel(
     onSend: () -> Unit,
     onUseSuggestion: (SuggestedInvitee) -> Unit,
     onShowQr: () -> Unit,
+    onShareLink: () -> Unit,
 ) {
     HudSurface(accent = AppPrimary.copy(alpha = 0.4f)) {
         // Riders from past trips, one tap instead of an email typed from
         // memory. Absent for a first trip, which is when there is nobody to
         // suggest — so the row simply isn't there rather than being empty.
+        //
+        // The whole list, ordered by how often you have ridden together, in a
+        // box that scrolls once it grows past a few rows. Capping it hid
+        // exactly the regulars a long-standing group is looking for.
         if (suggestions.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.invite_suggestions),
@@ -246,7 +342,11 @@ private fun InvitePanel(
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = SUGGESTIONS_MAX_HEIGHT)
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -295,14 +395,28 @@ private fun InvitePanel(
         )
 
         // Alongside email, not instead of it: an email invite reaches someone
-        // who isn't here, and a QR reaches someone who is.
-        HudSecondaryButton(
-            text = stringResource(R.string.qr_invite_action),
-            onClick = onShowQr,
+        // who isn't here, a QR reaches someone who is, and a shared link
+        // reaches someone in a chat window.
+        Row(
             modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-        )
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            HudSecondaryButton(
+                text = stringResource(R.string.qr_invite_action),
+                onClick = onShowQr,
+                modifier = Modifier.weight(1f),
+            )
+            HudSecondaryButton(
+                text = stringResource(R.string.invite_share_link),
+                onClick = onShareLink,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
+
+/** Roughly four rows of chips before the box starts scrolling. */
+private val SUGGESTIONS_MAX_HEIGHT = 180.dp
 
 @Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
@@ -316,34 +430,43 @@ private fun TripDetailPreview() {
                     MemberPosition(
                         userId = 1,
                         displayName = "Owner",
+                        username = "poom",
                         photoUrl = null,
                         role = "owner",
                         isSharing = true,
                         sharingUntil = null,
                         lat = 18.79,
                         lng = 98.98,
+                        speedMps = 24.0,
                         batteryPct = 91,
                         recordedAt = "2026-05-01T08:00:00.000Z",
                     ),
                     MemberPosition(
                         userId = 2,
                         displayName = "Friend",
+                        username = null,
                         photoUrl = null,
                         role = "member",
                         isSharing = false,
                         sharingUntil = null,
                         lat = null,
                         lng = null,
+                        speedMps = null,
                         batteryPct = null,
                         recordedAt = null,
                     ),
                 ),
                 suggestions = listOf(
-                    SuggestedInvitee(4, "friend@gmail.com", "Friend", null),
-                    SuggestedInvitee(5, "nut@gmail.com", "Nut", null),
+                    SuggestedInvitee(4, "friend@gmail.com", "Friend", "speedy", null, 5),
+                    SuggestedInvitee(5, "nut@gmail.com", "Nut", null, null, 2),
                 ),
             ),
             currentUserId = 1,
+            sharing = true,
+            onStartSharing = {},
+            onStopSharing = {},
+            onShareInviteLink = {},
+            onOpenMap = {},
             onInviteEmailChange = {},
             onSendInvite = {},
             onUseSuggestion = {},

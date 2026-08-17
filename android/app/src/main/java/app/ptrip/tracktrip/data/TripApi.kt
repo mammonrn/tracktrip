@@ -39,6 +39,8 @@ data class Invite(
 data class MemberPosition(
     val userId: Long,
     val displayName: String?,
+    /** The rider's own handle, when they have set one. Preferred over [displayName]. */
+    val username: String?,
     val photoUrl: String?,
     val role: String,
     /**
@@ -58,12 +60,21 @@ data class MemberPosition(
     val sharingUntil: String?,
     val lat: Double?,
     val lng: Double?,
+    /**
+     * Ground speed at the last fix, in **metres per second** — the unit
+     * Android's Location reports and the one the server stores. Converted for
+     * display by `map/Speed.kt`, and nowhere else.
+     *
+     * Null means no speed was ever sent for this fix, which is not the same
+     * as a rider who is stopped: that one reports 0.
+     */
+    val speedMps: Double?,
     val batteryPct: Int?,
     val recordedAt: String?,
 ) {
     val hasPosition: Boolean get() = lat != null && lng != null
     val isOwner: Boolean get() = role == Trip.ROLE_OWNER
-    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: "Rider $userId"
+    val label: String get() = riderLabel(username, displayName, "Rider $userId")
 
     /** Sharing with no end time — the rider stops it by hand. */
     val isSharingIndefinitely: Boolean get() = isSharing && sharingUntil == null
@@ -77,9 +88,12 @@ data class SuggestedInvitee(
     val userId: Long,
     val email: String,
     val displayName: String?,
+    val username: String?,
     val photoUrl: String?,
+    /** How many trips this rider and the caller have shared. Orders the list. */
+    val tripsTogether: Int,
 ) {
-    val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: email
+    val label: String get() = riderLabel(username, displayName, email)
 }
 
 /** A short-lived code that puts whoever redeems it on the trip. */
@@ -97,6 +111,68 @@ data class JoinResult(
     val alreadyMember: Boolean,
 )
 
+/**
+ * A rider's sharing session on one trip.
+ *
+ * [expiresAt] null means two different things, which [sharing] tells apart:
+ * running until the rider stops it, and no session at all.
+ */
+data class SharingSession(
+    val tripId: Long,
+    val sharing: Boolean,
+    val expiresAt: String?,
+)
+
+/**
+ * A point on the trip that is not a rider: a planned stop, or one dropped
+ * while riding.
+ *
+ * [orderIndex] is the position along the planned route, and is null for a
+ * live drop — ordering a point that was added because somebody stopped at it
+ * would be inventing a route they never planned.
+ */
+data class Waypoint(
+    val id: Long,
+    val name: String,
+    val lat: Double,
+    val lng: Double,
+    val type: String,
+    val orderIndex: Int?,
+) {
+    val isPlanned: Boolean get() = type == TYPE_PLANNED
+
+    companion object {
+        const val TYPE_PLANNED = "planned"
+        const val TYPE_LIVE = "live"
+    }
+}
+
+/**
+ * A trip's waypoints, as GET /trips/:id/waypoints returns them: two lists,
+ * already sorted by the server — planned in route order, live in the order
+ * they were dropped.
+ */
+data class TripWaypoints(
+    val planned: List<Waypoint> = emptyList(),
+    val live: List<Waypoint> = emptyList(),
+) {
+    val all: List<Waypoint> get() = planned + live
+    val isEmpty: Boolean get() = planned.isEmpty() && live.isEmpty()
+}
+
+/**
+ * One rider's level, from GET /trips/:id/member-levels.
+ *
+ * Only the name and the lifetime total: the map lists a level beside a name,
+ * and how far *someone else* is from their next promotion is their business,
+ * not something to put on a stranger's screen.
+ */
+data class RiderLevel(
+    val userId: Long,
+    val levelName: String,
+    val totalKm: Double,
+)
+
 /** The profile screen's challenge widget, from GET /me/level. */
 data class LevelProgress(
     val totalKm: Double,
@@ -105,7 +181,29 @@ data class LevelProgress(
     val kmToNext: Double?,
     val levelMinKm: Double,
     val nextLevelMinKm: Double?,
-)
+) {
+    /**
+     * How far through the current level the rider is, from 0 to 1 — what the
+     * progress bar fills to.
+     *
+     * Measured between the two levels' thresholds rather than from zero: a
+     * rider on 1,600 km is a fifth of the way from Wanderer to Voyager, not
+     * 1,600/3,500 of the way, and a bar that reset to nearly-full on every
+     * promotion would tell them the opposite of what happened.
+     *
+     * A rider at the top of the table has nothing left to fill towards, so
+     * the bar is full — that is a finished ladder, not a stalled one. A
+     * malformed table (thresholds equal or inverted) also returns full rather
+     * than dividing by zero.
+     */
+    val fractionThroughLevel: Float
+        get() {
+            val next = nextLevelMinKm ?: return 1f
+            val span = next - levelMinKm
+            if (span <= 0) return 1f
+            return ((totalKm - levelMinKm) / span).coerceIn(0.0, 1.0).toFloat()
+        }
+}
 
 /**
  * Every trip-related call the app makes. Thin on purpose: it turns JSON into
@@ -154,12 +252,34 @@ class TripApi(private val client: ApiClient) {
         )
     }
 
+    /**
+     * Starts (or restarts) sharing on a trip.
+     *
+     * [durationMinutes] must be one of the offered durations, or null for
+     * "until I stop it" — the server rejects anything else, and refuses an
+     * omitted field outright so a client that forgot to send one can't
+     * silently get an unlimited session.
+     */
+    suspend fun startSharing(tripId: Long, durationMinutes: Int?): SharingSession {
+        val body = JSONObject().put("duration_minutes", durationMinutes ?: JSONObject.NULL)
+        return JSONObject(client.post("/trips/$tripId/share/start", body)).toSharingSession()
+    }
+
+    suspend fun stopSharing(tripId: Long): SharingSession =
+        JSONObject(client.post("/trips/$tripId/share/stop")).toSharingSession()
+
+    /**
+     * Reports one fix. [speed] is metres per second, straight from the
+     * Location that produced the fix — see `map/Speed.kt` for why no
+     * conversion happens on this side of the wire.
+     */
     suspend fun reportPosition(
         tripId: Long,
         lat: Double,
         lng: Double,
         timestamp: String,
         accuracy: Float?,
+        speed: Float?,
         batteryPct: Int?,
     ) {
         val body = JSONObject()
@@ -167,12 +287,26 @@ class TripApi(private val client: ApiClient) {
             .put("lng", lng)
             .put("timestamp", timestamp)
         accuracy?.let { body.put("accuracy", it.toDouble()) }
+        speed?.let { body.put("speed", it.toDouble()) }
         batteryPct?.let { body.put("battery_pct", it) }
         client.post("/trips/$tripId/positions", body)
     }
 
-    suspend fun levelProgress(): LevelProgress =
-        JSONObject(client.get("/me/level")).toLevelProgress()
+    /**
+     * Every member's level in one call.
+     *
+     * A batch rather than one request per rider: `/me/level` only ever answers
+     * for the caller, and a trip of eight would otherwise be eight requests
+     * from a phone that is already polling positions.
+     */
+    suspend fun memberLevels(tripId: Long): Map<Long, RiderLevel> =
+        JSONArray(client.get("/trips/$tripId/member-levels"))
+            .map { it.toRiderLevel() }
+            .associateBy { it.userId }
+
+    /** The trip's planned stops and live drops. */
+    suspend fun waypoints(tripId: Long): TripWaypoints =
+        JSONObject(client.get("/trips/$tripId/waypoints")).toTripWaypoints()
 }
 
 internal inline fun <T> JSONArray.map(transform: (JSONObject) -> T): List<T> =
@@ -205,6 +339,7 @@ internal fun JSONObject.toInvite() = Invite(
 internal fun JSONObject.toMemberPosition() = MemberPosition(
     userId = getLong("user_id"),
     displayName = optStringOrNull("display_name"),
+    username = optStringOrNull("username"),
     photoUrl = optStringOrNull("photo_url"),
     role = optStringOrNull("role") ?: "member",
     // Defaults to false: a member row that arrives without the field is
@@ -213,6 +348,7 @@ internal fun JSONObject.toMemberPosition() = MemberPosition(
     sharingUntil = optStringOrNull("sharing_until"),
     lat = optDoubleOrNull("lat"),
     lng = optDoubleOrNull("lng"),
+    speedMps = optDoubleOrNull("speed"),
     batteryPct = optIntOrNull("battery_pct"),
     recordedAt = optStringOrNull("recorded_at"),
 )
@@ -221,13 +357,46 @@ internal fun JSONObject.toSuggestedInvitee() = SuggestedInvitee(
     userId = optLong("user_id"),
     email = optStringOrNull("email").orEmpty(),
     displayName = optStringOrNull("display_name"),
+    username = optStringOrNull("username"),
     photoUrl = optStringOrNull("photo_url"),
+    // A build that predates the count still sorts sensibly: everyone ties at
+    // one, and the server's own ordering is preserved.
+    tripsTogether = optIntOrNull("trips_together") ?: 1,
 )
 
 internal fun JSONObject.toJoinCode() = JoinCode(
     tripId = optLong("trip_id"),
     code = optStringOrNull("code").orEmpty(),
     expiresAt = optStringOrNull("expires_at").orEmpty(),
+)
+
+internal fun JSONObject.toSharingSession() = SharingSession(
+    tripId = optLong("trip_id"),
+    sharing = optBoolean("sharing", false),
+    expiresAt = optStringOrNull("expires_at"),
+)
+
+internal fun JSONObject.toWaypoint() = Waypoint(
+    id = optLong("id"),
+    name = optStringOrNull("name").orEmpty(),
+    lat = optDouble("lat"),
+    lng = optDouble("lng"),
+    type = optStringOrNull("type") ?: Waypoint.TYPE_LIVE,
+    orderIndex = optIntOrNull("order_index"),
+)
+
+internal fun JSONObject.toTripWaypoints() = TripWaypoints(
+    planned = optJSONArray("planned")?.map { it.toWaypoint() } ?: emptyList(),
+    live = optJSONArray("live")?.map { it.toWaypoint() } ?: emptyList(),
+)
+
+internal fun JSONObject.toRiderLevel() = RiderLevel(
+    userId = optLong("user_id"),
+    // The server always sends a level — the table starts at zero kilometres,
+    // so there is no such thing as a rider without one. The fallback is for a
+    // response mangled in transit, not for a real state.
+    levelName = optJSONObject("level")?.optStringOrNull("name") ?: "Novice",
+    totalKm = optDouble("total_km", 0.0),
 )
 
 internal fun JSONObject.toLevelProgress(): LevelProgress {
