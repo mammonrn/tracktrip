@@ -6,13 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,10 +21,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
-import app.ptrip.tracktrip.ui.theme.HudAmber
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTextDim
+import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
 /** Matches the backend's 1–60 characters after trimming. */
@@ -47,11 +45,11 @@ fun CreateTripScreen(
     val canSubmit = trimmed.isNotEmpty() && trimmed.length <= TRIP_NAME_MAX_LENGTH && !creating
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Text(
-            text = stringResource(R.string.new_trip).uppercase(),
-            style = MaterialTheme.typography.headlineSmall,
-            color = HudAmber,
-            modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
+        HudTopBar(
+            title = stringResource(R.string.new_trip),
+            onBack = onBack,
+            backContentDescription = stringResource(R.string.back),
+            modifier = Modifier.padding(bottom = 12.dp),
         )
 
         HudSurface {
@@ -80,29 +78,23 @@ fun CreateTripScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(
+            HudPrimaryButton(
+                text = stringResource(R.string.create_trip),
                 onClick = { onCreate(trimmed) },
                 enabled = canSubmit,
+                loading = creating,
                 modifier = Modifier.weight(1f),
-            ) {
-                if (creating) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp),
-                    )
-                } else {
-                    Text(stringResource(R.string.create_trip))
-                }
-            }
-            TextButton(onClick = onBack, enabled = !creating) {
-                Text(stringResource(R.string.cancel))
-            }
+            )
+            HudSecondaryButton(
+                text = stringResource(R.string.cancel),
+                onClick = onBack,
+                enabled = !creating,
+            )
         }
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF04070B)
+@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
 @Composable
 private fun CreateTripPreview() {
     TracktripTheme {

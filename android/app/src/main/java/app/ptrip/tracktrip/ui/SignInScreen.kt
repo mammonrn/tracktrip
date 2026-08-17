@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -16,6 +15,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.ui.theme.HudAmber
+import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
 @Composable
 fun SignInScreen(
@@ -31,19 +34,23 @@ fun SignInScreen(
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = stringResource(R.string.app_name),
+            text = stringResource(R.string.app_name).uppercase(),
             style = MaterialTheme.typography.headlineMedium,
+            color = HudAmber,
         )
 
         if (state is SignInUiState.Loading) {
-            CircularProgressIndicator(modifier = Modifier.padding(top = 24.dp))
+            CircularProgressIndicator(
+                color = HudCyan,
+                strokeWidth = 2.dp,
+                modifier = Modifier.padding(top = 24.dp),
+            )
         } else {
-            Button(
+            HudPrimaryButton(
+                text = stringResource(R.string.sign_in_with_google),
                 onClick = onSignInClick,
                 modifier = Modifier.padding(top = 24.dp),
-            ) {
-                Text(text = stringResource(R.string.sign_in_with_google))
-            }
+            )
         }
 
         if (state is SignInUiState.Error) {
@@ -58,18 +65,18 @@ fun SignInScreen(
     }
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
 @Composable
 private fun SignInScreenPreview() {
-    MaterialTheme {
+    TracktripTheme {
         SignInScreen(state = SignInUiState.SignedOut, onSignInClick = {})
     }
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
 @Composable
 private fun SignInScreenErrorPreview() {
-    MaterialTheme {
+    TracktripTheme {
         SignInScreen(
             state = SignInUiState.Error("Can't reach the server. Check your connection."),
             onSignInClick = {},
