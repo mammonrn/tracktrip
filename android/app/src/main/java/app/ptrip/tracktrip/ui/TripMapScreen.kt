@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,8 +34,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.map.CameraTarget
+import app.ptrip.tracktrip.map.FALLBACK_CENTRE
+import app.ptrip.tracktrip.map.FALLBACK_ZOOM
+import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.MapConfig
+import app.ptrip.tracktrip.map.MarkerMotion
 import app.ptrip.tracktrip.map.RiderMarker
+import app.ptrip.tracktrip.map.SOLO_ZOOM
+import app.ptrip.tracktrip.map.Speed
+import app.ptrip.tracktrip.map.initialCamera
 import app.ptrip.tracktrip.ui.theme.HudBlack
 import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDivider
@@ -43,12 +52,14 @@ import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
+import app.ptrip.tracktrip.ui.theme.HudReadout
 import app.ptrip.tracktrip.ui.theme.HudText
 import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -64,10 +75,13 @@ import org.osmdroid.views.overlay.TilesOverlay
  */
 data class MapFocus(val lat: Double, val lng: Double, val sequence: Int)
 
-/** Chiang Mai. Somewhere to point the map before anyone has reported. */
-private val FALLBACK_CENTRE = GeoPoint(18.7883, 98.9853)
-private const val DEFAULT_ZOOM = 13.0
 private const val FOCUS_ZOOM = 16.0
+
+/** Margin left around the group when the camera is fitted to their bounding box. */
+private const val BOUNDS_PADDING_PX = 64
+
+/** How many frames to wait for the map to be measured before giving up on fitting. */
+private const val LAYOUT_WAIT_FRAMES = 120
 
 /**
  * Where everyone on the trip is.
@@ -75,12 +89,20 @@ private const val FOCUS_ZOOM = 16.0
  * Map on top, every member listed underneath — not a map you have to tap pin
  * by pin to read. The two halves are wired together: tapping a rider in the
  * list moves the map to them, and tapping their pin highlights their row.
+ *
+ * [myLocation] is this phone's own last known fix, used to open the camera
+ * somewhere useful before anyone on the trip has reported. [mySpeedKmh] is
+ * this rider's own speed, read from the device rather than from the server —
+ * the poll is minutes old by design, and a speedometer that lags by minutes
+ * is not a speedometer.
  */
 @Composable
 fun TripMapScreen(
     state: TripMapUiState,
     currentUserId: Long?,
     centreOn: MapFocus?,
+    myLocation: LatLng?,
+    mySpeedKmh: Int?,
     onRefresh: () -> Unit,
     onCenterOnMe: () -> Unit,
     onBack: () -> Unit,
@@ -117,58 +139,125 @@ fun TripMapScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        HudTopBar(
-            title = state.trip?.name ?: stringResource(R.string.map_title),
-            onBack = onBack,
-            backContentDescription = stringResource(R.string.back),
-            subtitle = stringResource(R.string.map_riders_placed, state.placed.size, state.members.size),
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+    // The top bar is *over* the map, not above it. As a row in the same column
+    // it belonged to the scrolling layout and slid away the moment the map was
+    // dragged; a rider then had no trip name and, worse, no way back.
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                RiderMap(
+                    members = state.placed,
+                    myLocation = myLocation,
+                    focus = focus,
+                    onMarkerTap = { focused = it },
+                )
 
-        state.error?.let { HudError(it, modifier = Modifier.padding(horizontal = 16.dp)) }
+                HudIconButton(
+                    onClick = onCenterOnMe,
+                    contentDescription = stringResource(R.string.map_center_on_me),
+                    icon = { HudPinIcon(tint = HudCyan) },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp)
+                        .background(HudBlack.copy(alpha = 0.75f), CircleShape),
+                )
+            }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            RiderMap(
-                members = state.placed,
-                focus = focus,
-                onMarkerTap = { focused = it },
-            )
+            HudDivider()
 
-            HudIconButton(
-                onClick = onCenterOnMe,
-                contentDescription = stringResource(R.string.map_center_on_me),
-                icon = { HudPinIcon(tint = HudCyan) },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(12.dp)
-                    .background(HudBlack.copy(alpha = 0.75f), CircleShape),
-            )
-        }
-
-        HudDivider()
-
-        if (state.loading && state.members.isEmpty()) {
-            HudLoading()
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .weight(MEMBER_LIST_WEIGHT)
-                    .fillMaxWidth(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
-            ) {
-                items(state.members, key = { it.userId }) { member ->
-                    MemberMapRow(
-                        member = member,
-                        isSelf = member.userId == currentUserId,
-                        focused = member.userId == focused,
-                        onClick = { if (member.hasPosition) focused = member.userId },
-                    )
+            if (state.loading && state.members.isEmpty()) {
+                HudLoading()
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(MEMBER_LIST_WEIGHT)
+                        .fillMaxWidth(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
+                ) {
+                    if (state.orderedByProgress) {
+                        item {
+                            // The order is a guess from a heading, not a road
+                            // distance (see RideOrder) — the row says as much
+                            // rather than letting the list imply certainty.
+                            Text(
+                                text = stringResource(R.string.map_order_leader_first),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = HudTextDim,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                    items(state.members, key = { it.userId }) { member ->
+                        MemberMapRow(
+                            member = member,
+                            levelName = state.levels[member.userId]?.levelName,
+                            isSelf = member.userId == currentUserId,
+                            focused = member.userId == focused,
+                            onClick = { if (member.hasPosition) focused = member.userId },
+                        )
+                    }
                 }
             }
         }
+
+        MapOverlayBar(
+            title = state.trip?.name ?: stringResource(R.string.map_title),
+            subtitle = stringResource(
+                R.string.map_riders_placed,
+                state.placed.size,
+                state.members.size,
+            ),
+            speedKmh = mySpeedKmh,
+            error = state.error,
+            onBack = onBack,
+            modifier = Modifier.align(Alignment.TopStart),
+        )
     }
 }
+
+/**
+ * The floating header: trip name, the way back, and this rider's own speed.
+ *
+ * Painted on a near-opaque plate because it sits over map tiles, which are
+ * pale and busy and would otherwise swallow the title.
+ */
+@Composable
+private fun MapOverlayBar(
+    title: String,
+    subtitle: String,
+    speedKmh: Int?,
+    error: String?,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(HudBlack.copy(alpha = 0.88f))
+            .padding(horizontal = 16.dp),
+    ) {
+        HudTopBar(
+            title = title,
+            onBack = onBack,
+            backContentDescription = stringResource(R.string.back),
+            subtitle = subtitle,
+            trailing = {
+                HudReadout(
+                    label = stringResource(R.string.map_own_speed),
+                    value = speedText(speedKmh),
+                    valueColor = if (speedKmh != null) HudCyan else HudTextDim,
+                )
+            },
+        )
+        error?.let { HudError(it) }
+    }
+}
+
+/** A speed in km/h, or a dash when the phone has never said. */
+@Composable
+private fun speedText(kmh: Int?): String =
+    kmh?.let { stringResource(R.string.map_speed_kmh, it) }
+        ?: stringResource(R.string.map_speed_unknown)
 
 /** The list gets about a third of the screen; the map keeps the rest. */
 private const val MEMBER_LIST_WEIGHT = 0.55f
@@ -176,13 +265,14 @@ private const val MEMBER_LIST_WEIGHT = 0.55f
 /**
  * The osmdroid map, wrapped for Compose.
  *
- * Markers are rebuilt on every update rather than diffed. There are as many of
- * them as there are people on a trip, and rebuilding is what keeps a rider who
- * has just moved from being drawn at their old position.
+ * Markers are kept between updates rather than rebuilt, which is what lets a
+ * rider's pin *travel* to its new position — see [MarkerMotion]. Rebuilding
+ * them, as this did, made every update a teleport.
  */
 @Composable
 private fun RiderMap(
     members: List<MemberPosition>,
+    myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
 ) {
@@ -199,8 +289,10 @@ private fun RiderMap(
             zoomController.setVisibility(
                 org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
             )
-            controller.setZoom(DEFAULT_ZOOM)
-            controller.setCenter(FALLBACK_CENTRE)
+            // A holding position only: the real one is chosen below, once it
+            // is known whether anybody on this trip has reported.
+            controller.setZoom(FALLBACK_ZOOM)
+            controller.setCenter(GeoPoint(FALLBACK_CENTRE.lat, FALLBACK_CENTRE.lng))
 
             // OpenStreetMap serves one style of tile and it is a daylight one.
             // Rather than run a tile server to get a dark map, the standard
@@ -211,6 +303,13 @@ private fun RiderMap(
             overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
         }
     }
+
+    // A marker per rider, and where each one is drawn right now — which is not
+    // where that rider is until their slide has finished.
+    val markers = remember { mutableMapOf<Long, Marker>() }
+    val drawn = remember { mutableMapOf<Long, LatLng>() }
+    var framedOnRiders by remember { mutableStateOf(false) }
+    var framedOnMe by remember { mutableStateOf(false) }
 
     // osmdroid's MapView keeps a tile-download thread pool and a location
     // client alive; without pausing it the map keeps working from behind
@@ -232,30 +331,7 @@ private fun RiderMap(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { mapView },
-            modifier = Modifier.fillMaxSize(),
-            update = { view ->
-                view.overlays.removeAll { it is Marker }
-                members.forEach { member ->
-                    val lat = member.lat ?: return@forEach
-                    val lng = member.lng ?: return@forEach
-                    view.overlays.add(
-                        Marker(view).apply {
-                            position = GeoPoint(lat, lng)
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                            icon = RiderMarker.forRider(member.userId, view.resources)
-                            title = member.label
-                            setOnMarkerClickListener { _, _ ->
-                                onMarkerTap(member.userId)
-                                true
-                            }
-                        }
-                    )
-                }
-                view.invalidate()
-            },
-        )
+        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
         // A thin navy wash over the tiles, so the map sits in the same world
         // as the rest of the app instead of glowing out of it. Light enough
@@ -267,6 +343,38 @@ private fun RiderMap(
         )
     }
 
+    // Pins: added, removed, and then slid to where their rider now is.
+    LaunchedEffect(members) {
+        val targets = syncMarkers(mapView, members, markers, drawn, onMarkerTap)
+        slideMarkers(mapView, markers, drawn, targets)
+    }
+
+    // The opening camera: it follows this phone's own position while the trip
+    // has no fixes yet, then frames the group once, for good, the first time
+    // anybody has reported. After that the camera belongs to whoever is
+    // dragging it.
+    LaunchedEffect(members, myLocation) {
+        if (framedOnRiders) return@LaunchedEffect
+
+        val points = members.mapNotNull { it.latLng }
+        // Nothing new to frame on: no rider has reported, and this phone's own
+        // position has either not arrived or has already been used. Framing on
+        // it again every few seconds would drag the map out from under anyone
+        // panning an empty one.
+        if (points.isEmpty() && (myLocation == null || framedOnMe)) return@LaunchedEffect
+
+        // zoomToBoundingBox needs a measured view; before layout it silently
+        // does nothing, which is a camera stuck on the fallback.
+        var frames = 0
+        while (mapView.width == 0 && frames < LAYOUT_WAIT_FRAMES) {
+            withFrameNanos { }
+            frames += 1
+        }
+
+        applyCamera(mapView, initialCamera(points, myLocation))
+        if (points.isNotEmpty()) framedOnRiders = true else framedOnMe = true
+    }
+
     // Panning follows an explicit request, never the data: re-centring on
     // every poll would fight a rider who has dragged the map somewhere.
     LaunchedEffect(focus) {
@@ -275,10 +383,117 @@ private fun RiderMap(
     }
 }
 
-/** One rider under the map: their colour, their name, and how current they are. */
+/** Points the camera as [target] asks, fitting a box when there is one. */
+private fun applyCamera(view: MapView, target: CameraTarget) {
+    val bounds = target.bounds
+    if (bounds != null) {
+        view.zoomToBoundingBox(
+            BoundingBox(bounds.north, bounds.east, bounds.south, bounds.west),
+            false,
+            BOUNDS_PADDING_PX,
+        )
+        return
+    }
+    view.controller.setZoom(target.zoom ?: SOLO_ZOOM)
+    view.controller.setCenter(GeoPoint(target.centre.lat, target.centre.lng))
+}
+
+/**
+ * Brings the map's markers in line with [members], and returns where each one
+ * should end up.
+ *
+ * A rider seen for the first time is placed at their position outright — there
+ * is nowhere to slide from, and animating in from a previous position they
+ * never had would be a lie about where they have been.
+ */
+private fun syncMarkers(
+    view: MapView,
+    members: List<MemberPosition>,
+    markers: MutableMap<Long, Marker>,
+    drawn: MutableMap<Long, LatLng>,
+    onMarkerTap: (Long) -> Unit,
+): Map<Long, LatLng> {
+    val placed = members.mapNotNull { member -> member.latLng?.let { member to it } }
+    val present = placed.map { it.first.userId }.toSet()
+
+    (markers.keys - present).toList().forEach { userId ->
+        markers.remove(userId)?.let { view.overlays.remove(it) }
+        drawn.remove(userId)
+    }
+
+    placed.forEach { (member, point) ->
+        val existing = markers[member.userId]
+        val marker = existing ?: Marker(view).also {
+            markers[member.userId] = it
+            view.overlays.add(it)
+        }
+        // The icon carries the rider's name, so it is refreshed on every sync:
+        // a rider who sets a username mid-ride gets it on their pin.
+        marker.icon = RiderMarker.forRider(member.userId, member.label, view.resources)
+        marker.setAnchor(Marker.ANCHOR_CENTER, RiderMarker.anchorV(view.resources))
+        marker.title = member.label
+        marker.setOnMarkerClickListener { _, _ ->
+            onMarkerTap(member.userId)
+            // Consumed: the name is on the pin already, so osmdroid's info
+            // window would be a bubble repeating it over the map.
+            true
+        }
+        if (existing == null) {
+            marker.position = GeoPoint(point.lat, point.lng)
+            drawn[member.userId] = point
+        }
+    }
+
+    view.invalidate()
+    return placed.associate { it.first.userId to it.second }
+}
+
+/**
+ * Slides every moved marker to its new position over [MarkerMotion.DURATION_MS].
+ *
+ * Driven off the frame clock rather than a fixed tick, so it takes the same
+ * wall-clock time on a phone dropping frames as on one that isn't. Cancelling
+ * the effect mid-slide leaves the pins wherever they got to and the next
+ * update carries on from there, which is why [drawn] is only written at the
+ * end of a completed leg.
+ */
+private suspend fun slideMarkers(
+    view: MapView,
+    markers: Map<Long, Marker>,
+    drawn: MutableMap<Long, LatLng>,
+    targets: Map<Long, LatLng>,
+) {
+    val moving = targets.filter { (userId, target) ->
+        val from = drawn[userId]
+        from != null && from != target
+    }
+    if (moving.isEmpty()) return
+
+    val from = moving.keys.associateWith { drawn.getValue(it) }
+    val startNanos = withFrameNanos { it }
+
+    var fraction = 0f
+    while (fraction < 1f) {
+        val nanos = withFrameNanos { it }
+        fraction = ((nanos - startNanos) / 1_000_000.0 / MarkerMotion.DURATION_MS)
+            .coerceIn(0.0, 1.0)
+            .toFloat()
+
+        moving.forEach { (userId, target) ->
+            val point = MarkerMotion.at(from.getValue(userId), target, fraction)
+            markers[userId]?.position = GeoPoint(point.lat, point.lng)
+        }
+        view.invalidate()
+    }
+
+    moving.forEach { (userId, target) -> drawn[userId] = target }
+}
+
+/** One rider under the map: their colour, name, level, speed and battery. */
 @Composable
 private fun MemberMapRow(
     member: MemberPosition,
+    levelName: String?,
     isSelf: Boolean,
     focused: Boolean,
     onClick: () -> Unit,
@@ -297,6 +512,8 @@ private fun MemberMapRow(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
+                // riderLabel, via MemberPosition.label: a rider's own handle
+                // wherever they set one, and the same string on their pin.
                 text = if (isSelf) {
                     stringResource(R.string.map_you, member.label)
                 } else {
@@ -306,11 +523,29 @@ private fun MemberMapRow(
                 color = HudText,
             )
             Text(
-                text = when {
-                    !member.hasPosition -> stringResource(R.string.map_no_position)
-                    !member.isSharing -> stringResource(R.string.map_last_seen)
-                    else -> stringResource(R.string.sharing_on)
+                text = buildString {
+                    levelName?.let {
+                        append(it)
+                        append(" · ")
+                    }
+                    append(
+                        when {
+                            !member.hasPosition -> stringResource(R.string.map_no_position)
+                            !member.isSharing -> stringResource(R.string.map_last_seen)
+                            else -> stringResource(R.string.sharing_on)
+                        }
+                    )
                 },
+                style = MaterialTheme.typography.labelSmall,
+                color = HudTextDim,
+            )
+        }
+
+        // Only for riders who have actually reported: a dash against somebody
+        // who has never been on the map reads as "stopped", which is wrong.
+        if (member.hasPosition) {
+            Text(
+                text = speedText(Speed.kmh(member.speedMps)),
                 style = MaterialTheme.typography.labelSmall,
                 color = HudTextDim,
             )
