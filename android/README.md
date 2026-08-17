@@ -10,9 +10,6 @@ obtains a Google ID token, it's exchanged at the backend's
 `EncryptedSharedPreferences`. On success the app moves to a placeholder
 `TripListScreen`; on failure it shows an inline message rather than crashing.
 
-Before it will actually run, the **web client ID must be filled in** — see
-the configuration section directly below.
-
 ## Configuration — where the Client IDs live
 
 **Everything environment-specific is in one file:
@@ -23,8 +20,18 @@ only thing to edit.
 | Resource | What it is | Used where |
 |---|---|---|
 | `google_web_client_id` | **Web** OAuth client ID | Passed to `GetGoogleIdOption.setServerClientId(...)` in `MainActivity.kt`, and verified by the backend |
-| `google_android_client_id` | **Android** OAuth client ID | **Not referenced in code** — see below |
 | `api_base_url` | Backend base URL (`https://api.ptrip.app`) | `AuthApi` |
+
+### Google Cloud OAuth clients (project `471850622906`)
+
+| Client | ID | Referenced in code? |
+|---|---|---|
+| **Web** | `471850622906-8erl86uso7f64td0evq363k3tpfekedd.apps.googleusercontent.com` | **Yes** — `config.xml` → `google_web_client_id` |
+| **Android** | `471850622906-lek8ce0l0kaohchi242a17rlbg6sabta.apps.googleusercontent.com` | **No** — recorded here only |
+
+Neither is a secret; OAuth client IDs are public identifiers that ship inside
+the app. The private key that proves the app's identity is the release
+keystore, which never enters this repo.
 
 Two things that routinely trip people up:
 
@@ -35,21 +42,22 @@ in its `aud` claim, and the backend checks it against its own
 `GOOGLE_CLIENT_ID`. So the same web client ID must appear in **both**
 `config.xml` here and the backend's `.env`.
 
-**The Android client ID is never passed to any API.** It exists so Google can
-authorise *this app* to request tokens, matched by package name + signing
-certificate SHA-1 registered in Google Cloud Console. It's recorded in
-`config.xml` purely as documentation. A consequence worth knowing: debug
-builds use application ID `app.ptrip.tracktrip.debug` and the debug keystore,
-so they need their **own** Android OAuth client registration (with the debug
-SHA-1) or sign-in will fail with a "developer error" in debug while working
-in release.
+**The Android client ID is never passed to any API**, which is why it lives
+in this README rather than in `config.xml` — storing it as a string resource
+would ship an unused value in the APK. It exists so Google can authorise
+*this app* to request tokens, matched by package name + signing certificate
+SHA-1 registered in Google Cloud Console.
 
-> ⚠️ The client IDs currently in `config.xml` are **incomplete placeholders**
-> containing `__FILL_IN__`, because only truncated values were available when
-> this was written. Sign-in will not work until the full web client ID is
-> pasted in. The app detects the placeholder and shows
-> "Google sign-in isn't configured yet…" rather than failing with an opaque
-> Google error.
+A consequence worth knowing: debug builds use application ID
+`app.ptrip.tracktrip.debug` and the debug keystore, so they need their **own**
+Android OAuth client registration (with the debug SHA-1 and the `.debug`
+package name) or sign-in will fail with a "developer error" in debug while
+working fine in release. Get the debug SHA-1 with:
+
+```bash
+keytool -list -v -keystore ~/.android/debug.keystore \
+  -alias androiddebugkey -storepass android | grep SHA1:
+```
 
 ## Toolchain
 

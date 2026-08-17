@@ -16,31 +16,19 @@
 
       This is NOT a mistake: Credential Manager wants the Web client ID here,
       not the Android one. The ID token it returns carries this value in its
-      `aud` claim, which is what the backend checks.
-
-      TODO: the value below is TRUNCATED and will not work as-is. Replace
-      __FILL_IN__ with the rest of the real web client ID from Google Cloud
-      Console. The app shows an explicit error instead of signing in while
-      the placeholder is still present.
+      `aud` claim, which is what the backend checks — so this value must stay
+      in sync with the backend's GOOGLE_CLIENT_ID in .env.
     -->
-    <string name="google_web_client_id" translatable="false">471850622906-8erl__FILL_IN__.apps.googleusercontent.com</string>
+    <string name="google_web_client_id" translatable="false">471850622906-8erl86uso7f64td0evq363k3tpfekedd.apps.googleusercontent.com</string>
 
     <!--
-      ANDROID client ID. Recorded here for reference only — it is deliberately
-      NOT referenced anywhere in the code.
-
-      The Android OAuth client works by matching the app's package name plus
-      the signing certificate SHA-1 fingerprint registered in Google Cloud
-      Console. Google checks it automatically; there is no API that takes it.
-      If sign-in fails with a "developer error", the usual cause is that the
-      package name / SHA-1 pair registered for this client doesn't match the
-      build being run (debug builds use applicationIdSuffix ".debug" and the
-      debug keystore, so they need their own registration).
-
-      TODO: truncated, same as above — complete it if you rely on this file as
-      your record of the project's client IDs.
+      The ANDROID OAuth client ID is deliberately NOT stored here: nothing in
+      the code can use it. Google authorises the app by matching its package
+      name plus signing-certificate SHA-1 against what's registered in Cloud
+      Console, with no API that accepts the ID. It's recorded in
+      android/README.md instead, so this file holds only values the app
+      actually reads.
     -->
-    <string name="google_android_client_id" translatable="false">471850622906-lek8__FILL_IN__.apps.googleusercontent.com</string>
 
     <!-- Base URL of the trip-tracker backend. No trailing slash. -->
     <string name="api_base_url" translatable="false">https://api.ptrip.app</string>

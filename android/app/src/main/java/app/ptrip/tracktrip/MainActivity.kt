@@ -36,12 +36,17 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
+private const val CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
+
 /**
- * Marker left in res/values/config.xml while the real client ID hasn't been
- * filled in. Checked up front so the user gets a clear message instead of an
- * opaque Google error.
+ * Sanity-checks the configured web client ID before handing it to Google.
+ *
+ * A misconfigured value (blank, or edited into something that isn't a client
+ * ID) otherwise surfaces as an opaque Google error that's hard to trace back
+ * to config.xml, so it's worth catching up front.
  */
-private const val CLIENT_ID_PLACEHOLDER = "__FILL_IN__"
+private fun String.looksLikeGoogleClientId(): Boolean =
+    isNotBlank() && endsWith(CLIENT_ID_SUFFIX) && length > CLIENT_ID_SUFFIX.length + 10
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,7 +89,7 @@ private fun TracktripApp(modifier: Modifier = Modifier) {
             state = current,
             modifier = modifier,
             onSignInClick = {
-                if (webClientId.contains(CLIENT_ID_PLACEHOLDER)) {
+                if (!webClientId.looksLikeGoogleClientId()) {
                     viewModel.onSignInFailed(notConfiguredMessage)
                 } else {
                     viewModel.onSignInStarted()
