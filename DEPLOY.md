@@ -3,7 +3,10 @@
 Step-by-step, command-by-command instructions for deploying trip-tracker
 for the first time on a VPS that **already has**:
 
-- Node.js and PM2 installed and managing at least one other app.
+- Node.js 20 or newer, and PM2, installed and managing at least one
+  other app. (Node 20 is enough — dependencies are held to versions that
+  support it, so there's no need to upgrade Node for this app. Check with
+  `node -v`.)
 - nginx installed and already serving two sites from
   `/etc/nginx/sites-enabled/`: `analytics` and `default`.
 - certbot installed with the nginx plugin available (`certbot --nginx`).
@@ -37,6 +40,15 @@ cd /root/tracktrip
 ```bash
 npm ci --omit=dev
 ```
+
+This should complete with no `EBADENGINE` warnings. The project sets
+`engine-strict=true` in `.npmrc`, so if a dependency ever requires a
+newer Node than this box runs, `npm ci` **fails here** rather than
+warning and leaving you to discover it at runtime. If that happens, pin
+the offending dependency back to a version that supports your Node
+release — don't upgrade Node on this VPS, since other apps depend on
+the installed version and `better-sqlite3` is a native module that
+would need rebuilding.
 
 ## 3. Create and fill in `.env`
 
