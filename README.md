@@ -38,13 +38,13 @@ src/
     tripMembership.js  # requireTripMembership (loads trip, enforces 403)
     tripOwnership.js   # requireTripOwner (owner-only actions)
     tripStatus.js      # requireActiveTrip (409s writes to an ended trip)
-    sharingAllowed.js  # requireSharingAllowed (trip active, or rider still sharing)
+    sharingAllowed.js  # requireSharingAllowed (trip active AND rider not paused)
     serializeUser.js   # shapes a user row for API responses
   trips/
     email.js         # normalizes invite email addresses
     serialize.js     # shapes trip / invite rows for API responses
     distance.js      # haversine + the GPS-jitter rules for counting km
-    sharing.js       # sharing-session durations, expiry, and serialization
+    sharing.js       # sharing-session durations, expiry, and the on/off predicate
   users/
     levels.js        # the rider level table and progress towards the next one
   routes/
@@ -134,14 +134,14 @@ accepting an emailed invite. All routes require
   `ended_at`. Returns `200` with the trip; ending an already-ended trip is
   `409`.
 
-Once a trip has ended, members can still read it but almost nothing can be
-written to it: live waypoint drops return `409 {"error": "trip has ended"}`,
-and no new invite can be sent or accepted.
+Once a trip has ended it is **read-only**: members can still read it, but
+every write to it — positions and live waypoint drops included — returns
+`409 {"error": "trip has ended"}`, and no new invite can be sent or accepted.
 
-**Positions are the exception.** Ending a trip is the owner declaring the
-group ride over, not a switch that stops everyone's phone — a rider carrying
-on alone can keep sharing if they choose to. See
-[Sharing sessions](#sharing-sessions).
+Ending a trip also **stops location sharing for everyone in the group**, in
+the same transaction: every sharing session on that trip is cleared. Nobody
+carries on past the end of a trip; a rider who wants to keep going starts a
+trip of their own. See [Sharing sessions](#sharing-sessions).
 
 ### Invites
 
@@ -290,36 +290,40 @@ Clients poll `GET`; there is no push yet.
 
 ### Sharing sessions
 
-Ending a trip does **not** stop anyone sharing their location. Each rider
-decides for themselves whether to carry on — someone peeling off to ride home
-the long way still wants to be seen; someone who has parked up does not.
+**Sharing is on by default.** A rider who never touches the sharing controls
+shares their location for the whole trip — most riders have no session row at
+all, and no row means sharing.
 
-A sharing session is one row per (trip, rider) in `sharing_sessions`. A row
-means sharing is switched on; no row means it was never started, or it was
-stopped. `expires_at` is when it lapses by itself, or `NULL` for "until I turn
-it off". **Ending a trip leaves every session untouched**, to run out on its
-own clock or be stopped by hand.
+A session exists only once someone has reached for the controls, and it lives
+in `sharing_sessions`, one row per (trip, rider). `expires_at` is when it
+lapses on its own, `NULL` for "until I stop it", and a timestamp in the past
+for a rider who has **paused**. Stopping marks the row spent rather than
+deleting it — deleting would leave no row, and no row is how an unpaused
+rider looks, so it would silently switch sharing back on.
 
-`POST /trips/:id/positions` is therefore allowed when **either**:
+`POST /trips/:id/positions` is allowed when **both** hold:
 
-- the trip is still `active` — the ordinary case, needing no session at all; or
-- the trip has ended **and** this rider has an unexpired session.
+- the trip is still `active`; **and**
+- this rider hasn't paused — no session, or one that is still running.
 
-| Situation on an ended trip | Result |
+| Situation | Result |
 |---|---|
-| Never started sharing | `409 {"error": "trip has ended"}` — unchanged from before sessions existed |
-| Session running | `200`, the fix is stored and distance still accrues |
-| Session lapsed or stopped | `409 {"error": "your sharing session has ended"}` |
+| No session, trip running | `200` — the ordinary case |
+| Session running | `200` |
+| Paused, or the session ran out | `409 {"error": "your sharing session has ended"}` |
+| Trip has ended | `409 {"error": "trip has ended"}`, for everyone, whatever session they had |
 
-Both routes require membership, and neither requires the trip to be active —
-switching sharing on **after** the trip has ended is allowed on purpose, for
-the rider who forgot to press it first.
+The same condition is reported as `is_sharing` on every position read, so a
+client can always tell in advance whether a report would be accepted.
+
+Both routes require membership **and** an active trip — a session on a
+finished trip would be state nothing will ever read:
 
 - `POST /trips/:id/share/start` — body `{ duration_minutes }`, one of **30**,
   **60**, **240**, or `null` for "until stopped". The field is **required**:
   omitting it is a `400`, not a silent unlimited session. Starting again
-  replaces the session, so a rider can switch from 30 minutes to unlimited
-  halfway through. Returns `200`:
+  replaces the session, which is also how a paused rider resumes. Returns
+  `200`:
 
   ```json
   {
@@ -329,46 +333,15 @@ the rider who forgot to press it first.
   }
   ```
 
-- `POST /trips/:id/share/stop` — clears the session. `409` if there wasn't one.
+- `POST /trips/:id/share/stop` — pauses this rider. `409` if they were
+  already paused.
 
 The durations on offer live in `SHARING_DURATION_MINUTES` in
 `src/trips/sharing.js`.
 
-Expired sessions are left in the table rather than swept on a timer;
-`isSessionOpen` is the single place that decides, so the write guard and the
+Spent sessions are left in the table rather than swept on a timer;
+`isSharingOn` is the single place that decides, so the write guard and the
 map can never disagree.
-
-### Lifetime distance
-
-`users.total_km` is each rider's lifetime distance, and it drives the levels
-behind `GET /me/level`.
-
-It is accumulated as fixes arrive rather than derived on read, because it
-can't be derived later: `member_positions` only holds each rider's *latest*
-fix, so the gap between two fixes is gone the moment the next one overwrites
-it. On every accepted `POST /trips/:id/positions`, the great-circle distance
-(haversine) from the rider's previous fix **on that same trip** is added to
-their total, inside the same transaction that stores the fix.
-
-Distance is measured per trip, never across two of them, so parking in Chiang
-Mai and starting the next ride in Bangkok doesn't credit the flight.
-
-A segment is **not** counted when:
-
-| Case | Why |
-|---|---|
-| It's the rider's first fix on the trip | nothing to measure from |
-| Shorter than `JITTER.MIN_DISTANCE_KM` (10 m) | a parked phone's position wanders by a few metres; at one fix every few seconds that drift alone would add kilometres over a lunch stop |
-| Implies a speed above `JITTER.MAX_SPEED_KMH` (200 km/h) | a fix that lands far away far too quickly is a bad fix — a lost signal reacquired in the wrong place — not a fast rider |
-| The timestamp didn't move forward | a same-instant fix corrects where the rider already was; an older one is a late arrival that isn't stored either |
-
-Both thresholds are balance knobs, exported together as `JITTER` from
-`src/trips/distance.js`. Raising the floor discards more genuine slow riding;
-at 10 m, anything above roughly 4 km/h still registers on a 10-second poll.
-Set it to `0` to count every segment.
-
-Rejected segments are dropped silently — the fix is still stored and the map
-still moves, only the distance isn't credited.
 
 ## Setup
 

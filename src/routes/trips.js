@@ -123,15 +123,28 @@ export function createTripsRouter({ db, config }) {
     res.status(201).json(serializeInvite(created));
   });
 
+  /**
+   * Ending a trip stops location sharing for the whole group.
+   *
+   * One transaction, because these are one act: a trip marked ended while
+   * somebody's session survived would leave that rider believing they were
+   * still being tracked. Riders who want to keep going start a trip of their
+   * own.
+   */
+  const endTrip = db.transaction((tripId, endedAt) => {
+    db.prepare("UPDATE trips SET status = 'ended', ended_at = ? WHERE id = ?").run(
+      endedAt,
+      tripId
+    );
+    db.prepare('DELETE FROM sharing_sessions WHERE trip_id = ?').run(tripId);
+  });
+
   router.post('/trips/:id/end', auth, requireTripOwner(db), (req, res) => {
     if (req.trip.status === 'ended') {
       return res.status(409).json({ error: 'trip has already ended' });
     }
 
-    db.prepare("UPDATE trips SET status = 'ended', ended_at = ? WHERE id = ?").run(
-      new Date().toISOString(),
-      req.trip.id
-    );
+    endTrip(req.trip.id, new Date().toISOString());
 
     const ended = db.prepare('SELECT * FROM trips WHERE id = ?').get(req.trip.id);
     res.json(serializeTrip(ended, { role: 'owner' }));

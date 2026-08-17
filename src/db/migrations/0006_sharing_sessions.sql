@@ -1,4 +1,10 @@
--- Per-rider sharing sessions, independent of whether the trip is still running.
+-- Per-rider sharing sessions.
+--
+-- NOTE (added later): the paragraph below about carrying on past the end of a
+-- trip no longer describes the system. Ending a trip now stops sharing for
+-- the whole group and deletes every session in it; sessions exist only to
+-- pause and resume *within* a running trip. The schema is unchanged, so this
+-- migration is left as it was applied — see the README for current behaviour.
 --
 -- Until now "may this rider report a position?" was answered by the trip's
 -- status alone: the owner ended the trip and everyone stopped, together. That
