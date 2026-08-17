@@ -23,8 +23,9 @@ import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.Invite
 import app.ptrip.tracktrip.data.Trip
-import app.ptrip.tracktrip.ui.theme.HudAmber
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudEmpty
 import app.ptrip.tracktrip.ui.theme.HudError
@@ -36,8 +37,6 @@ import app.ptrip.tracktrip.ui.theme.HudScanIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -87,7 +86,7 @@ fun TripListScreen(
                 item {
                     HudSectionHeader(
                         text = stringResource(R.string.invitations_title),
-                        accent = HudCyan,
+                        accent = AppPrimary,
                         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                     )
                 }
@@ -140,15 +139,19 @@ fun TripListScreen(
 private fun TripCard(trip: Trip, onClick: () -> Unit) {
     HudSurface(
         modifier = Modifier.clickable(onClick = onClick),
-        accent = if (trip.isActive) HudAmber.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline,
+        accent = if (trip.isActive) {
+            AppPrimary.copy(alpha = 0.4f)
+        } else {
+            MaterialTheme.colorScheme.outline
+        },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            HudDot(color = if (trip.isActive) HudCyan else HudTextDim)
+            HudDot(color = if (trip.isActive) AppPrimary else AppTextMuted)
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(
                     text = trip.name,
                     style = MaterialTheme.typography.titleMedium,
-                    color = HudText,
+                    color = AppText,
                 )
                 Text(
                     text = buildString {
@@ -165,7 +168,7 @@ private fun TripCard(trip: Trip, onClick: () -> Unit) {
                         )
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudTextDim,
+                    color = AppTextMuted,
                 )
             }
         }
@@ -174,16 +177,16 @@ private fun TripCard(trip: Trip, onClick: () -> Unit) {
 
 @Composable
 private fun InviteCard(invite: Invite, accepting: Boolean, onAccept: () -> Unit) {
-    HudSurface(accent = HudCyan.copy(alpha = 0.6f)) {
+    HudSurface(accent = AppPrimary.copy(alpha = 0.6f)) {
         Text(
             text = invite.tripName ?: stringResource(R.string.untitled_trip),
             style = MaterialTheme.typography.titleMedium,
-            color = HudText,
+            color = AppText,
         )
         Text(
             text = stringResource(R.string.invited_as, invite.email),
             style = MaterialTheme.typography.labelSmall,
-            color = HudTextDim,
+            color = AppTextMuted,
             modifier = Modifier.padding(top = 2.dp),
         )
         Row(
@@ -193,7 +196,7 @@ private fun InviteCard(invite: Invite, accepting: Boolean, onAccept: () -> Unit)
         ) {
             if (accepting) {
                 Box(modifier = Modifier.size(20.dp)) {
-                    CircularProgressIndicator(color = HudCyan, strokeWidth = 2.dp)
+                    CircularProgressIndicator(color = AppPrimary, strokeWidth = 2.dp)
                 }
             } else {
                 HudPrimaryButton(
@@ -205,7 +208,7 @@ private fun InviteCard(invite: Invite, accepting: Boolean, onAccept: () -> Unit)
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun TripListPreview() {
     TracktripTheme {

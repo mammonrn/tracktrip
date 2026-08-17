@@ -1,20 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Dark, and with the HUD background painted on the window itself.
+      Light, and with the app's own background painted on the window itself.
 
       This is the theme the system uses for the window before Compose has
-      drawn anything; on the light parent it showed a white flash on every
-      cold start, straight into a near-black app.
+      drawn anything. Painting it here is what stops a cold start from
+      flashing a different colour into the app; it used to be a near-black
+      HUD ground, and is now the same off-white the app itself sits on.
+
+      windowLightStatusBar asks the system for *dark* status-bar icons: the
+      bar is transparent, so they are drawn over this background and would
+      otherwise be white on white. The navigation bar's equivalent is API 27
+      and this app runs from 26, so that one is set at runtime instead — see
+      enableEdgeToEdge in MainActivity.
 
       The colour is duplicated from Theme.kt on purpose — a Compose Color is
       not reachable from a resource file — so the two have to be changed
       together. It is the only copy of it outside that file.
     -->
-    <style name="Theme.Tracktrip" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/hud_background</item>
-        <item name="android:colorBackground">@color/hud_background</item>
+    <style name="Theme.Tracktrip" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:colorBackground">@color/app_background</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

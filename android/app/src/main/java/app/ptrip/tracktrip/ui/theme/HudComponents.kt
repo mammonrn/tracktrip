@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui.theme
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,15 +31,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -49,35 +47,24 @@ import app.ptrip.tracktrip.ui.resolveMediaUrl
 import coil3.compose.AsyncImage
 
 /**
- * The building blocks that carry the HUD look, kept in one place so the
+ * The building blocks that carry the app's look, kept in one place so the
  * screens stay about behaviour.
- */
-
-/**
- * A thin outward glow: a few pill-shaped strokes stepping away from the
- * element's edge, each fainter than the last.
  *
- * Drawn rather than blurred — [Modifier.blur] needs API 31 and this app runs
- * from 26 — and drawn outside the element's bounds, so it costs no layout
- * space and never sits under the content.
+ * The composables are still named `Hud*` — the names are load-bearing across
+ * every screen and carry no colour of their own. What they draw is a light,
+ * map-app surface: white cards on an off-white ground, lifted by a soft
+ * shadow rather than ringed by a glow.
  */
-fun Modifier.hudGlow(color: Color, rings: Int = 3): Modifier = drawBehind {
-    repeat(rings) { ring ->
-        val spread = (ring + 1) * 2.dp.toPx()
-        val height = size.height + spread * 2
-        drawRoundRect(
-            color = color.copy(alpha = 0.22f / (ring + 1)),
-            topLeft = Offset(-spread, -spread),
-            size = Size(size.width + spread * 2, height),
-            cornerRadius = CornerRadius(height / 2f),
-            style = Stroke(width = 1.dp.toPx()),
-        )
-    }
-}
+
+/** The shadow under a card. Small and soft: a lift, not a drop. */
+private val CARD_ELEVATION = 2.dp
+
+/** The same, for a raised control. */
+private val BUTTON_ELEVATION = 1.dp
 
 /**
- * The primary action: an amber pill with a glow around it. One of these per
- * screen — if a second one is wanted, it is probably a [HudSecondaryButton].
+ * The primary action: a solid blue button. One of these per screen — if a
+ * second one is wanted, it is probably a [HudSecondaryButton].
  */
 @Composable
 fun HudPrimaryButton(
@@ -91,29 +78,34 @@ fun HudPrimaryButton(
     Button(
         onClick = onClick,
         enabled = active,
-        shape = CircleShape,
+        shape = AppCardShape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = HudAmber,
-            contentColor = HudBlack,
-            disabledContainerColor = HudAmberDim,
-            disabledContentColor = HudTextDim,
+            containerColor = AppPrimary,
+            contentColor = AppOnPrimary,
+            disabledContainerColor = AppPrimaryDim,
+            disabledContentColor = AppOnPrimary,
+        ),
+        elevation = ButtonDefaults.buttonElevation(
+            defaultElevation = BUTTON_ELEVATION,
+            pressedElevation = CARD_ELEVATION,
+            disabledElevation = 0.dp,
         ),
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
-        modifier = modifier.then(if (active) Modifier.hudGlow(HudAmber) else Modifier),
+        modifier = modifier,
     ) {
         if (loading) {
             CircularProgressIndicator(
-                color = HudBlack,
+                color = AppOnPrimary,
                 strokeWidth = 2.dp,
                 modifier = Modifier.size(18.dp),
             )
         } else {
-            Text(text.uppercase(), style = MaterialTheme.typography.labelLarge)
+            Text(text, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
 
-/** The secondary action: the same pill, outlined in cyan instead of filled. */
+/** The secondary action: the same shape, outlined instead of filled. */
 @Composable
 fun HudSecondaryButton(
     text: String,
@@ -121,23 +113,23 @@ fun HudSecondaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
-    accent: Color = HudCyan,
+    accent: Color = AppPrimary,
 ) {
     val active = enabled && !loading
     OutlinedButton(
         onClick = onClick,
         enabled = active,
-        shape = CircleShape,
+        shape = AppCardShape,
         border = BorderStroke(
             width = 1.dp,
-            brush = SolidColor(if (active) accent.copy(alpha = 0.7f) else HudLine),
+            brush = SolidColor(if (active) accent.copy(alpha = 0.5f) else AppLine),
         ),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = accent,
-            disabledContentColor = HudTextDim,
+            disabledContentColor = AppTextMuted,
         ),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        modifier = modifier.then(if (active) Modifier.hudGlow(accent, rings = 2) else Modifier),
+        modifier = modifier,
     ) {
         if (loading) {
             CircularProgressIndicator(
@@ -146,14 +138,14 @@ fun HudSecondaryButton(
                 modifier = Modifier.size(18.dp),
             )
         } else {
-            Text(text.uppercase(), style = MaterialTheme.typography.labelLarge)
+            Text(text, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
 
 /**
- * A destructive action — signing out, ending a trip. Same pill, ember tone,
- * so it is never mistaken for the amber primary.
+ * A destructive action — signing out, ending a trip. Same shape, red outline,
+ * so it is never mistaken for the blue primary.
  */
 @Composable
 fun HudDangerButton(
@@ -169,14 +161,14 @@ fun HudDangerButton(
         modifier = modifier,
         enabled = enabled,
         loading = loading,
-        accent = HudDanger,
+        accent = AppDanger,
     )
 }
 
 /**
- * A confirmation, framed like a panel rather than a Material card.
+ * A confirmation.
  *
- * The confirm button takes the ember tone, because everything worth
+ * The confirm button takes the red tone, because everything worth
  * interrupting a rider for so far is destructive — signing out, ending a trip.
  */
 @Composable
@@ -190,15 +182,12 @@ fun HudConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HudPanel,
-        titleContentColor = HudAmber,
-        textContentColor = HudText,
-        shape = RoundedCornerShape(4.dp),
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+        shape = RoundedCornerShape(16.dp),
         title = {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
         },
         text = {
             Text(text = message, style = MaterialTheme.typography.bodyMedium)
@@ -221,22 +210,17 @@ fun HudStatusBadge(
     text: String,
     on: Boolean,
     modifier: Modifier = Modifier,
-    onColor: Color = HudCyan,
+    onColor: Color = AppPrimary,
 ) {
-    val accent = if (on) onColor else HudTextDim
+    val accent = if (on) onColor else AppTextMuted
+    val fill = if (on) AppPrimarySoft else AppSurfaceAlt
 
     Row(
         modifier = modifier
             .drawBehind {
-                val radius = size.height / 2f
                 drawRoundRect(
-                    color = accent.copy(alpha = 0.10f),
-                    cornerRadius = CornerRadius(radius),
-                )
-                drawRoundRect(
-                    color = accent.copy(alpha = 0.45f),
-                    cornerRadius = CornerRadius(radius),
-                    style = Stroke(width = 1.dp.toPx()),
+                    color = fill,
+                    cornerRadius = CornerRadius(size.height / 2f),
                 )
             }
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -244,8 +228,8 @@ fun HudStatusBadge(
     ) {
         HudDot(color = accent, size = 8.dp)
         Text(
-            text = text.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
             color = accent,
             modifier = Modifier.padding(start = 8.dp),
         )
@@ -282,7 +266,7 @@ fun HudTopBar(
     onBack: (() -> Unit)? = null,
     backContentDescription: String = "",
     subtitle: String? = null,
-    subtitleColor: Color = HudTextDim,
+    subtitleColor: Color = AppTextMuted,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -302,12 +286,12 @@ fun HudTopBar(
                 .padding(start = if (onBack != null) 4.dp else 0.dp),
         ) {
             Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.headlineSmall,
-                color = HudAmber,
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = AppText,
             )
             subtitle?.let {
-                Text(text = it, style = MaterialTheme.typography.labelSmall, color = subtitleColor)
+                Text(text = it, style = MaterialTheme.typography.labelMedium, color = subtitleColor)
             }
         }
         trailing()
@@ -315,45 +299,24 @@ fun HudTopBar(
 }
 
 /**
- * A panel with its top-left and bottom-right corners cut away and bracketed,
- * the way an instrument readout is framed. Purely decorative — the cut is
- * drawn, not clipped, so content still gets the full rectangle.
+ * A card: white, rounded, and lifted off the ground by a soft shadow.
+ *
+ * [accent] tints the hairline around the edge, which is how a screen marks a
+ * card as live or as belonging to the primary action; left alone it is the
+ * ordinary grey every other card uses.
  */
 @Composable
 fun HudSurface(
     modifier: Modifier = Modifier,
-    accent: Color = HudLine,
+    accent: Color = AppLine,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val cut = with(LocalDensity.current) { 14.dp.toPx() }
-
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .drawBehind {
-                val w = size.width
-                val h = size.height
-
-                // Body.
-                val body = Path().apply {
-                    moveTo(cut, 0f)
-                    lineTo(w, 0f)
-                    lineTo(w, h - cut)
-                    lineTo(w - cut, h)
-                    lineTo(0f, h)
-                    lineTo(0f, cut)
-                    close()
-                }
-                drawPath(body, HudPanel)
-                drawPath(body, accent, style = Stroke(width = 1.5f))
-
-                // Corner brackets, the bit that reads as "instrument".
-                val tick = cut * 1.6f
-                drawLine(accent, Offset(cut, 0f), Offset(cut + tick, 0f), strokeWidth = 3f)
-                drawLine(accent, Offset(0f, cut), Offset(0f, cut + tick), strokeWidth = 3f)
-                drawLine(accent, Offset(w - cut, h), Offset(w - cut - tick, h), strokeWidth = 3f)
-                drawLine(accent, Offset(w, h - cut), Offset(w, h - cut - tick), strokeWidth = 3f)
-            }
+            .shadow(elevation = CARD_ELEVATION, shape = AppCardShape, clip = false)
+            .background(color = AppSurface, shape = AppCardShape)
+            .border(width = 1.dp, color = accent, shape = AppCardShape)
             .padding(16.dp),
         content = content,
     )
@@ -364,15 +327,15 @@ fun HudSurface(
 fun HudSectionHeader(
     text: String,
     modifier: Modifier = Modifier,
-    accent: Color = HudAmber,
+    accent: Color = AppTextMuted,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = text.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
             color = accent,
         )
         Box(
@@ -380,22 +343,22 @@ fun HudSectionHeader(
                 .padding(start = 12.dp)
                 .weight(1f)
                 .height(1.dp)
-                .background(accent.copy(alpha = 0.25f)),
+                .background(AppLine),
         )
     }
 }
 
-/** The hairline between rows. Translucent accent, never grey. */
+/** The hairline between rows. */
 @Composable
-fun HudDivider(modifier: Modifier = Modifier, color: Color = HudLine) {
+fun HudDivider(modifier: Modifier = Modifier, color: Color = AppLine) {
     Box(modifier = modifier.fillMaxWidth().height(1.dp).background(color))
 }
 
 /**
- * A rider's avatar, inside a glowing ring.
+ * A rider's avatar.
  *
  * Their photo when there is one, their initial when there isn't, and a person
- * glyph when there is no name either. The ring is drawn in every case, so a
+ * glyph when there is no name either. The circle is drawn in every case, so a
  * row doesn't change height or alignment while the image loads.
  *
  * [photoUrl] may be a path from our own upload endpoint or an absolute URL
@@ -407,7 +370,7 @@ fun HudAvatar(
     modifier: Modifier = Modifier,
     photoUrl: String? = null,
     diameter: Dp = 44.dp,
-    accent: Color = HudCyan,
+    accent: Color = AppPrimary,
 ) {
     val initial = name?.trim()?.firstOrNull()?.uppercase()
     val resolved = resolveMediaUrl(LocalApiBaseUrl.current, photoUrl)
@@ -417,8 +380,8 @@ fun HudAvatar(
             .size(diameter)
             .drawBehind {
                 val radius = size.minDimension / 2f
-                drawCircle(accent.copy(alpha = 0.10f), radius = radius)
-                drawCircle(accent.copy(alpha = 0.55f), radius = radius, style = Stroke(1.5.dp.toPx()))
+                drawCircle(AppSurfaceAlt, radius = radius)
+                drawCircle(AppLine, radius = radius, style = Stroke(1.dp.toPx()))
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -429,12 +392,12 @@ fun HudAvatar(
                 contentScale = ContentScale.Crop,
                 // Inset by the ring's own width so the photo sits inside it
                 // rather than under it.
-                modifier = Modifier.size(diameter - 3.dp).clip(CircleShape),
+                modifier = Modifier.size(diameter - 2.dp).clip(CircleShape),
             )
         } else if (initial != null) {
             Text(
                 text = initial,
-                style = MaterialTheme.typography.titleMedium.merge(HudReadoutStyle),
+                style = MaterialTheme.typography.titleMedium.merge(AppReadoutStyle),
                 color = accent,
             )
         } else {
@@ -452,7 +415,7 @@ fun HudChip(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = HudCyan,
+    accent: Color = AppPrimary,
 ) {
     Row(
         modifier = modifier
@@ -460,12 +423,7 @@ fun HudChip(
             .clickable(onClick = onClick)
             .drawBehind {
                 val radius = size.height / 2f
-                drawRoundRect(color = accent.copy(alpha = 0.08f), cornerRadius = CornerRadius(radius))
-                drawRoundRect(
-                    color = accent.copy(alpha = 0.45f),
-                    cornerRadius = CornerRadius(radius),
-                    style = Stroke(width = 1.dp.toPx()),
-                )
+                drawRoundRect(color = AppPrimarySoft, cornerRadius = CornerRadius(radius))
             }
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -481,7 +439,7 @@ fun HudDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
         modifier = modifier
             .size(size)
             .drawBehind {
-                drawCircle(color = color.copy(alpha = 0.25f), radius = this.size.minDimension / 2f)
+                drawCircle(color = color.copy(alpha = 0.20f), radius = this.size.minDimension / 2f)
                 drawCircle(color = color, radius = this.size.minDimension / 3.2f)
             },
     )
@@ -491,7 +449,7 @@ fun HudDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
 @Composable
 fun HudLoading(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = HudCyan, strokeWidth = 2.dp)
+        CircularProgressIndicator(color = AppPrimary, strokeWidth = 2.dp)
     }
 }
 
@@ -501,7 +459,7 @@ fun HudEmpty(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
-        color = HudTextDim,
+        color = AppTextMuted,
         textAlign = TextAlign.Center,
         modifier = modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 16.dp),
     )
@@ -511,11 +469,11 @@ fun HudEmpty(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun HudError(message: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        HudDivider(color = HudDanger.copy(alpha = 0.4f))
+        HudDivider(color = AppDanger.copy(alpha = 0.4f))
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = HudDanger,
+            color = AppDanger,
             modifier = Modifier.padding(top = 8.dp),
         )
     }
@@ -527,17 +485,17 @@ fun HudReadout(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    valueColor: Color = HudText,
+    valueColor: Color = AppText,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            text = label.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = HudTextDim,
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = AppTextMuted,
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.titleMedium.merge(HudReadoutStyle),
+            style = MaterialTheme.typography.titleMedium.merge(AppReadoutStyle),
             color = valueColor,
         )
     }

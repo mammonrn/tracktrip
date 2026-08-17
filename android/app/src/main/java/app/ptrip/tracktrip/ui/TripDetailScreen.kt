@@ -28,8 +28,10 @@ import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudChip
-import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
@@ -39,8 +41,6 @@ import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
 import app.ptrip.tracktrip.ui.theme.HudStatusBadge
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import app.ptrip.tracktrip.ui.theme.riderColor
@@ -84,7 +84,7 @@ fun TripDetailScreen(
                     )
                 }
             },
-            subtitleColor = if (trip?.isActive == true) HudCyan else HudTextDim,
+            subtitleColor = if (trip?.isActive == true) AppPrimary else AppTextMuted,
         )
 
         state.error?.let { HudError(it) }
@@ -128,7 +128,7 @@ fun TripDetailScreen(
                 item {
                     HudSectionHeader(
                         text = stringResource(R.string.invite_title),
-                        accent = HudCyan,
+                        accent = AppPrimary,
                         modifier = Modifier.padding(top = 20.dp, bottom = 4.dp),
                     )
                 }
@@ -154,7 +154,7 @@ fun TripDetailScreen(
                         Text(
                             text = stringResource(R.string.end_trip_confirm),
                             style = MaterialTheme.typography.bodySmall,
-                            color = HudTextDim,
+                            color = AppTextMuted,
                             modifier = Modifier.padding(top = 12.dp),
                         )
                         Row(
@@ -194,7 +194,7 @@ private fun MemberRow(member: MemberPosition) {
                 Text(
                     text = member.label,
                     style = MaterialTheme.typography.titleMedium,
-                    color = HudText,
+                    color = AppText,
                 )
                 Text(
                     text = buildString {
@@ -209,14 +209,14 @@ private fun MemberRow(member: MemberPosition) {
                         }
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudTextDim,
+                    color = AppTextMuted,
                 )
             }
             member.batteryPct?.let {
                 Text(
                     text = "$it%",
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudTextDim,
+                    color = AppTextMuted,
                 )
             }
         }
@@ -234,7 +234,7 @@ private fun InvitePanel(
     onUseSuggestion: (SuggestedInvitee) -> Unit,
     onShowQr: () -> Unit,
 ) {
-    HudSurface(accent = HudCyan.copy(alpha = 0.4f)) {
+    HudSurface(accent = AppPrimary.copy(alpha = 0.4f)) {
         // Riders from past trips, one tap instead of an email typed from
         // memory. Absent for a first trip, which is when there is nobody to
         // suggest — so the row simply isn't there rather than being empty.
@@ -242,7 +242,7 @@ private fun InvitePanel(
             Text(
                 text = stringResource(R.string.invite_suggestions),
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             FlowRow(
@@ -276,7 +276,7 @@ private fun InvitePanel(
                 Text(
                     text = stringResource(R.string.invite_sent_to, it),
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudCyan,
+                    color = AppPrimary,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -290,7 +290,7 @@ private fun InvitePanel(
         Text(
             text = stringResource(R.string.invite_hint),
             style = MaterialTheme.typography.labelSmall,
-            color = HudTextDim,
+            color = AppTextMuted,
             modifier = Modifier.padding(top = 8.dp),
         )
 
@@ -304,7 +304,7 @@ private fun InvitePanel(
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun TripDetailPreview() {
     TracktripTheme {

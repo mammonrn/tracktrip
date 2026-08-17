@@ -1,6 +1,7 @@
 package app.ptrip.tracktrip.ui.theme
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,15 +24,13 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 /**
  * A QR code, rendered dark-on-light.
  *
- * Deliberately *not* in the HUD's own colours. A QR code is read by assuming
- * its modules are darker than its background, and a glowing cyan code on a
- * near-black panel is an inverted one — which plenty of scanners, ZXing's own
- * default decoder included, will not read at all. So the code itself keeps
- * normal polarity, tinted towards the palette but no further, and the HUD
- * framing goes around it.
+ * Untinted on purpose. A QR code is read by assuming its modules are darker
+ * than their background, so the highest-contrast pair a scanner can be handed
+ * is plain black on plain white — and on a white card there is nothing left
+ * for the palette to do here anyway.
  */
-private val QR_LIGHT = Color(0xFFE8FBFF)
-private val QR_DARK = Color(0xFF0B0E1A)
+private val QR_LIGHT = Color(0xFFFFFFFF)
+private val QR_DARK = Color(0xFF202124)
 
 /** Pixel size of the generated bitmap. Drawn unfiltered, so it stays crisp. */
 private const val QR_BITMAP_SIZE = 512
@@ -49,7 +48,7 @@ fun HudQrCode(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .hudGlow(HudCyan, rings = 2),
+            .background(color = QR_LIGHT, shape = AppCardShape),
     ) {
         Image(
             painter = BitmapPainter(image, filterQuality = FilterQuality.None),

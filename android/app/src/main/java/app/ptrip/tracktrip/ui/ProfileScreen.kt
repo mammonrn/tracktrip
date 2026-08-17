@@ -36,15 +36,15 @@ import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ProfilePatch
 import app.ptrip.tracktrip.data.UserProfile
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudAvatar
-import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import java.util.Calendar
@@ -145,7 +145,7 @@ private fun ProfileForm(
                 )
                 if (state.uploadingAvatar) {
                     CircularProgressIndicator(
-                        color = HudCyan,
+                        color = AppPrimary,
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(88.dp),
                     )
@@ -155,18 +155,18 @@ private fun ProfileForm(
                 Text(
                     text = user.label,
                     style = MaterialTheme.typography.titleMedium,
-                    color = HudText,
+                    color = AppText,
                 )
                 Text(
                     text = stringResource(R.string.profile_change_photo),
                     style = MaterialTheme.typography.labelSmall,
-                    color = HudCyan,
+                    color = AppPrimary,
                 )
                 user.email?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
-                        color = HudTextDim,
+                        color = AppTextMuted,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -347,7 +347,7 @@ private fun parseIsoDate(value: String): IsoDate? {
     return IsoDate(year, month - 1, day)
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun ProfilePreview() {
     TracktripTheme {

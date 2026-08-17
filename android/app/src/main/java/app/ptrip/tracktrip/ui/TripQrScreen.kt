@@ -21,15 +21,15 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.JoinCode
-import app.ptrip.tracktrip.ui.theme.HudAmber
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppCodeStyle
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudQrCode
-import app.ptrip.tracktrip.ui.theme.HudReadoutStyle
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import java.time.Instant
@@ -92,12 +92,12 @@ fun TripQrScreen(
                 joinCode == null -> Text(
                     text = stringResource(R.string.qr_invite_intro),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = HudTextDim,
+                    color = AppTextMuted,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
 
-                else -> HudSurface(accent = if (live) HudCyan.copy(alpha = 0.5f) else HudTextDim) {
+                else -> HudSurface(accent = if (live) AppPrimary.copy(alpha = 0.5f) else AppTextMuted) {
                     if (live) {
                         HudQrCode(
                             content = joinLinkFor(joinCode.code),
@@ -107,7 +107,7 @@ fun TripQrScreen(
                         Text(
                             text = stringResource(R.string.qr_expired),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = HudTextDim,
+                            color = AppTextMuted,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
                         )
@@ -115,8 +115,8 @@ fun TripQrScreen(
 
                     Text(
                         text = spacedCode(joinCode.code),
-                        style = MaterialTheme.typography.headlineSmall.merge(HudReadoutStyle),
-                        color = if (live) HudAmber else HudTextDim,
+                        style = MaterialTheme.typography.headlineSmall.merge(AppCodeStyle),
+                        color = if (live) AppText else AppTextMuted,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                     )
@@ -127,7 +127,7 @@ fun TripQrScreen(
                             stringResource(R.string.qr_expired_short)
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = HudTextDim,
+                        color = AppTextMuted,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     )
@@ -166,7 +166,7 @@ private fun parseInstantMillis(iso: String): Long? = try {
     null
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun TripQrPreview() {
     TracktripTheme {

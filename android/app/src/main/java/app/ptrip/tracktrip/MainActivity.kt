@@ -1,7 +1,9 @@
 package app.ptrip.tracktrip
 
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -67,7 +69,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Both bars are drawn over a light background, so both are asked for
+        // dark icons explicitly. The default (`auto`) follows the *system*
+        // dark-mode setting, which on a phone in dark mode would put white
+        // icons on this app's off-white ground.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
         setContent {
             TracktripTheme {
                 // Avatars are stored as paths, so the one place that turns

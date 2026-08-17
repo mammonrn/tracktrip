@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Tracktrip</string>
+    <string name="app_name">PTrips</string>
     <string name="sign_in_with_google">Sign in with Google</string>
     <string name="sign_out">Sign out</string>
     <string name="trips_title">Trips</string>
@@ -91,7 +91,7 @@
     <string name="qr_scan_title">Scan to join</string>
     <string name="qr_scan_hint">Point the camera at a trip\'s invite code.</string>
     <string name="qr_camera_needed">Scanning needs the camera.</string>
-    <string name="qr_camera_denied">Camera access is off for Tracktrip. Turn it on in Android\'s app settings, then try again.</string>
+    <string name="qr_camera_denied">Camera access is off for PTrips. Turn it on in Android\'s app settings, then try again.</string>
     <string name="qr_camera_allow">Allow camera</string>
 
     <!-- Sign-in error messages -->

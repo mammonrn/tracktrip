@@ -29,17 +29,17 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudAvatar
 import app.ptrip.tracktrip.ui.theme.HudChevronIcon
 import app.ptrip.tracktrip.ui.theme.HudClockIcon
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
-import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudGlobeIcon
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -182,12 +182,12 @@ private fun ProfileRow(
             Text(
                 text = displayName ?: stringResource(R.string.signed_in),
                 style = MaterialTheme.typography.titleMedium,
-                color = HudText,
+                color = AppText,
             )
             Text(
                 text = email ?: stringResource(R.string.settings_profile),
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
         HudChevronIcon()
@@ -220,13 +220,13 @@ private fun SettingRow(
         Text(
             text = label,
             style = MaterialTheme.typography.titleMedium,
-            color = HudText,
+            color = AppText,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
-            color = HudCyan,
+            color = AppPrimary,
         )
         HudChevronIcon(modifier = Modifier.padding(start = 8.dp).rotate(chevronTurn))
     }
@@ -242,11 +242,11 @@ private fun OptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
             .padding(start = 38.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HudDot(color = if (selected) HudCyan else HudTextDim.copy(alpha = 0.4f))
+        HudDot(color = if (selected) AppPrimary else AppTextMuted.copy(alpha = 0.4f))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) HudText else HudTextDim,
+            color = if (selected) AppText else AppTextMuted,
             modifier = Modifier.padding(start = 14.dp),
         )
     }
@@ -268,7 +268,7 @@ private val SharingDuration.labelRes: Int
         SharingDuration.UNTIL_STOPPED -> R.string.duration_until_stopped
     }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun SettingsPreview() {
     TracktripTheme {
