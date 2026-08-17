@@ -29,7 +29,15 @@ android {
     // Point DEBUG_KEYSTORE_PATH at a keystore to sign debug builds with a
     // stable, registered certificate instead. Left unset, behaviour is
     // unchanged.
-    val debugKeystorePath = providers.environmentVariable("DEBUG_KEYSTORE_PATH").orNull
+    // GitHub Actions substitutes a missing secret as an EMPTY STRING rather
+    // than leaving the variable unset, and Gradle reports that as present.
+    // A plain `?: default` therefore never fires and the empty value wins —
+    // which made AGP try to open the keystore with a blank password and fail
+    // as "keystore password was incorrect". Treat blank as absent.
+    fun env(name: String): String? =
+        providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
+
+    val debugKeystorePath = env("DEBUG_KEYSTORE_PATH")
     val pinnedDebugKeystore = debugKeystorePath
         ?.takeIf { it.isNotBlank() }
         ?.let(::file)
@@ -45,12 +53,9 @@ android {
                 storeFile = pinnedDebugKeystore
                 // Defaults match Android's standard debug keystore, so only a
                 // non-standard keystore needs the env vars set.
-                storePassword =
-                    providers.environmentVariable("DEBUG_KEYSTORE_PASSWORD").orNull ?: "android"
-                keyAlias =
-                    providers.environmentVariable("DEBUG_KEY_ALIAS").orNull ?: "androiddebugkey"
-                keyPassword =
-                    providers.environmentVariable("DEBUG_KEY_PASSWORD").orNull ?: "android"
+                storePassword = env("DEBUG_KEYSTORE_PASSWORD") ?: "android"
+                keyAlias = env("DEBUG_KEY_ALIAS") ?: "androiddebugkey"
+                keyPassword = env("DEBUG_KEY_PASSWORD") ?: storePassword
             }
         }
     }
