@@ -17,23 +17,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.ptrip.tracktrip.auth.GoogleSignInFailure
+import app.ptrip.tracktrip.auth.GoogleSignInResult
+import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AuthApi
 import app.ptrip.tracktrip.data.TokenStore
 import app.ptrip.tracktrip.ui.SignInScreen
 import app.ptrip.tracktrip.ui.SignInUiState
 import app.ptrip.tracktrip.ui.SignInViewModel
 import app.ptrip.tracktrip.ui.TripListScreen
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 private const val CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
@@ -74,7 +70,7 @@ private fun TracktripApp(modifier: Modifier = Modifier) {
     val webClientId = stringResource(R.string.google_web_client_id)
 
     val notConfiguredMessage = stringResource(R.string.error_client_id_not_configured)
-    val noAccountMessage = stringResource(R.string.error_no_google_account)
+    val noCredentialMessage = stringResource(R.string.error_no_credential)
     val failedMessage = stringResource(R.string.error_sign_in_failed)
     val unexpectedCredentialMessage = stringResource(R.string.error_unexpected_credential)
 
@@ -94,44 +90,29 @@ private fun TracktripApp(modifier: Modifier = Modifier) {
                 } else {
                     viewModel.onSignInStarted()
                     scope.launch {
-                        // Credential Manager takes the WEB client ID as the
-                        // server client ID — the Android client is matched
-                        // separately by package name + signing SHA-1, and is
-                        // never passed here.
-                        val googleIdOption = GetGoogleIdOption.Builder()
-                            .setFilterByAuthorizedAccounts(false)
-                            .setServerClientId(webClientId)
-                            .build()
+                        // The helper walks the filter=true -> filter=false ->
+                        // SignInWithGoogle fallback chain; see
+                        // auth/GoogleSignInHelper.kt.
+                        val result = requestGoogleIdToken(
+                            context = context,
+                            webClientId = webClientId,
+                            credentialManager = credentialManager,
+                        )
+                        when (result) {
+                            is GoogleSignInResult.Success ->
+                                viewModel.exchangeGoogleIdToken(result.idToken)
 
-                        val request = GetCredentialRequest.Builder()
-                            .addCredentialOption(googleIdOption)
-                            .build()
+                            is GoogleSignInResult.Cancelled ->
+                                viewModel.onSignInCancelled()
 
-                        try {
-                            val result = credentialManager.getCredential(
-                                context = context,
-                                request = request,
+                            is GoogleSignInResult.Failure -> viewModel.onSignInFailed(
+                                when (result.reason) {
+                                    GoogleSignInFailure.NO_CREDENTIAL -> noCredentialMessage
+                                    GoogleSignInFailure.UNEXPECTED_CREDENTIAL ->
+                                        unexpectedCredentialMessage
+                                    GoogleSignInFailure.OTHER -> failedMessage
+                                }
                             )
-                            val credential = result.credential
-                            if (
-                                credential is CustomCredential &&
-                                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                            ) {
-                                val googleCredential =
-                                    GoogleIdTokenCredential.createFrom(credential.data)
-                                viewModel.exchangeGoogleIdToken(googleCredential.idToken)
-                            } else {
-                                viewModel.onSignInFailed(unexpectedCredentialMessage)
-                            }
-                        } catch (e: GetCredentialCancellationException) {
-                            // User dismissed the sheet: not an error.
-                            viewModel.onSignInCancelled()
-                        } catch (e: NoCredentialException) {
-                            viewModel.onSignInFailed(noAccountMessage)
-                        } catch (e: GetCredentialException) {
-                            viewModel.onSignInFailed(failedMessage)
-                        } catch (e: Exception) {
-                            viewModel.onSignInFailed(failedMessage)
                         }
                     }
                 }

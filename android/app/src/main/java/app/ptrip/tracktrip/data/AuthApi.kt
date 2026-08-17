@@ -48,7 +48,8 @@ class AuthApi(
         }
 
         response.use {
-            val payload = it.body?.string().orEmpty()
+            // OkHttp 5 makes Response.body non-null.
+            val payload = it.body.string()
 
             if (!it.isSuccessful) {
                 throw AuthApiException(
