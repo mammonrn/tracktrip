@@ -3,6 +3,9 @@
 Backend for an Android app that shares rider positions among members of a
 motorcycle trip. Node.js + Express + better-sqlite3 + `ws`, run under PM2.
 
+This is a monorepo: the backend lives at the root, and the Kotlin/Compose
+Android client lives in [`android/`](./android/README.md).
+
 Google Sign-In based auth and a basic profile API are implemented. The live
 WebSocket position feed is still a stub.
 

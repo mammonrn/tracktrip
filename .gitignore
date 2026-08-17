@@ -5,3 +5,31 @@ data/*
 *.log
 npm-debug.log*
 .DS_Store
+
+# --- Android signing secrets: NEVER commit these ---
+# The release keystore is the private key that identifies this app. Losing it
+# means never being able to update a published app; leaking it lets someone
+# else publish as you. Keep it outside this repo entirely.
+*.jks
+*.keystore
+*.p12
+*.pepk
+keystore.properties
+signing.properties
+# Note: the '*' patterns above are not anchored, so they also match a keystore
+# accidentally dropped into any subdirectory (e.g. android/app/release.jks).
+
+# --- Android / Gradle build output ---
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
+android/local.properties
+android/captures/
+android/.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+.idea/
+*.iml
