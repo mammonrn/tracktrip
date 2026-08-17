@@ -13,7 +13,13 @@ import {
 export function createAuthRouter({ db, config, verifyGoogleIdToken }) {
   const router = Router();
 
+  // Scoped to '/auth' deliberately. Mounted without a path this runs for
+  // every request that reaches this router — which, since the router is
+  // mounted app-wide, meant /me, /trips and /positions all shared the sign-in
+  // budget of 20 requests a minute. A client polling positions exhausted it
+  // in well under a minute.
   router.use(
+    '/auth',
     rateLimit({
       windowMs: 60 * 1000,
       max: 20,
