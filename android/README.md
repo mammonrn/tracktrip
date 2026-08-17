@@ -27,6 +27,7 @@ inline message rather than crashing.
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
 | Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
+| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
@@ -112,6 +113,36 @@ singleton: the service and the UI are separate entry points into the same
 process, and two `ApiClient`s would mean two refresh mutexes — enough for a
 401 in each to rotate the refresh token twice, which the backend treats as
 theft and answers by revoking every token the rider has.
+
+## The map
+
+OpenStreetMap tiles through **osmdroid**, chosen over the Maps SDK for one
+reason: no API key and no billing account to attach to a hobby project.
+
+That comes with an obligation. The tiles are donated bandwidth run by a
+charity, and their [usage policy](
+https://operations.osmfoundation.org/policies/tiles/) requires a User-Agent
+identifying the app. osmdroid's default is the literal string `osmdroid`,
+shared with every app that never changed it and **blocked at the server** for
+exactly that reason — an app sending it collects 429s and eventually a ban on
+the shared identity. [`map/MapConfig.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/MapConfig.kt) sets it to
+`app.ptrip.tracktrip/<version>` before any map is built, and points the tile
+cache at the app's own cache directory rather than osmdroid's default of
+external storage.
+
+There is no dark tile source without running a tile server, so the standard
+tiles go through osmdroid's own night-mode colour matrix
+(`TilesOverlay.INVERT_COLORS`) and then a thin navy scrim, which lands close
+enough to the HUD palette to belong to the app. Labels stay readable, which
+was the thing to protect.
+
+Pins are drawn at runtime in [`map/RiderMarker.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RiderMarker.kt) from
+`riderColor(userId)` — the same function the member list's dots use, so a
+rider is one colour everywhere and stays that colour across refreshes and
+restarts. Panning follows an explicit tap, never the poll: re-centring every
+45 seconds would fight a rider who has dragged the map somewhere.
 
 ## Language
 

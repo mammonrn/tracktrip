@@ -13,6 +13,7 @@ coroutines = "1.11.0"
 lifecycleViewmodelCompose = "2.11.0"
 appcompat = "1.7.1"
 coil = "3.2.0"
+osmdroid = "6.1.20"
 zxingAndroidEmbedded = "4.3.0"
 zxingCore = "3.5.3"
 junit = "4.13.2"
@@ -50,6 +51,11 @@ androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version
 # at runtime with no fetcher rather than at build time.
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
+
+# OpenStreetMap tiles. No API key and no billing account to attach, which is
+# the whole reason for it over the Maps SDK — and the tile server is somebody
+# else's donated bandwidth, so see MapConfig.kt for the usage policy.
+osmdroid-android = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
 
 # QR codes. `core` writes them (the invite screen), `zxing-android-embedded`
 # wraps the camera preview and reads them (the scanner).

@@ -2,6 +2,7 @@ package app.ptrip.tracktrip
 
 import android.app.Application
 import app.ptrip.tracktrip.data.AppContainer
+import app.ptrip.tracktrip.map.MapConfig
 import app.ptrip.tracktrip.ui.AppLocale
 
 /**
@@ -18,5 +19,10 @@ class TracktripApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AppLocale.apply(AppContainer.from(this).settings.languageTag)
+
+        // Before any map is built: osmdroid reads this configuration when a
+        // MapView is constructed, and a tile fetched under the default user
+        // agent is a tile fetched against OpenStreetMap's usage policy.
+        MapConfig.ensureConfigured(this)
     }
 }

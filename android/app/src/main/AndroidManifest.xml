@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Needed to talk to the trip-tracker API. -->
+    <!-- Needed to talk to the trip-tracker API, and to fetch map tiles. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- osmdroid checks connectivity before reaching for a tile, so that a
+         phone with no signal draws its cache instead of stalling. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Reading a trip's invite QR code. Requested at the moment the scanner
          screen opens, never at launch. -->

@@ -129,6 +129,7 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.osmdroid.android)
     implementation(libs.zxing.core)
     implementation(libs.zxing.android.embedded)
     implementation(libs.androidx.security.crypto)

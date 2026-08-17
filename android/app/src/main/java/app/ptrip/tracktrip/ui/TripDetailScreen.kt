@@ -61,6 +61,7 @@ fun TripDetailScreen(
     onStartSharing: (SharingDuration) -> Unit,
     onStopSharing: () -> Unit,
     onShareInviteLink: () -> Unit,
+    onOpenMap: () -> Unit,
     onInviteEmailChange: (String) -> Unit,
     onSendInvite: () -> Unit,
     onUseSuggestion: (SuggestedInvitee) -> Unit,
@@ -145,6 +146,18 @@ fun TripDetailScreen(
 
         if (trip != null) {
             Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+                // The map is the point of the trip while it is running, and
+                // the record of it afterwards — so it is offered either way,
+                // and the wording changes rather than the button disappearing.
+                HudSecondaryButton(
+                    text = stringResource(
+                        if (trip.isActive) R.string.start_sharing
+                        else R.string.view_final_positions
+                    ),
+                    onClick = onOpenMap,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                )
+
                 // Sharing is the thing a rider comes to this screen to start,
                 // so it sits above the owner-only controls rather than below.
                 if (trip.isActive) {
@@ -452,6 +465,7 @@ private fun TripDetailPreview() {
             onStartSharing = {},
             onStopSharing = {},
             onShareInviteLink = {},
+            onOpenMap = {},
             onInviteEmailChange = {},
             onSendInvite = {},
             onUseSuggestion = {},
