@@ -71,6 +71,7 @@ private fun TracktripApp(modifier: Modifier = Modifier) {
 
     val notConfiguredMessage = stringResource(R.string.error_client_id_not_configured)
     val noCredentialMessage = stringResource(R.string.error_no_credential)
+    val cancelledOrAbortedMessage = stringResource(R.string.error_cancelled_or_aborted)
     val failedMessage = stringResource(R.string.error_sign_in_failed)
     val unexpectedCredentialMessage = stringResource(R.string.error_unexpected_credential)
 
@@ -108,6 +109,8 @@ private fun TracktripApp(modifier: Modifier = Modifier) {
                             is GoogleSignInResult.Failure -> viewModel.onSignInFailed(
                                 when (result.reason) {
                                     GoogleSignInFailure.NO_CREDENTIAL -> noCredentialMessage
+                                    GoogleSignInFailure.CANCELLED_OR_ABORTED ->
+                                        cancelledOrAbortedMessage
                                     GoogleSignInFailure.UNEXPECTED_CREDENTIAL ->
                                         unexpectedCredentialMessage
                                     GoogleSignInFailure.OTHER -> failedMessage
