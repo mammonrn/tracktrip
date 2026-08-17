@@ -13,6 +13,7 @@ import {
   serializeJoinCode,
 } from '../trips/joinCodes.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
+import { progressFor } from '../users/levels.js';
 
 const NAME_MIN_LENGTH = 1;
 const NAME_MAX_LENGTH = 60;
@@ -198,6 +199,41 @@ export function createTripsRouter({ db, config }) {
       );
     }
   );
+
+  /**
+   * Every member's level, in one call.
+   *
+   * The map lists a rider's level beside their name, and the alternative was
+   * the app asking `/me/level` once per member — which it cannot do anyway,
+   * since that route only ever answers for the caller. A trip of eight would
+   * otherwise need eight requests on a phone that is already polling
+   * positions on a mountain road.
+   *
+   * Levels are derived from `users.total_km` by the same `progressFor` the
+   * profile screen's widget uses, so the two can never disagree about where
+   * a rider stands.
+   *
+   * Any member may read this: they can already see each other's names and
+   * positions, and a level is the least private thing on the screen.
+   */
+  router.get('/trips/:id/member-levels', auth, requireTripMembership(db), (req, res) => {
+    const members = db
+      .prepare(
+        `SELECT users.id AS user_id, users.total_km AS total_km
+         FROM trip_members
+         JOIN users ON users.id = trip_members.user_id
+         WHERE trip_members.trip_id = ?
+         ORDER BY users.id ASC`
+      )
+      .all(req.trip.id);
+
+    res.json(
+      members.map((row) => ({
+        user_id: row.user_id,
+        ...progressFor(row.total_km),
+      }))
+    );
+  });
 
   /**
    * Issues a join code for the QR screen.

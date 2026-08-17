@@ -182,6 +182,31 @@ accepting an emailed invite. All routes require
   Owner-only to match `POST /trips/:id/invites`: these are suggestions *for*
   that form, and a member tapping one would get a `403`.
 
+- `GET /trips/:id/member-levels` — **any member**. Every rider on the trip and
+  the level their lifetime distance earns them, in one call:
+
+  ```json
+  [
+    {
+      "user_id": 2, "total_km": 1600,
+      "level": { "name": "Wanderer", "min_km": 1500 },
+      "next_level": { "name": "Voyager", "min_km": 3500 },
+      "km_to_next": 1900
+    }
+  ]
+  ```
+
+  Each row is `user_id` plus exactly what [`GET /me/level`](#profile) returns
+  for that rider — same `progressFor`, so the map and the profile screen can
+  never disagree about where somebody stands.
+
+  A batch because the map lists a level beside every name: `/me/level` only
+  ever answers for the caller, and a trip of eight would otherwise be eight
+  requests from a phone that is already polling positions. Readable by any
+  member, not just the owner — they can already see each other's names and
+  positions, and a level is the least private thing on that screen. Works on
+  an ended trip: a level is a lifetime figure, not a live one.
+
 #### Join codes
 
 A short-lived code, shown as a QR, for adding someone standing next to you

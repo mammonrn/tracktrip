@@ -34,13 +34,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.data.LevelProgress
 import app.ptrip.tracktrip.data.ProfilePatch
 import app.ptrip.tracktrip.data.UserProfile
+import app.ptrip.tracktrip.ui.theme.HudAmber
 import app.ptrip.tracktrip.ui.theme.HudAvatar
 import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudGap
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudReadout
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudText
@@ -48,6 +52,7 @@ import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import java.util.Calendar
+import kotlin.math.roundToLong
 import kotlinx.coroutines.launch
 
 /**
@@ -173,6 +178,8 @@ private fun ProfileForm(
             }
         }
 
+        state.level?.let { LevelCard(it) }
+
         HudSurface {
             ProfileField(
                 value = firstName,
@@ -261,6 +268,48 @@ private fun patchFor(
         birthDate = changed(birthDate, user.birthDate),
     )
 }
+
+/**
+ * The rider's rank, and how far it took to get there.
+ *
+ * Absent rather than empty while it loads, and absent if it failed: a profile
+ * without a badge still works, and a badge showing "Novice" because a request
+ * fell over would be a lie about a rider's own riding.
+ */
+@Composable
+private fun LevelCard(level: LevelProgress) {
+    HudSurface(accent = HudAmber.copy(alpha = 0.4f)) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            HudReadout(
+                label = stringResource(R.string.profile_level),
+                value = level.levelName,
+                valueColor = HudAmber,
+            )
+            HudGap()
+            HudReadout(
+                label = stringResource(R.string.profile_total_km),
+                value = stringResource(R.string.profile_km_value, formatKm(level.totalKm)),
+            )
+        }
+        Text(
+            // At the top of the table there is no next level — which the
+            // server sends as null, distinct from "0 km to go".
+            text = level.nextLevelName?.let { next ->
+                stringResource(
+                    R.string.profile_level_next,
+                    formatKm(level.kmToNext ?: 0.0),
+                    next,
+                )
+            } ?: stringResource(R.string.profile_level_top),
+            style = MaterialTheme.typography.labelSmall,
+            color = HudTextDim,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+    }
+}
+
+/** Whole kilometres, grouped. The decimals the server keeps are for its own sums. */
+private fun formatKm(km: Double): String = "%,d".format(km.roundToLong())
 
 @Composable
 private fun ProfileField(
@@ -365,6 +414,14 @@ private fun ProfilePreview() {
                     phone = null,
                     birthDate = "1994-03-17",
                     totalKm = 412.5,
+                ),
+                level = LevelProgress(
+                    totalKm = 412.5,
+                    levelName = "Novice",
+                    nextLevelName = "Rookie Rider",
+                    kmToNext = 87.5,
+                    levelMinKm = 0.0,
+                    nextLevelMinKm = 500.0,
                 ),
             ),
             onSave = {},
