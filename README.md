@@ -31,11 +31,13 @@ src/
     refreshTokens.js  # issue/hash/rotate/revoke refresh tokens
     users.js          # upsert user by google_sub
     middleware.js      # requireAuth Express middleware
+    tripMembership.js  # requireTripMembership (loads trip, enforces 403)
     serializeUser.js   # shapes a user row for API responses
   routes/
     index.js          # health check
     auth.js            # POST /auth/google, /auth/refresh, /auth/logout
     me.js               # GET/PATCH /me
+    waypoints.js         # /trips/:id/waypoints
   ws/                # WebSocket server (stub)
 scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
@@ -72,6 +74,47 @@ Requires `Authorization: Bearer <accessToken>`.
 Access tokens are JWTs valid for 1 hour. Refresh tokens are opaque 32-byte
 random values valid for 60 days; only their SHA-256 hash is stored in the
 `refresh_tokens` table.
+
+### Waypoints
+
+Stop-off points on a trip. Two kinds:
+
+- **`planned`** — set up before the ride, explicitly ordered via `order_index`.
+- **`live`** — dropped while riding; no ordering, just chronological.
+
+All routes require `Authorization: Bearer <accessToken>` **and** that the
+caller is a member of the trip (a row in `trip_members`). A non-member gets
+`403`, an unknown trip `404`, a non-numeric trip id `400`.
+
+- `POST /trips/:id/waypoints` — body `{ name, lat, lng, type, order_index? }`.
+  Returns `201` with the created waypoint.
+
+  | Field | Rule |
+  |---|---|
+  | `name` | string, 1–60 characters after trimming |
+  | `lat` | number, −90 to 90 |
+  | `lng` | number, −180 to 180 |
+  | `type` | exactly `"planned"` or `"live"` |
+  | `order_index` | **required** when `type` is `planned` (non-negative integer); **must not be sent at all** when `type` is `live` — including as an explicit `null` |
+
+- `GET /trips/:id/waypoints` — returns the two kinds separately:
+
+  ```json
+  {
+    "planned": [ { "id": 1, "name": "Gas stop", "order_index": 0, "...": "..." } ],
+    "live":    [ { "id": 2, "name": "Viewpoint", "order_index": null, "...": "..." } ]
+  }
+  ```
+
+  `planned` is sorted by `order_index` ascending, `live` by `created_at`
+  ascending. (Both fall back to `id` as a tiebreaker, so ordering stays stable
+  when two rows share a value.)
+
+- `DELETE /trips/:id/waypoints/:wpId` — returns `204`. Permitted only for the
+  **trip owner** (`trips.owner_id`) or the **member who added that waypoint**
+  (`added_by`); any other member gets `403`. A waypoint that belongs to a
+  different trip than `:id` is treated as `404`, so it can't be deleted through
+  the wrong trip's URL.
 
 ## Setup
 
