@@ -34,6 +34,9 @@ function serializePosition(row, { tripActive, nowIso }) {
   return {
     user_id: row.user_id,
     display_name: row.display_name,
+    // The name a rider chose for themselves, when they have. The app prefers
+    // it over display_name, which is whatever Google supplied.
+    username: row.username ?? null,
     photo_url: row.photo_url,
     role: row.role,
     // Derived, not stored, and deliberately the same condition the write
@@ -241,7 +244,7 @@ export function createPositionsRouter({ db, config }) {
 
     const stored = db
       .prepare(
-        `SELECT member_positions.*, users.display_name, users.photo_url,
+        `SELECT member_positions.*, users.display_name, users.username, users.photo_url,
                 trip_members.role,
                 sharing_sessions.started_at AS sharing_started_at,
                 sharing_sessions.expires_at AS sharing_expires_at
@@ -275,7 +278,7 @@ export function createPositionsRouter({ db, config }) {
     const positions = db
       .prepare(
         `SELECT trip_members.user_id, trip_members.role,
-                users.display_name, users.photo_url,
+                users.display_name, users.username, users.photo_url,
                 sharing_sessions.started_at AS sharing_started_at,
                 sharing_sessions.expires_at AS sharing_expires_at,
                 member_positions.lat, member_positions.lng, member_positions.accuracy,

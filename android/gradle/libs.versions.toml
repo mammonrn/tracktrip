@@ -11,6 +11,7 @@ okhttp = "5.5.0"
 securityCrypto = "1.1.0"
 coroutines = "1.11.0"
 lifecycleViewmodelCompose = "2.11.0"
+appcompat = "1.7.1"
 coil = "3.2.0"
 zxingAndroidEmbedded = "4.3.0"
 zxingCore = "3.5.3"
@@ -38,6 +39,11 @@ androidx-credentials-play-services-auth = { group = "androidx.credentials", name
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+
+# AppCompat, for one thing only: AppCompatDelegate.setApplicationLocales, the
+# per-app language API. On Android 13+ it delegates to the system; below that
+# AppCompat stores the choice and recreates the activity itself.
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 
 # Remote images — rider avatars, and nothing else so far. Coil's OkHttp
 # fetcher is a separate artifact in 3.x; without it every network image fails

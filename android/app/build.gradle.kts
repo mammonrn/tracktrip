@@ -126,6 +126,7 @@ dependencies {
     implementation(libs.googleid)
 
     implementation(libs.okhttp)
+    implementation(libs.androidx.appcompat)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.zxing.core)

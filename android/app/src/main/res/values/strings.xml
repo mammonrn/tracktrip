@@ -77,6 +77,25 @@
     <!-- Sharing state -->
     <string name="sharing_on">Sharing location</string>
     <string name="sharing_off">Not sharing</string>
+    <string name="sharing_on_trip">Sharing · %1$s</string>
+    <string name="sharing_start">Share my location</string>
+    <string name="sharing_stop">Stop sharing</string>
+    <string name="sharing_choose_duration">Share my location for…</string>
+    <string name="sharing_until">Until %1$s</string>
+    <string name="sharing_no_active_trips">Sharing needs a running trip. Create one, or join a friend\'s.</string>
+    <string name="settings_sharing">Location sharing</string>
+
+    <!-- Location permission -->
+    <string name="location_permission_rationale">Tracktrip needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
+    <string name="location_permission_denied">Location access is off for Tracktrip. Turn it on in Android\'s app settings to share your position with your group.</string>
+    <string name="location_permission_allow">Allow location</string>
+
+    <!-- The tracking notification -->
+    <string name="sharing_channel_name">Location sharing</string>
+    <string name="sharing_channel_description">Shown while your location is being shared with a trip.</string>
+    <string name="sharing_notification_title">Sharing your location</string>
+    <string name="sharing_notification_text">%1$s</string>
+    <string name="sharing_notification_stop">Stop</string>
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">Ridden with before</string>
@@ -93,6 +112,11 @@
     <string name="qr_camera_needed">Scanning needs the camera.</string>
     <string name="qr_camera_denied">Camera access is off for Tracktrip. Turn it on in Android\'s app settings, then try again.</string>
     <string name="qr_camera_allow">Allow camera</string>
+    <string name="invite_share_link">Share invite link</string>
+    <string name="invite_share_subject">Join my trip on Tracktrip</string>
+    <string name="invite_share_body">Join my trip \"%1$s\" on Tracktrip.\n\nCode: %2$s\nOpen: %3$s\n\nThe code works for 15 minutes.</string>
+    <string name="invite_share_chooser">Share invite</string>
+    <string name="language_system">Match my phone</string>
 
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>

@@ -227,6 +227,25 @@ fun HudScanIcon(
     }
 }
 
+/** Location sharing: a map pin. */
+@Composable
+fun HudPinIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = HudCyan,
+    iconSize: Dp = DEFAULT_ICON_SIZE,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val headRadius = size.minDimension * 0.28f
+        val head = Offset(center.x, size.height * 0.38f)
+
+        drawCircle(tint, radius = headRadius, center = head, style = Stroke(hudStroke()))
+        // The two flanks running down to the point, tangent-ish to the head so
+        // the pin reads as one shape rather than a lollipop.
+        hudLine(tint, Offset(head.x - headRadius * 0.78f, head.y + headRadius * 0.62f), at(0.5f, 0.92f))
+        hudLine(tint, Offset(head.x + headRadius * 0.78f, head.y + headRadius * 0.62f), at(0.5f, 0.92f))
+    }
+}
+
 /** Sign out: the standard power symbol — a broken ring with a stem. */
 @Composable
 fun HudPowerIcon(

@@ -115,6 +115,25 @@ test('POST stores a rider position and GET reads it back', async () => {
   assert.equal(mine.recorded_at, '2026-05-01T08:00:00.000Z');
 });
 
+test('both position routes carry the username the app prefers to show', async () => {
+  const { app, db, tripId, memberToken, memberId } = setup();
+  db.prepare('UPDATE users SET username = ? WHERE id = ?').run('speedy', memberId);
+
+  const posted = await post(app, tripId, memberToken, { lat: 18.79, lng: 98.98 });
+  assert.equal(posted.body.username, 'speedy');
+  assert.equal(posted.body.display_name, 'Member');
+
+  const list = await get(app, tripId, memberToken);
+  const mine = list.body.find((p) => p.user_id === memberId);
+  assert.equal(mine.username, 'speedy');
+
+  // Present and null for a rider who has not chosen one, so a client can tell
+  // "not set" from "this build doesn't send it".
+  const other = list.body.find((p) => p.user_id !== memberId);
+  assert.ok('username' in other);
+  assert.equal(other.username, null);
+});
+
 test('POST updates the rider in place instead of piling up rows', async () => {
   const { app, db, tripId, memberToken, memberId } = setup();
 

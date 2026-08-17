@@ -167,8 +167,17 @@ accepting an emailed invite. All routes require
   `409`.
 - `GET /trips/:id/suggested-invitees` — **owner only**, running trips only.
   Riders the caller has shared a trip with before who are **not** already on
-  this one, most recently ridden with first, at most 10. Returns
-  `[{ user_id, email, display_name, photo_url }]`.
+  this one. Returns
+  `[{ user_id, email, display_name, username, photo_url, trips_together }]`.
+
+  Ordered by `trips_together` (how many trips the two have shared) descending,
+  then by who was ridden with most recently. Frequency rather than recency: the
+  person ridden with twenty times is the one being looked for, even when
+  somebody met once last weekend is more recent.
+
+  **Unlimited.** The list is bounded by how many people the rider has actually
+  ridden with and the client scrolls it; the old cap of ten hid exactly the
+  regulars a long-standing group has.
 
   Owner-only to match `POST /trips/:id/invites`: these are suggestions *for*
   that form, and a member tapping one would get a `403`.
@@ -340,7 +349,8 @@ Clients poll `GET`; there is no push yet.
   ```json
   [
     {
-      "user_id": 2, "display_name": "Member", "photo_url": "member.jpg",
+      "user_id": 2, "display_name": "Member", "username": "speedy",
+      "photo_url": "member.jpg",
       "role": "member", "is_sharing": true, "sharing_until": null,
       "lat": 19.1, "lng": 99.2, "accuracy": 12.5, "speed": 22.4,
       "heading": 275.5, "battery_pct": 84,
@@ -352,6 +362,9 @@ Clients poll `GET`; there is no push yet.
   Sorted freshest first. Members who have never reported are **still listed**,
   with every position field `null`, and sort last — the friend list shows them
   as not yet tracking rather than dropping them. Emails are not included.
+
+  `username` is the handle the rider chose, or `null`. Clients show it in
+  preference to `display_name`, which is whatever Google supplied.
 
   `is_sharing` answers exactly what the write guard would: *may this rider be
   reporting right now?* On a running trip that is everyone. Once the trip ends

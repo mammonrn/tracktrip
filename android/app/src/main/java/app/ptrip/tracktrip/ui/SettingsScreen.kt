@@ -10,11 +10,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,7 +33,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.ui.theme.HudAvatar
+import app.ptrip.tracktrip.ui.theme.HudBlack
 import app.ptrip.tracktrip.ui.theme.HudChevronIcon
 import app.ptrip.tracktrip.ui.theme.HudClockIcon
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
@@ -37,7 +43,10 @@ import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
+import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudGlobeIcon
+import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudText
 import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
@@ -62,9 +71,11 @@ fun SettingsScreen(
     displayName: String?,
     email: String?,
     photoUrl: String?,
+    sharingTripId: Long?,
     onOpenProfile: () -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onSharingDurationChange: (SharingDuration) -> Unit,
+    onToggleSharing: (Trip, Boolean) -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -82,6 +93,8 @@ fun SettingsScreen(
             onBack = onBack,
             backContentDescription = stringResource(R.string.back),
         )
+
+        state.error?.let { HudError(it) }
 
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             HudDivider()
@@ -136,6 +149,16 @@ fun SettingsScreen(
             }
 
             HudDivider()
+
+            SharingSection(
+                trips = state.activeTrips,
+                loading = state.loadingTrips,
+                sharingTripId = sharingTripId,
+                pendingTripId = state.pendingTripId,
+                onToggle = onToggleSharing,
+            )
+
+            HudDivider()
         }
 
         HudDangerButton(
@@ -159,6 +182,86 @@ fun SettingsScreen(
             },
             onDismiss = { confirmingSignOut = false },
         )
+    }
+}
+
+/**
+ * Location sharing, one switch per running trip.
+ *
+ * A list rather than a single switch because nothing stops a rider being on
+ * two running trips at once — the schema has no such constraint, and a
+ * weekend group ride during a longer tour is the ordinary case. Only one can
+ * be shared to at a time, though: the phone has one location, and the service
+ * reports to the trip it was started for.
+ */
+@Composable
+private fun SharingSection(
+    trips: List<Trip>,
+    loading: Boolean,
+    sharingTripId: Long?,
+    pendingTripId: Long?,
+    onToggle: (Trip, Boolean) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HudPinIcon()
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = stringResource(R.string.settings_sharing),
+                style = MaterialTheme.typography.titleMedium,
+                color = HudText,
+            )
+        }
+
+        when {
+            loading && trips.isEmpty() -> HudLoading()
+
+            trips.isEmpty() -> Text(
+                text = stringResource(R.string.sharing_no_active_trips),
+                style = MaterialTheme.typography.bodySmall,
+                color = HudTextDim,
+                modifier = Modifier.padding(start = 38.dp, bottom = 12.dp, end = 8.dp),
+            )
+
+            else -> trips.forEach { trip ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 38.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = trip.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (trip.id == sharingTripId) HudText else HudTextDim,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (trip.id == pendingTripId) {
+                        CircularProgressIndicator(
+                            color = HudCyan,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    } else {
+                        Switch(
+                            checked = trip.id == sharingTripId,
+                            onCheckedChange = { on -> onToggle(trip, on) },
+                            enabled = pendingTripId == null,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = HudBlack,
+                                checkedTrackColor = HudCyan,
+                                uncheckedThumbColor = HudTextDim,
+                                uncheckedTrackColor = HudBlack,
+                                uncheckedBorderColor = HudTextDim,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -255,6 +358,7 @@ private fun OptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
 @get:StringRes
 private val AppLanguage.labelRes: Int
     get() = when (this) {
+        AppLanguage.SYSTEM -> R.string.language_system
         AppLanguage.THAI -> R.string.language_thai
         AppLanguage.ENGLISH -> R.string.language_english
     }
@@ -273,13 +377,18 @@ private val SharingDuration.labelRes: Int
 private fun SettingsPreview() {
     TracktripTheme {
         SettingsScreen(
-            state = SettingsUiState(),
+            state = SettingsUiState(
+                loadingTrips = false,
+                activeTrips = listOf(Trip(1, "Chiang Mai loop", 1, "active", "owner")),
+            ),
             displayName = "Poom",
             email = "rider@gmail.com",
             photoUrl = null,
+            sharingTripId = 1,
             onOpenProfile = {},
             onLanguageChange = {},
             onSharingDurationChange = {},
+            onToggleSharing = { _, _ -> },
             onSignOut = {},
             onBack = {},
         )
