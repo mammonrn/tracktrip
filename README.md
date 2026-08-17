@@ -238,6 +238,16 @@ Clients poll `GET`; there is no push yet.
   **Each accepted fix also credits distance** towards the rider's lifetime
   `users.total_km` — see [Lifetime distance](#lifetime-distance) below.
 
+  Capped at **10 reports per minute per rider** (`POSITION_RATE_LIMIT` in
+  `src/routes/positions.js`), answering `429 {"error": "too many position
+  updates"}` above that. The app reports roughly every ten minutes, so this
+  is a safety net against a client stuck in a retry loop, not a quota — no
+  real rider will reach it. It is keyed on the **rider**, not the IP, because
+  a group riding together is usually behind one carrier NAT and would
+  otherwise throttle each other. `GET` is not capped: the limit is derived
+  from how often a rider reports, and the map screen refreshes on its own
+  cadence.
+
   **Older fixes are ignored.** A retry, or a phone flushing a backlog after
   losing signal, can deliver an old fix after a newer one; the stored row only
   moves forward in time, so the map never jumps backwards. The response body

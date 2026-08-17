@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
@@ -6,6 +7,21 @@ import { countableDistanceKm } from '../trips/distance.js';
 
 const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
+
+/**
+ * A safety net, not a quota. The app reports a position about once every ten
+ * minutes, so this leaves roughly a hundredfold headroom — enough that no
+ * real rider will ever see it, while a client stuck in a retry loop stops
+ * before it fills the database.
+ *
+ * Deliberately loose: tightening it towards the real cadence would start
+ * catching legitimate bursts (a phone flushing a backlog after losing
+ * signal) for no benefit, since the stale-fix rule already discards those.
+ */
+export const POSITION_RATE_LIMIT = {
+  windowMs: 60 * 1000,
+  max: 10,
+};
 
 function serializePosition(row) {
   return {
@@ -169,6 +185,19 @@ export function createPositionsRouter({ db, config }) {
     }
   });
 
+  // Keyed on the rider, not on req.ip: a group riding together is very often
+  // behind one carrier NAT, and an IP-keyed bucket would have them throttle
+  // each other. Safe to read req.user here because this only ever runs after
+  // requireAuth below.
+  const limitPositionReports = rateLimit({
+    windowMs: POSITION_RATE_LIMIT.windowMs,
+    max: POSITION_RATE_LIMIT.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.user.id),
+    message: { error: 'too many position updates' },
+  });
+
   router.use('/trips/:id/positions', requireAuth(db, config), requireTripMembership(db));
 
   // Reads stay open on an ended trip; writes don't — same rule as waypoints,
@@ -177,7 +206,13 @@ export function createPositionsRouter({ db, config }) {
   //
   // requireActiveTrip therefore has to be mounted per write route: any route
   // added to this file that stores something must carry it explicitly.
-  router.post('/trips/:id/positions', requireActiveTrip(), (req, res) => {
+  // The limiter is attached to this one route rather than to the router, so
+  // it governs position reports and nothing else. (Mounting a limiter with
+  // router.use() and no path is what silently throttled the whole API until
+  // 27586b2.) Reads are left unlimited: the 10/minute figure is derived from
+  // how often a rider *reports*, and a map screen refreshing on a different
+  // cadence would otherwise be sharing that budget.
+  router.post('/trips/:id/positions', limitPositionReports, requireActiveTrip(), (req, res) => {
     const { error, value } = validatePositionInput(req.body);
     if (error) {
       return res.status(400).json({ error });
