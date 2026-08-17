@@ -18,6 +18,12 @@
       Cloud Console setup.
     -->
     <string name="error_no_credential">Google didn\'t offer an account for this app. If you\'re signed in to Google on this device, this build\'s package name and signing certificate probably aren\'t registered in the Google Cloud project yet.</string>
+    <!--
+      Shown when Play Services reports a cancellation that the user didn't
+      make. Worded carefully: we genuinely cannot tell a real dismissal from
+      an internal abort, so it says what to check without claiming certainty.
+    -->
+    <string name="error_cancelled_or_aborted">Google closed the sign-in without returning an account. If you didn\'t cancel it yourself, this build\'s package name and signing certificate are probably not registered in the Google Cloud project. Check logcat tag TracktripSignIn for details.</string>
     <string name="error_sign_in_failed">Google sign-in failed. Please try again.</string>
     <string name="error_unexpected_credential">Got an unexpected credential type from Google.</string>
 </resources>

@@ -40,6 +40,22 @@ enum class GoogleSignInFailure {
     /** Got a credential, but not a Google ID token. */
     UNEXPECTED_CREDENTIAL,
 
+    /**
+     * Play Services reported a cancellation that probably wasn't the user.
+     *
+     * Credential Manager turns an activity result of RESULT_CANCELED into
+     * [GetCredentialCancellationException], and Play Services returns
+     * RESULT_CANCELED both when the user dismisses the sheet *and* when it
+     * aborts internally — most often because the calling package name +
+     * signing certificate SHA-1 aren't registered as an Android OAuth client.
+     * The exception type carries no way to tell those apart.
+     *
+     * This value is used when a cancellation arrives after earlier strategies
+     * already came back empty, which makes an internal abort far more likely
+     * than a deliberate dismissal.
+     */
+    CANCELLED_OR_ABORTED,
+
     /** Anything else — Play Services missing/outdated, transient errors. */
     OTHER,
 }
@@ -111,23 +127,54 @@ suspend fun requestGoogleIdToken(
             )
             return GoogleSignInResult.Failure(GoogleSignInFailure.UNEXPECTED_CREDENTIAL)
         } catch (e: GetCredentialCancellationException) {
-            Log.i(GOOGLE_SIGN_IN_LOG_TAG, "User cancelled sign-in during $label")
+            // Never log this as a plain "user cancelled": Play Services also
+            // returns RESULT_CANCELED when it aborts on its own, and that
+            // arrives here as the exact same exception. Log the concrete
+            // class, Credential Manager's type string, and the stack trace so
+            // the two are at least distinguishable in a bug report.
+            Log.w(
+                GOOGLE_SIGN_IN_LOG_TAG,
+                "$label reported cancellation: ${e.javaClass.name} " +
+                    "type=${e.type} message=${e.errorMessage}",
+                e,
+            )
+
+            if (sawNoCredential) {
+                // The user had to interact for the chooser to get this far,
+                // yet earlier strategies found no account at all. That
+                // combination points at Play Services aborting rather than a
+                // deliberate dismissal, so surface it instead of silently
+                // dropping back to the sign-in button.
+                Log.e(
+                    GOOGLE_SIGN_IN_LOG_TAG,
+                    "Treating this as an abort, not a user cancellation: earlier strategies " +
+                        "returned NoCredentialException, which usually means this build's " +
+                        "package name + signing SHA-1 are not registered as an Android OAuth " +
+                        "client in the Cloud project that owns the server client ID.",
+                )
+                return GoogleSignInResult.Failure(GoogleSignInFailure.CANCELLED_OR_ABORTED)
+            }
             return GoogleSignInResult.Cancelled
         } catch (e: NoCredentialException) {
             // Expected for step 1 on a first-ever sign-in; keep going.
             sawNoCredential = true
-            Log.w(GOOGLE_SIGN_IN_LOG_TAG, "$label returned no credential, trying next strategy", e)
+            Log.w(
+                GOOGLE_SIGN_IN_LOG_TAG,
+                "$label returned no credential (${e.javaClass.name} type=${e.type} " +
+                    "message=${e.errorMessage}), trying next strategy",
+                e,
+            )
         } catch (e: GetCredentialException) {
             // Log the concrete type/message — without this, every distinct
             // cause looked identical from the outside.
             Log.e(
                 GOOGLE_SIGN_IN_LOG_TAG,
-                "$label failed: ${e.javaClass.simpleName}: ${e.message}",
+                "$label failed: ${e.javaClass.name} type=${e.type} message=${e.errorMessage}",
                 e,
             )
             return GoogleSignInResult.Failure(GoogleSignInFailure.OTHER)
         } catch (e: Exception) {
-            Log.e(GOOGLE_SIGN_IN_LOG_TAG, "$label threw ${e.javaClass.simpleName}: ${e.message}", e)
+            Log.e(GOOGLE_SIGN_IN_LOG_TAG, "$label threw ${e.javaClass.name}: ${e.message}", e)
             return GoogleSignInResult.Failure(GoogleSignInFailure.OTHER)
         }
     }

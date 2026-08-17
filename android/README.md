@@ -137,8 +137,32 @@ first that yields a token (a user cancellation stops the chain immediately):
    nothing.
 
 Each step logs to logcat under the tag **`TracktripSignIn`**, including the
-concrete exception class and message. Filter logcat on that tag when
-diagnosing sign-in problems.
+concrete exception class, Credential Manager's `type` string, and the stack
+trace. Filter logcat on that tag when diagnosing sign-in problems:
+
+```bash
+adb logcat -s TracktripSignIn
+```
+
+### "Google closed the sign-in without returning an account"
+
+Credential Manager maps an activity result of `RESULT_CANCELED` to
+`GetCredentialCancellationException` — and Play Services returns
+`RESULT_CANCELED` **both** when the user dismisses the sheet **and** when it
+aborts internally. The exception carries nothing that distinguishes them, so
+a chooser that appears, accepts a tap, and then reports "cancelled" is a
+known signature of the app not being a registered OAuth client rather than of
+anything the user did.
+
+The helper therefore treats a cancellation as an *abort* when earlier
+strategies already returned `NoCredentialException` — the user must have
+interacted for the chooser to get that far, so a genuine dismissal is
+unlikely. That surfaces a message instead of silently returning to the
+sign-in button. A cancellation with no prior `NoCredentialException` is still
+treated as a real user cancellation and stays silent.
+
+Fix is the same as the section above: register this build's package name and
+signing SHA-1, remembering that debug is a different pair from release.
 
 ### "Google didn't offer an account for this app"
 
