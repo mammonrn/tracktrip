@@ -34,8 +34,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.CameraTarget
+import app.ptrip.tracktrip.map.EndpointMarker
 import app.ptrip.tracktrip.map.FALLBACK_CENTRE
 import app.ptrip.tracktrip.map.FALLBACK_ZOOM
 import app.ptrip.tracktrip.map.LatLng
@@ -46,8 +48,12 @@ import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.initialCamera
-import app.ptrip.tracktrip.ui.theme.HudBlack
-import app.ptrip.tracktrip.ui.theme.HudCyan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
+import app.ptrip.tracktrip.ui.theme.AppSurface
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.RankIcon
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
@@ -55,8 +61,6 @@ import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudReadout
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
@@ -149,6 +153,7 @@ fun TripMapScreen(
                 RiderMap(
                     members = state.placed,
                     waypoints = state.waypoints.all,
+                    trip = state.trip,
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = { focused = it },
@@ -157,11 +162,11 @@ fun TripMapScreen(
                 HudIconButton(
                     onClick = onCenterOnMe,
                     contentDescription = stringResource(R.string.map_center_on_me),
-                    icon = { HudPinIcon(tint = HudCyan) },
+                    icon = { HudPinIcon(tint = AppPrimary) },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(12.dp)
-                        .background(HudBlack.copy(alpha = 0.75f), CircleShape),
+                        .background(AppSurface.copy(alpha = 0.92f), CircleShape),
                 )
             }
 
@@ -184,7 +189,7 @@ fun TripMapScreen(
                             Text(
                                 text = stringResource(R.string.map_order_leader_first),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = HudTextDim,
+                                color = AppTextMuted,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
@@ -235,7 +240,7 @@ private fun MapOverlayBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(HudBlack.copy(alpha = 0.88f))
+            .background(AppSurface.copy(alpha = 0.94f))
             .padding(horizontal = 16.dp),
     ) {
         HudTopBar(
@@ -247,7 +252,7 @@ private fun MapOverlayBar(
                 HudReadout(
                     label = stringResource(R.string.map_own_speed),
                     value = speedText(speedKmh),
-                    valueColor = if (speedKmh != null) HudCyan else HudTextDim,
+                    valueColor = if (speedKmh != null) AppPrimary else AppTextMuted,
                 )
             },
         )
@@ -275,6 +280,7 @@ private const val MEMBER_LIST_WEIGHT = 0.55f
 private fun RiderMap(
     members: List<MemberPosition>,
     waypoints: List<Waypoint>,
+    trip: Trip?,
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
@@ -317,6 +323,12 @@ private fun RiderMap(
     // Kept apart from the rider markers so the two can never be confused for
     // one another — by this code or by the person reading the screen.
     val waypointMarkers = remember { mutableListOf<Marker>() }
+    val endpointMarkers = remember { mutableListOf<Marker>() }
+
+    // The flags fall back to a word when the owner set a coordinate but no
+    // name, which is what dropping one on the map gives you.
+    val originFallback = stringResource(R.string.map_origin)
+    val destinationFallback = stringResource(R.string.map_destination)
     var framedOnRiders by remember { mutableStateOf(false) }
     var framedOnMe by remember { mutableStateOf(false) }
 
@@ -354,6 +366,12 @@ private fun RiderMap(
     // enough of them that redrawing costs nothing.
     LaunchedEffect(waypoints) {
         syncWaypoints(mapView, waypoints, waypointMarkers)
+    }
+
+    // The two ends of the trip. They change only when the owner edits them, so
+    // they are keyed on the pair rather than redrawn with every poll.
+    LaunchedEffect(trip?.origin, trip?.destination) {
+        syncEndpoints(mapView, trip, endpointMarkers, originFallback, destinationFallback)
     }
 
     // The opening camera: it follows this phone's own position while the trip
@@ -490,6 +508,50 @@ private fun syncWaypoints(
 }
 
 /**
+ * Draws the trip's origin and destination, replacing whatever was drawn before.
+ *
+ * Both are optional and independent: a group that set off from a known place
+ * with no plan gets one flag, and a trip nobody has filled in gets none. A
+ * flag with a coordinate but no name still needs *something* under it, so it
+ * falls back to the word for which end it is.
+ */
+private fun syncEndpoints(
+    view: MapView,
+    trip: Trip?,
+    drawn: MutableList<Marker>,
+    originFallback: String,
+    destinationFallback: String,
+) {
+    drawn.forEach { view.overlays.remove(it) }
+    drawn.clear()
+
+    val ends = listOfNotNull(
+        trip?.origin?.let { Triple(EndpointMarker.Kind.ORIGIN, it, originFallback) },
+        trip?.destination?.let { Triple(EndpointMarker.Kind.DESTINATION, it, destinationFallback) },
+    )
+
+    ends.forEach { (kind, endpoint, fallback) ->
+        val marker = Marker(view).apply {
+            position = GeoPoint(endpoint.lat, endpoint.lng)
+            setAnchor(Marker.ANCHOR_CENTER, EndpointMarker.anchorV(view.resources))
+            icon = EndpointMarker.forEndpoint(
+                kind = kind,
+                label = endpoint.label?.takeIf { it.isNotBlank() } ?: fallback,
+                resources = view.resources,
+            )
+            title = endpoint.label ?: fallback
+            // Fixed geography: there is no row to highlight and nothing to say
+            // that the flag is not already saying.
+            setOnMarkerClickListener { _, _ -> true }
+        }
+        drawn.add(marker)
+        view.overlays.add(marker)
+    }
+
+    view.invalidate()
+}
+
+/**
  * Slides every moved marker to its new position over [MarkerMotion.DURATION_MS].
  *
  * Driven off the frame clock rather than a fixed tick, so it takes the same
@@ -543,13 +605,18 @@ private fun MemberMapRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .background(if (focused) HudCyan.copy(alpha = 0.08f) else HudBlack)
+            .background(if (focused) AppPrimarySoft else AppSurface)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // The same colour as this rider's pin, from the same function.
-        HudDot(color = if (member.hasPosition) riderColor(member.userId) else HudTextDim)
+        HudDot(color = if (member.hasPosition) riderColor(member.userId) else AppTextMuted)
+
+        // The badge appears only once the levels call has landed. Reserving
+        // space for one that may never arrive would leave a hole in every row
+        // on a trip where the request failed.
+        levelName?.let { RankIcon(levelName = it, iconSize = 22.dp) }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -561,7 +628,7 @@ private fun MemberMapRow(
                     member.label
                 },
                 style = MaterialTheme.typography.titleMedium,
-                color = HudText,
+                color = AppText,
             )
             Text(
                 text = buildString {
@@ -578,7 +645,7 @@ private fun MemberMapRow(
                     )
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
 
@@ -588,7 +655,7 @@ private fun MemberMapRow(
             Text(
                 text = speedText(Speed.kmh(member.speedMps)),
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
 
@@ -596,7 +663,7 @@ private fun MemberMapRow(
             Text(
                 text = "$it%",
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
     }

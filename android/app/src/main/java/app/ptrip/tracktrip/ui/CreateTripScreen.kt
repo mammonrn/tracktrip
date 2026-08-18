@@ -21,11 +21,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -66,7 +66,7 @@ fun CreateTripScreen(
             Text(
                 text = "${trimmed.length}/$TRIP_NAME_MAX_LENGTH",
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
                 modifier = Modifier.padding(top = 6.dp),
             )
         }
@@ -94,7 +94,7 @@ fun CreateTripScreen(
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun CreateTripPreview() {
     TracktripTheme {

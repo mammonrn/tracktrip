@@ -73,6 +73,8 @@
     <string name="map_speed_kmh">%1$d กม./ชม.</string>
     <string name="map_speed_unknown">—</string>
     <string name="map_own_speed">ความเร็วคุณ</string>
+    <string name="map_origin">จุดเริ่ม</string>
+    <string name="map_destination">ปลายทาง</string>
     <string name="map_order_leader_first">เรียงจากคนนำ · ประมาณจากทิศทางกลุ่ม</string>
 
     <!-- Profile -->

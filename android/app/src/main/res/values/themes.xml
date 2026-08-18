@@ -1,26 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Dark, and with the HUD background painted on the window itself.
+      Light, and with the app's own background painted on the window itself.
 
       This is the theme the system uses for the window before Compose has
-      drawn anything; on a light parent it showed a white flash on every
-      cold start, straight into a near-black app.
+      drawn anything. Painting it here is what stops a cold start from
+      flashing a different colour into the app; it used to be a near-black
+      HUD ground, and is now the same off-white the app itself sits on.
 
-      The parent is AppCompat because the activity is an AppCompatActivity,
-      which is what the per-app language API (AppCompatDelegate) needs to
-      recreate the activity below Android 13. DayNight rather than a fixed
-      dark parent so the platform widgets AppCompat brings — the date picker
-      on the profile screen — follow the system instead of being forced.
+      windowLightStatusBar asks the system for *dark* status-bar icons: the
+      bar is transparent, so they are drawn over this background and would
+      otherwise be white on white. The navigation bar's equivalent is API 27
+      and this app runs from 26, so that one is set at runtime instead — see
+      enableEdgeToEdge in MainActivity.
+
+      The parent must stay an **AppCompat** theme: the activity is an
+      AppCompatActivity, which is what the per-app language API
+      (AppCompatDelegate) needs to recreate the activity below Android 13, and
+      AppCompat throws outright on a theme it does not recognise. A
+      Theme.Material parent would compile and then crash on launch.
+
+      Light rather than DayNight, which it was while the app was dark: the
+      palette has exactly one mode now, so letting the platform widgets
+      AppCompat brings — the date picker on the profile screen — follow the
+      *system* would drop a dark dialog into a light app on any phone in dark
+      mode.
 
       The colour is duplicated from Theme.kt on purpose — a Compose Color is
       not reachable from a resource file — so the two have to be changed
       together. It is the only copy of it outside that file.
     -->
-    <style name="Theme.Tracktrip" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="android:windowBackground">@color/hud_background</item>
-        <item name="android:colorBackground">@color/hud_background</item>
+    <style name="Theme.Tracktrip" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:colorBackground">@color/app_background</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

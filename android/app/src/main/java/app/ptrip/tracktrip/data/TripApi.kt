@@ -3,6 +3,19 @@ package app.ptrip.tracktrip.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * One end of a trip: where it starts, or where it is going.
+ *
+ * [label] is optional — a destination dropped on the map may have no name —
+ * but the coordinate never is. The server refuses half a position, so there
+ * is no such thing here as a place that cannot be drawn.
+ */
+data class TripEndpoint(
+    val lat: Double,
+    val lng: Double,
+    val label: String?,
+)
+
 /** A trip, as GET /trips returns it — `role` is the caller's own role. */
 data class Trip(
     val id: Long,
@@ -10,6 +23,10 @@ data class Trip(
     val ownerId: Long,
     val status: String,
     val role: String,
+    /** Where the trip starts, or null when nobody has said. */
+    val origin: TripEndpoint? = null,
+    /** Where the trip is going, or null. Independent of [origin]. */
+    val destination: TripEndpoint? = null,
 ) {
     val isOwner: Boolean get() = role == ROLE_OWNER
     val isActive: Boolean get() = status == STATUS_ACTIVE
@@ -327,7 +344,21 @@ internal fun JSONObject.toTrip() = Trip(
     ownerId = optLong("owner_id"),
     status = optStringOrNull("status") ?: Trip.STATUS_ACTIVE,
     role = optStringOrNull("role") ?: "member",
+    origin = optJSONObject("origin")?.toTripEndpoint(),
+    destination = optJSONObject("destination")?.toTripEndpoint(),
 )
+
+/**
+ * One end of a trip, or null if the object is missing its coordinate.
+ *
+ * The server never sends half a position, so the null here is for a build
+ * talking to an older backend that has no such field at all.
+ */
+internal fun JSONObject.toTripEndpoint(): TripEndpoint? {
+    val lat = optDoubleOrNull("lat") ?: return null
+    val lng = optDoubleOrNull("lng") ?: return null
+    return TripEndpoint(lat = lat, lng = lng, label = optStringOrNull("label"))
+}
 
 internal fun JSONObject.toInvite() = Invite(
     id = getLong("id"),

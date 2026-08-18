@@ -34,12 +34,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.ui.theme.AppLine
+import app.ptrip.tracktrip.ui.theme.AppOnPrimary
+import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppSurfaceAlt
+import app.ptrip.tracktrip.ui.theme.AppText
+import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudAvatar
-import app.ptrip.tracktrip.ui.theme.HudBlack
 import app.ptrip.tracktrip.ui.theme.HudChevronIcon
 import app.ptrip.tracktrip.ui.theme.HudClockIcon
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
-import app.ptrip.tracktrip.ui.theme.HudCyan
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -47,8 +51,6 @@ import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudGlobeIcon
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
-import app.ptrip.tracktrip.ui.theme.HudText
-import app.ptrip.tracktrip.ui.theme.HudTextDim
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -212,7 +214,7 @@ private fun SharingSection(
             Text(
                 text = stringResource(R.string.settings_sharing),
                 style = MaterialTheme.typography.titleMedium,
-                color = HudText,
+                color = AppText,
             )
         }
 
@@ -222,7 +224,7 @@ private fun SharingSection(
             trips.isEmpty() -> Text(
                 text = stringResource(R.string.sharing_no_active_trips),
                 style = MaterialTheme.typography.bodySmall,
-                color = HudTextDim,
+                color = AppTextMuted,
                 modifier = Modifier.padding(start = 38.dp, bottom = 12.dp, end = 8.dp),
             )
 
@@ -236,12 +238,12 @@ private fun SharingSection(
                     Text(
                         text = trip.name,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (trip.id == sharingTripId) HudText else HudTextDim,
+                        color = if (trip.id == sharingTripId) AppText else AppTextMuted,
                         modifier = Modifier.weight(1f),
                     )
                     if (trip.id == pendingTripId) {
                         CircularProgressIndicator(
-                            color = HudCyan,
+                            color = AppPrimary,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(20.dp),
                         )
@@ -251,11 +253,11 @@ private fun SharingSection(
                             onCheckedChange = { on -> onToggle(trip, on) },
                             enabled = pendingTripId == null,
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = HudBlack,
-                                checkedTrackColor = HudCyan,
-                                uncheckedThumbColor = HudTextDim,
-                                uncheckedTrackColor = HudBlack,
-                                uncheckedBorderColor = HudTextDim,
+                                checkedThumbColor = AppOnPrimary,
+                                checkedTrackColor = AppPrimary,
+                                uncheckedThumbColor = AppTextMuted,
+                                uncheckedTrackColor = AppSurfaceAlt,
+                                uncheckedBorderColor = AppLine,
                             ),
                         )
                     }
@@ -285,12 +287,12 @@ private fun ProfileRow(
             Text(
                 text = displayName ?: stringResource(R.string.signed_in),
                 style = MaterialTheme.typography.titleMedium,
-                color = HudText,
+                color = AppText,
             )
             Text(
                 text = email ?: stringResource(R.string.settings_profile),
                 style = MaterialTheme.typography.labelSmall,
-                color = HudTextDim,
+                color = AppTextMuted,
             )
         }
         HudChevronIcon()
@@ -323,13 +325,13 @@ private fun SettingRow(
         Text(
             text = label,
             style = MaterialTheme.typography.titleMedium,
-            color = HudText,
+            color = AppText,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
-            color = HudCyan,
+            color = AppPrimary,
         )
         HudChevronIcon(modifier = Modifier.padding(start = 8.dp).rotate(chevronTurn))
     }
@@ -345,11 +347,11 @@ private fun OptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
             .padding(start = 38.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HudDot(color = if (selected) HudCyan else HudTextDim.copy(alpha = 0.4f))
+        HudDot(color = if (selected) AppPrimary else AppTextMuted.copy(alpha = 0.4f))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) HudText else HudTextDim,
+            color = if (selected) AppText else AppTextMuted,
             modifier = Modifier.padding(start = 14.dp),
         )
     }
@@ -372,7 +374,7 @@ private val SharingDuration.labelRes: Int
         SharingDuration.UNTIL_STOPPED -> R.string.duration_until_stopped
     }
 
-@Preview(showBackground = true, backgroundColor = 0xFF0B0E1A)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F9FA)
 @Composable
 private fun SettingsPreview() {
     TracktripTheme {

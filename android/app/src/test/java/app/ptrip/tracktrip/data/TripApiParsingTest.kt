@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -442,6 +443,67 @@ class TripApiParsingTest {
         assertFalse(waypoints.live[0].isPlanned)
         assertEquals("Coffee", waypoints.live[0].name)
         assertEquals(18.85, waypoints.live[0].lat, 1e-9)
+    }
+
+    @Test
+    fun `a trip parses its origin and destination`() {
+        val payload = """
+            {"id":1,"name":"Pai loop","owner_id":1,"status":"active",
+             "created_at":"2026-05-01T08:00:00.000Z","ended_at":null,
+             "origin":{"lat":18.7883,"lng":98.9853,"label":"Chiang Mai"},
+             "destination":{"lat":19.3583,"lng":98.4406,"label":"Pai"},
+             "role":"owner"}
+        """.trimIndent()
+
+        val trip = JSONObject(payload).toTrip()
+
+        assertEquals(18.7883, trip.origin!!.lat, 1e-9)
+        assertEquals(98.9853, trip.origin!!.lng, 1e-9)
+        assertEquals("Chiang Mai", trip.origin!!.label)
+        assertEquals("Pai", trip.destination!!.label)
+    }
+
+    @Test
+    fun `the two ends are independent, and either may be missing`() {
+        // Setting off from a known place with no plan is an ordinary way to
+        // ride, and so is naming a destination before deciding where to meet.
+        val payload = """
+            {"id":1,"name":"North","owner_id":1,"status":"active","role":"owner",
+             "origin":{"lat":18.7883,"lng":98.9853,"label":null},"destination":null}
+        """.trimIndent()
+
+        val trip = JSONObject(payload).toTrip()
+
+        assertNotNull(trip.origin)
+        // A coordinate with no name still gets a pin; the screen supplies the
+        // word under it.
+        assertNull(trip.origin!!.label)
+        assertNull(trip.destination)
+    }
+
+    @Test
+    fun `a trip from a backend that predates the fields parses without them`() {
+        // The upgrade path, and the reason both default to null rather than
+        // being required.
+        val payload = """
+            {"id":1,"name":"Old","owner_id":1,"status":"active","role":"member"}
+        """.trimIndent()
+
+        val trip = JSONObject(payload).toTrip()
+
+        assertNull(trip.origin)
+        assertNull(trip.destination)
+        assertEquals("Old", trip.name)
+    }
+
+    @Test
+    fun `an endpoint missing half its coordinate is no endpoint at all`() {
+        // The server refuses to store one, so this is defence against a
+        // mangled response rather than a real state — but a pin drawn from it
+        // would land in the Gulf of Guinea.
+        assertNull(JSONObject("""{"lat":18.7,"label":"Half"}""").toTripEndpoint())
+        assertNull(JSONObject("""{"lng":98.9,"label":"Half"}""").toTripEndpoint())
+        assertNotNull(JSONObject("""{"lat":18.7,"lng":98.9}""").toTripEndpoint())
     }
 
     @Test
