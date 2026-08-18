@@ -54,7 +54,7 @@
     <string name="sharing_stop">หยุดแชร์</string>
     <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
     <string name="sharing_no_active_trips">ต้องมีทริปที่กำลังเดินทางก่อนถึงจะแชร์ได้ สร้างทริปใหม่ หรือเข้าร่วมทริปของเพื่อน</string>
-    <string name="location_permission_rationale">Tracktrip ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
+    <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
     <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>
     <string name="sharing_channel_name">การแชร์ตำแหน่ง</string>
