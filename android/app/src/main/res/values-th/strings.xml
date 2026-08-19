@@ -1,49 +1,108 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Thai strings — a starter set, not the full translation.
+  Thai strings — the whole app, not a starter set.
 
-  The language switch needs at least one translated locale to be worth
-  anything: with no values-th at all, choosing Thai changes the configuration
-  and nothing else, and there is no way to tell a working switch from a broken
-  one. So the strings a rider meets first are here, and the rest fall back to
-  values/strings.xml until the translation pass lands.
+  Every key in values/strings.xml is here except `app_name`, which is marked
+  translatable="false": the app is called PTrips in both languages, and a
+  launcher icon whose caption changes with the phone's language is a different
+  app as far as the person looking at it is concerned.
 
-  Anything not in this file is not missing by accident — Android falls back to
-  English per string, so adding a translation here is all it takes to switch
-  one over.
+  Android falls back per string, not per file, so a key missing from here
+  silently shows English — which is exactly how the switch came to look like a
+  stub that did nothing. It was never a stub: `AppLocale` has always applied
+  the locale. There was simply nothing translated behind most of the screens.
+  StringCoverageTest is what now keeps that from happening again.
+
+  Register: plain spoken Thai, the way a rider would say it to another rider.
+  No royal or bureaucratic forms, no transliterated English where an ordinary
+  Thai word exists. Words a Thai rider genuinely uses in English — GPS, QR,
+  Google — stay in English.
 -->
 <resources>
-    <!-- Navigation and the trip list -->
-    <string name="trips_title">ทริป</string>
+    <!-- Signing in -->
+    <string name="sign_in_with_google">เข้าสู่ระบบด้วย Google</string>
+    <string name="sign_out">ออกจากระบบ</string>
     <string name="signed_in">เข้าสู่ระบบแล้ว</string>
     <string name="signed_in_as">เข้าสู่ระบบเป็น %1$s</string>
+
+    <!-- Trip list -->
+    <string name="trips_title">ทริป</string>
+    <string name="invitations_title">คำเชิญ</string>
+    <string name="your_trips_title">ทริปของคุณ</string>
+    <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
     <string name="new_trip">ทริปใหม่</string>
     <string name="refresh">รีเฟรช</string>
-    <string name="your_trips_title">ทริปของคุณ</string>
-    <string name="invitations_title">คำเชิญ</string>
-    <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
     <string name="accept_invite">รับคำเชิญ</string>
+    <string name="invited_as">ถูกเชิญในชื่อ %1$s</string>
     <string name="untitled_trip">ทริปไม่มีชื่อ</string>
     <string name="status_active">กำลังเดินทาง</string>
     <string name="status_ended">จบแล้ว</string>
     <string name="role_owner">เจ้าของทริป</string>
     <string name="role_member">สมาชิก</string>
-    <string name="back">ย้อนกลับ</string>
+
+    <!-- Create trip -->
+    <string name="trip_name_label">ชื่อทริป</string>
+    <string name="create_trip">สร้าง</string>
     <string name="cancel">ยกเลิก</string>
+    <string name="back">ย้อนกลับ</string>
+
+    <!-- Trip detail -->
+    <string name="members_title">สมาชิก</string>
+    <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
+    <string name="invite_email_label">อีเมลบัญชี Google</string>
+    <string name="send_invite">เชิญ</string>
+    <string name="invite_sent_to">เชิญ %1$s แล้ว</string>
+    <string name="invite_hint">เขาจะเห็นคำเชิญในรายการทริปของตัวเองตอนเปิดแอปครั้งถัดไป ระบบไม่ได้ส่งอีเมลออกไป</string>
+    <string name="not_tracking_yet">ยังไม่ได้แชร์ตำแหน่ง</string>
+    <string name="start_sharing">เปิดแผนที่สด</string>
+    <string name="view_final_positions">ดูตำแหน่งสุดท้าย</string>
+    <string name="end_trip">จบทริปนี้</string>
+    <string name="end_trip_confirm">จบทริปเลยไหม? ทุกคนในกลุ่มจะหยุดแชร์ตำแหน่งทันที</string>
+    <string name="end_trip_yes">จบทริป</string>
 
     <!-- Settings -->
     <string name="settings_title">ตั้งค่า</string>
     <string name="settings_profile">โปรไฟล์</string>
     <string name="settings_language">ภาษา</string>
     <string name="language_system">ตามเครื่อง</string>
+    <!--
+      Language names stay in their own language in both files: someone looking
+      for English is looking for the word "English".
+    -->
+    <string name="language_thai">ไทย</string>
+    <string name="language_english">English</string>
     <string name="settings_sharing_duration">ระยะเวลาแชร์ตำแหน่งเริ่มต้น</string>
     <string name="duration_30_minutes">30 นาที</string>
     <string name="duration_1_hour">1 ชั่วโมง</string>
     <string name="duration_4_hours">4 ชั่วโมง</string>
     <string name="duration_until_stopped">จนกว่าจะกดหยุด</string>
-    <string name="sign_out">ออกจากระบบ</string>
     <string name="sign_out_confirm_title">ออกจากระบบ?</string>
     <string name="sign_out_confirm_message">ต้องเข้าสู่ระบบด้วย Google อีกครั้งถึงจะกลับมาดูทริปได้</string>
+
+    <!-- Battery optimisation -->
+    <string name="settings_battery">การใช้แบตเบื้องหลัง</string>
+    <string name="settings_battery_optimised">ถูกจำกัดอยู่</string>
+    <string name="settings_battery_unrestricted">ไม่ถูกจำกัด</string>
+    <string name="settings_battery_optimised_hint">Android อาจหน่วงแอปตอนอยู่เบื้องหลัง ทำให้ตำแหน่งของคุณส่งช้าระหว่างขี่ กดเพื่ออนุญาตให้ทำงานได้เต็มที่</string>
+    <string name="settings_battery_unrestricted_hint">Android จะปล่อยให้ PTrips ส่งตำแหน่งต่อได้แม้ปิดหน้าจอระหว่างขี่</string>
+
+    <!-- Profile -->
+    <string name="profile_title">โปรไฟล์</string>
+    <string name="profile_optional">ไม่ใส่ก็ได้</string>
+    <string name="profile_first_name">ชื่อ</string>
+    <string name="profile_last_name">นามสกุล</string>
+    <string name="profile_username">ชื่อผู้ใช้</string>
+    <string name="profile_username_hint">ใช้ตัวอักษร ตัวเลข ขีดล่าง และจุด</string>
+    <string name="profile_phone">เบอร์โทร</string>
+    <string name="profile_birth_date">วันเกิด</string>
+    <string name="profile_save">บันทึก</string>
+    <string name="profile_change_photo">แตะที่รูปเพื่อเปลี่ยน</string>
+    <string name="profile_image_unreadable">อ่านไฟล์นี้เป็นรูปภาพไม่ได้</string>
+    <string name="profile_level">ยศนักขี่</string>
+    <string name="profile_total_km">ระยะสะสม</string>
+    <string name="profile_km_value">%1$s กม.</string>
+    <string name="profile_level_next">อีก %1$s กม. ถึง %2$s</string>
+    <string name="profile_level_top">สูงสุดของตารางแล้ว ไม่มียศให้ไต่ต่อ</string>
 
     <!-- Location sharing -->
     <string name="settings_sharing">แชร์ตำแหน่ง</string>
@@ -53,14 +112,8 @@
     <string name="sharing_start">แชร์ตำแหน่งของฉัน</string>
     <string name="sharing_stop">หยุดแชร์</string>
     <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
+    <string name="sharing_until">ถึง %1$s</string>
     <string name="sharing_no_active_trips">ต้องมีทริปที่กำลังเดินทางก่อนถึงจะแชร์ได้ สร้างทริปใหม่ หรือเข้าร่วมทริปของเพื่อน</string>
-    <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
-    <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
-    <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>
-    <string name="sharing_channel_name">การแชร์ตำแหน่ง</string>
-    <string name="sharing_channel_description">แสดงระหว่างที่กำลังแชร์ตำแหน่งให้ทริป</string>
-    <string name="sharing_notification_title">กำลังแชร์ตำแหน่งของคุณ</string>
-    <string name="sharing_notification_stop">หยุด</string>
 
     <!-- Map -->
     <string name="map_title">แผนที่สด</string>
@@ -79,20 +132,61 @@
     <string name="map_destination">ปลายทาง</string>
     <string name="map_order_leader_first">เรียงจากคนนำ · ประมาณจากทิศทางกลุ่ม</string>
 
-    <!-- Profile -->
-    <string name="profile_title">โปรไฟล์</string>
-    <string name="profile_level">ยศนักขี่</string>
-    <string name="profile_total_km">ระยะสะสม</string>
-    <string name="profile_km_value">%1$s กม.</string>
-    <string name="profile_level_next">อีก %1$s กม. ถึง %2$s</string>
-    <string name="profile_level_top">สูงสุดของตารางแล้ว ไม่มียศให้ไต่ต่อ</string>
+    <!-- Placing a point by pressing and holding on the map -->
+    <string name="map_place_hint">กดค้างบนแผนที่เพื่อตั้งจุดเริ่ม ปลายทาง หรือหย่อนจุดแวะ</string>
+    <string name="map_place_title">ปักจุดบนแผนที่</string>
+    <string name="map_place_coordinates">%1$s, %2$s</string>
+    <string name="map_place_name">ชื่อจุด</string>
+    <string name="map_place_origin">ตั้งเป็นจุดเริ่ม</string>
+    <string name="map_place_destination">ตั้งเป็นปลายทาง</string>
+    <string name="map_place_waypoint">หย่อนจุดแวะตรงนี้</string>
+    <string name="map_remove_point_title">ลบจุดแวะนี้?</string>
+    <string name="map_remove_point_message">\"%1$s\" จะหายไปจากแผนที่ของทุกคน</string>
+    <string name="map_remove_point">ลบ</string>
 
-    <!-- Inviting -->
-    <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
+    <!-- Location permission -->
+    <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
+    <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
+    <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>
+
+    <!-- The tracking notification -->
+    <string name="sharing_channel_name">การแชร์ตำแหน่ง</string>
+    <string name="sharing_channel_description">แสดงระหว่างที่กำลังแชร์ตำแหน่งให้ทริป</string>
+    <string name="sharing_notification_title">กำลังแชร์ตำแหน่งของคุณ</string>
+    <!-- The trip's own name, passed straight through. -->
+    <string name="sharing_notification_text">%1$s</string>
+    <string name="sharing_notification_stop">หยุด</string>
+
+    <!-- Invitations and QR -->
     <string name="invite_suggestions">เคยร่วมทริปกันมาก่อน</string>
-    <string name="send_invite">เชิญ</string>
     <string name="qr_invite_action">เชิญด้วย QR</string>
-    <string name="invite_share_link">แชร์ลิงก์เชิญ</string>
+    <string name="qr_invite_title">เชิญด้วย QR</string>
+    <string name="qr_invite_intro">ให้คนที่อยู่ตรงหน้าสแกนโค้ดนี้ เข้าร่วมทริปได้เลยโดยไม่ต้องแลกอีเมลกัน</string>
+    <string name="qr_generate">สร้างโค้ด</string>
+    <string name="qr_generate_again">ขอโค้ดใหม่</string>
+    <string name="qr_expires_in">หมดอายุใน %1$s</string>
+    <string name="qr_expired">โค้ดนี้หมดอายุแล้ว</string>
+    <string name="qr_expired_short">หมดอายุ</string>
     <string name="qr_scan_title">สแกนเพื่อเข้าร่วม</string>
-    <string name="members_title">สมาชิก</string>
+    <string name="qr_scan_hint">เล็งกล้องไปที่โค้ดเชิญของทริป</string>
+    <string name="qr_camera_needed">การสแกนต้องใช้กล้อง</string>
+    <string name="qr_camera_denied">สิทธิ์กล้องถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android แล้วลองใหม่</string>
+    <string name="qr_camera_allow">อนุญาตให้ใช้กล้อง</string>
+    <string name="invite_share_link">แชร์ลิงก์เชิญ</string>
+    <string name="invite_share_subject">มาร่วมทริปของฉันบน PTrips</string>
+    <string name="invite_share_body">มาร่วมทริป \"%1$s\" ของฉันบน PTrips\n\nโค้ด: %2$s\nเปิด: %3$s\n\nโค้ดใช้ได้ 15 นาที</string>
+    <string name="invite_share_chooser">แชร์คำเชิญ</string>
+
+    <!-- Sign-in error messages -->
+    <string name="error_client_id_not_configured">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google: ใส่ web client ID ใน res/values/config.xml ก่อน</string>
+    <!--
+      Same care as the English: this deliberately does not say "ไม่มีบัญชี
+      Google ในเครื่อง". Credential Manager reports the same error whether
+      there is genuinely no account or Play Services declined to offer one,
+      and the second is far more common.
+    -->
+    <string name="error_no_credential">Google ไม่ได้เสนอบัญชีให้แอปนี้ ถ้าคุณล็อกอิน Google บนเครื่องนี้อยู่แล้ว เป็นไปได้ว่า package name และใบรับรองของบิลด์นี้ยังไม่ได้ลงทะเบียนในโปรเจกต์ Google Cloud</string>
+    <string name="error_cancelled_or_aborted">Google ปิดหน้าเข้าสู่ระบบไปโดยไม่ได้ส่งบัญชีกลับมา ถ้าคุณไม่ได้กดยกเลิกเอง เป็นไปได้ว่า package name และใบรับรองของบิลด์นี้ยังไม่ได้ลงทะเบียนในโปรเจกต์ Google Cloud ดูรายละเอียดได้ใน logcat แท็ก TracktripSignIn</string>
+    <string name="error_sign_in_failed">เข้าสู่ระบบด้วย Google ไม่สำเร็จ ลองใหม่อีกครั้ง</string>
+    <string name="error_unexpected_credential">ได้ข้อมูลรับรองชนิดที่ไม่คาดคิดจาก Google</string>
 </resources>

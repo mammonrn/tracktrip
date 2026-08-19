@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,6 +24,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -49,6 +53,7 @@ import app.ptrip.tracktrip.map.RiderMarker
 import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.map.WaypointMarker
+import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
@@ -56,20 +61,24 @@ import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.RankIcon
+import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
+import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudReadout
+import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
+import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 
 /**
@@ -83,9 +92,6 @@ import org.osmdroid.views.overlay.Marker
 data class MapFocus(val lat: Double, val lng: Double, val sequence: Int)
 
 private const val FOCUS_ZOOM = 16.0
-
-/** Margin left around the group when the camera is fitted to their bounding box. */
-private const val BOUNDS_PADDING_PX = 64
 
 /** How many frames to wait for the map to be measured before giving up on fitting. */
 private const val LAYOUT_WAIT_FRAMES = 120
@@ -118,10 +124,19 @@ fun TripMapScreen(
     mySpeedKmh: Int?,
     onRefresh: () -> Unit,
     onCenterOnMe: () -> Unit,
+    onPlace: (MapPlacement, LatLng, String) -> Unit,
+    onRemoveWaypoint: (Long) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf<Long?>(null) }
+
+    // A point pressed and held on the map, waiting for the rider to say what
+    // it is. Held here rather than in the view model: nothing has happened
+    // yet, and a half-finished gesture is not state the server needs to know
+    // about.
+    var placing by remember { mutableStateOf<LatLng?>(null) }
+    var removing by remember { mutableStateOf<Waypoint?>(null) }
     var focus by remember { mutableStateOf<MapFocus?>(null) }
     var sequence by remember { mutableIntStateOf(0) }
 
@@ -176,6 +191,21 @@ fun TripMapScreen(
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = { focused = it },
+                    onLongPress = { point ->
+                        // Nothing to offer means nothing to open: a member
+                        // looking at a finished ride can place neither end
+                        // nor a stop, and a dialog with no buttons is worse
+                        // than no dialog.
+                        if (placementsAllowed(state.trip).isNotEmpty()) placing = point
+                    },
+                    onWaypointTap = { waypoint ->
+                        val allowed = MapPlacementRules.canRemoveWaypoint(
+                            isOwner = state.trip?.isOwner == true,
+                            addedBy = waypoint.addedBy,
+                            currentUserId = currentUserId,
+                        )
+                        if (allowed && state.trip?.isActive == true) removing = waypoint
+                    },
                 )
 
                 HudIconButton(
@@ -204,6 +234,22 @@ fun TripMapScreen(
                         .fillMaxWidth(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
                 ) {
+                    // The long press is the only gesture on this screen with
+                    // nothing on the screen to suggest it, so the list says
+                    // so — and only to riders who can actually place
+                    // something, since to anyone else it would be an
+                    // instruction that does nothing.
+                    if (placementsAllowed(state.trip).isNotEmpty()) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.map_place_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppTextMuted,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+
                     if (state.orderedByProgress) {
                         item {
                             // The order is a guess from a heading, not a road
@@ -244,7 +290,129 @@ fun TripMapScreen(
             modifier = Modifier.align(Alignment.TopStart),
         )
     }
+
+    placing?.let { point ->
+        PlacePointDialog(
+            point = point,
+            options = placementsAllowed(state.trip),
+            onPlace = { placement, name ->
+                onPlace(placement, point, name)
+                placing = null
+            },
+            onDismiss = { placing = null },
+        )
+    }
+
+    removing?.let { waypoint ->
+        HudConfirmDialog(
+            title = stringResource(R.string.map_remove_point_title),
+            message = stringResource(R.string.map_remove_point_message, waypoint.name),
+            confirmText = stringResource(R.string.map_remove_point),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                onRemoveWaypoint(waypoint.id)
+                removing = null
+            },
+            onDismiss = { removing = null },
+        )
+    }
 }
+
+/** What this rider may place on this trip. Null trip means nothing yet. */
+private fun placementsAllowed(trip: Trip?): List<MapPlacement> {
+    if (trip == null) return emptyList()
+    return MapPlacementRules.allowed(isOwner = trip.isOwner, isTripActive = trip.isActive)
+}
+
+/**
+ * What to do with the point a rider just pressed and held on.
+ *
+ * One dialog for all three answers rather than a mode the rider has to enter
+ * first: the gesture is the same whichever they meant, and which of them are
+ * offered depends on whether they own the trip and whether it is still
+ * running — see [MapPlacementRules].
+ *
+ * The name field is the same field for all three, and only its rules differ:
+ * a stop must be named, an end of the trip need not be.
+ */
+@Composable
+private fun PlacePointDialog(
+    point: LatLng,
+    options: List<MapPlacement>,
+    onPlace: (MapPlacement, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.map_place_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(
+                        R.string.map_place_coordinates,
+                        formatCoordinate(point.lat),
+                        formatCoordinate(point.lng),
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = AppTextMuted,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { typed ->
+                        // Bounded by the longest field any of the buttons
+                        // could write to, so switching between them never
+                        // silently truncates what has been typed.
+                        if (typed.length <= MapPlacementRules.LABEL_MAX_LENGTH) name = typed
+                    },
+                    label = { Text(stringResource(R.string.map_place_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+                Column(modifier = Modifier.padding(top = 16.dp)) {
+                    options.forEach { placement ->
+                        HudPrimaryButton(
+                            text = stringResource(placement.labelRes),
+                            onClick = { onPlace(placement, name) },
+                            enabled = MapPlacementRules.isNameValid(placement, name),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        )
+                    }
+                }
+            }
+        },
+        // The choices are the buttons in the body — there is no single
+        // "confirm" here, because which button was pressed is the answer.
+        confirmButton = {},
+        dismissButton = {
+            HudSecondaryButton(text = stringResource(R.string.cancel), onClick = onDismiss)
+        },
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+    )
+}
+
+/** The label on the button that places this kind of point. */
+private val MapPlacement.labelRes: Int
+    get() = when (this) {
+        MapPlacement.ORIGIN -> R.string.map_place_origin
+        MapPlacement.DESTINATION -> R.string.map_place_destination
+        MapPlacement.WAYPOINT -> R.string.map_place_waypoint
+    }
+
+/**
+ * A coordinate, to five decimal places.
+ *
+ * About a metre at this latitude — enough to tell two ends of a car park
+ * apart, and short enough to read back to somebody over a phone. Locale-fixed
+ * so the decimal separator is a point on a Thai phone as well: this is a
+ * coordinate, not a quantity, and every map that could be pasted into expects
+ * one.
+ */
+private fun formatCoordinate(value: Double): String =
+    String.format(java.util.Locale.US, "%.5f", value)
 
 /**
  * The floating header: trip name, the way back, and this rider's own speed.
@@ -315,6 +483,8 @@ private fun RiderMap(
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
+    onLongPress: (LatLng) -> Unit,
+    onWaypointTap: (Waypoint) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -356,6 +526,36 @@ private fun RiderMap(
     val waypointMarkers = remember { mutableListOf<Marker>() }
     val endpointMarkers = remember { mutableListOf<Marker>() }
 
+    // Press and hold anywhere to place a point.
+    //
+    // Read through `rememberUpdatedState` because the overlay is attached to a
+    // map view that outlives recomposition: capturing the callback directly
+    // would leave the map for ever calling whichever one existed when it was
+    // first built.
+    val longPress by rememberUpdatedState(onLongPress)
+
+    // Same reason, one step removed: the waypoint markers are rebuilt only
+    // when the waypoints themselves change, so a listener that captured the
+    // callback directly would go on answering with whatever the trip looked
+    // like the last time a stop was added or removed.
+    val waypointTap by rememberUpdatedState(onWaypointTap)
+    DisposableEffect(mapView) {
+        val events = MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean = false
+
+            override fun longPressHelper(p: GeoPoint?): Boolean {
+                val point = p ?: return false
+                longPress(LatLng(point.latitude, point.longitude))
+                return true
+            }
+        })
+        // Bottom of the pile: osmdroid offers a gesture to the topmost overlay
+        // first, so pins and flags get their refusal in before a press counts
+        // as one on open map.
+        mapView.overlays.add(0, events)
+        onDispose { mapView.overlays.remove(events) }
+    }
+
     // The flags fall back to a word when the owner set a coordinate but no
     // name, which is what dropping one on the map gives you.
     val originFallback = stringResource(R.string.map_origin)
@@ -396,7 +596,7 @@ private fun RiderMap(
     // does not move, so there is never anything to slide, and there are few
     // enough of them that redrawing costs nothing.
     LaunchedEffect(waypoints) {
-        syncWaypoints(mapView, waypoints, waypointMarkers)
+        syncWaypoints(mapView, waypoints, waypointMarkers) { waypointTap(it) }
     }
 
     // The two ends of the trip. They change only when the owner edits them, so
@@ -419,10 +619,11 @@ private fun RiderMap(
         // panning an empty one.
         if (points.isEmpty() && (myLocation == null || framedOnMe)) return@LaunchedEffect
 
-        // zoomToBoundingBox needs a measured view; before layout it silently
-        // does nothing, which is a camera stuck on the fallback.
+        // Fitting needs a measured view: the zoom that frames a box depends
+        // on how many pixels there are to frame it in, and before layout
+        // there are none.
         var frames = 0
-        while (mapView.width == 0 && frames < LAYOUT_WAIT_FRAMES) {
+        while ((mapView.width == 0 || mapView.height == 0) && frames < LAYOUT_WAIT_FRAMES) {
             withFrameNanos { }
             frames += 1
         }
@@ -439,15 +640,21 @@ private fun RiderMap(
     }
 }
 
-/** Points the camera as [target] asks, fitting a box when there is one. */
+/**
+ * Points the camera as [target] asks, fitting a box when there is one.
+ *
+ * The fit is arithmetic this app owns ([fitZoom]) rather than a call to
+ * osmdroid's `zoomToBoundingBox`. That method adds a margin of its own to the
+ * box it is given and then rounds the zoom down a step, and since
+ * [initialCamera] already leaves a margin, the two compounded: the map opened
+ * on a view several times wider than the riders on it, and every rider's
+ * first act was to pinch in.
+ */
 private fun applyCamera(view: MapView, target: CameraTarget) {
     val bounds = target.bounds
     if (bounds != null) {
-        view.zoomToBoundingBox(
-            BoundingBox(bounds.north, bounds.east, bounds.south, bounds.west),
-            false,
-            BOUNDS_PADDING_PX,
-        )
+        view.controller.setZoom(fitZoom(bounds, view.width, view.height))
+        view.controller.setCenter(GeoPoint(target.centre.lat, target.centre.lng))
         return
     }
     view.controller.setZoom(target.zoom ?: SOLO_ZOOM)
@@ -517,6 +724,7 @@ private fun syncWaypoints(
     view: MapView,
     waypoints: List<Waypoint>,
     drawn: MutableList<Marker>,
+    onTap: (Waypoint) -> Unit,
 ) {
     drawn.forEach { view.overlays.remove(it) }
     drawn.clear()
@@ -527,9 +735,14 @@ private fun syncWaypoints(
             setAnchor(Marker.ANCHOR_CENTER, WaypointMarker.anchorV(view.resources))
             icon = WaypointMarker.forWaypoint(waypoint, view.resources)
             title = waypoint.name
-            // Tapping a stop does nothing: it is not a rider, so there is no
-            // row to highlight, and the name is already drawn on the pin.
-            setOnMarkerClickListener { _, _ -> true }
+            // A stop is not a rider, so there is no row to highlight and the
+            // name is already drawn on the pin. What a tap *is* good for is
+            // taking it away again; the screen decides whether this rider is
+            // allowed to, and says nothing if not.
+            setOnMarkerClickListener { _, _ ->
+                onTap(waypoint)
+                true
+            }
         }
         drawn.add(marker)
         view.overlays.add(marker)

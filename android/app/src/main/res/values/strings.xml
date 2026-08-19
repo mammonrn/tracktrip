@@ -90,6 +90,13 @@
     <string name="sharing_no_active_trips">Sharing needs a running trip. Create one, or join a friend\'s.</string>
     <string name="settings_sharing">Location sharing</string>
 
+    <!-- Battery optimisation -->
+    <string name="settings_battery">Background battery use</string>
+    <string name="settings_battery_optimised">Restricted</string>
+    <string name="settings_battery_unrestricted">Unrestricted</string>
+    <string name="settings_battery_optimised_hint">Android may slow this app down while it is in the background, which can hold up your position while you ride. Tap to allow it to run unrestricted.</string>
+    <string name="settings_battery_unrestricted_hint">Android will let PTrips keep reporting while you ride with the screen off.</string>
+
     <!-- Map -->
     <string name="map_title">Live map</string>
     <string name="map_riders_placed">%1$d of %2$d riders on the map</string>
@@ -104,8 +111,9 @@
     <string name="map_own_speed">Your speed</string>
     <!--
       How old a rider's last reported position is. Shown because positions
-      arrive every ten minutes by design: a pin that has not moved is usually
-      correct, and without this it is indistinguishable from a dead app.
+      arrive on a cadence rather than continuously: a pin that has not moved
+      is usually correct, and without this it is indistinguishable from a
+      dead app.
     -->
     <string name="map_fix_age_now">just now</string>
     <string name="map_fix_age_minutes">%1$d min ago</string>
@@ -118,6 +126,18 @@
     <string name="map_origin">Start</string>
     <string name="map_destination">Finish</string>
     <string name="map_order_leader_first">In front first · estimated from heading</string>
+
+    <!-- Placing a point by pressing and holding on the map -->
+    <string name="map_place_hint">Press and hold the map to set the start, the finish, or drop a stop.</string>
+    <string name="map_place_title">Place a point</string>
+    <string name="map_place_coordinates">%1$s, %2$s</string>
+    <string name="map_place_name">Name</string>
+    <string name="map_place_origin">Set as start</string>
+    <string name="map_place_destination">Set as finish</string>
+    <string name="map_place_waypoint">Drop a stop here</string>
+    <string name="map_remove_point_title">Remove this stop?</string>
+    <string name="map_remove_point_message">\"%1$s\" disappears from everyone\'s map.</string>
+    <string name="map_remove_point">Remove</string>
 
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>

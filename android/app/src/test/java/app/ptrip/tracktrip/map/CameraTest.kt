@@ -121,4 +121,118 @@ class CameraTest {
 
         assertTrue("Bangkok must not stretch the box", bounds.south > 18.0)
     }
+
+    // ---- turning a box into a zoom -------------------------------------
+    //
+    // A phone screen, in pixels. Everything below is expressed against it
+    // because a zoom means nothing without knowing what it has to fill.
+    private val screenWidth = 1080
+    private val screenHeight = 1920
+
+    @Test
+    fun `a group a few kilometres apart is framed at street level`() {
+        // Two riders 5 km apart: the answer has to be close enough to read
+        // the road they are on. This is the case that was wrong on the phone —
+        // it opened on the whole province.
+        val a = LatLng(18.7883, 98.9853)
+        val b = LatLng(18.8283, 99.0253)
+        val bounds = requireNotNull(initialCamera(listOf(a, b), null).bounds)
+
+        val zoom = fitZoom(bounds, screenWidth, screenHeight)
+
+        assertTrue("$zoom is too far out to read a street", zoom > 12.5)
+        assertTrue("$zoom is closer than the group's own span", zoom <= 15.5)
+    }
+
+    @Test
+    fun `the fitted box actually fits on the screen`() {
+        // The property that matters, stated directly: at the zoom this
+        // returns, the box has to be no wider and no taller than the view.
+        val bounds = requireNotNull(initialCamera(listOf(chiangMai, lampang), null).bounds)
+        val zoom = fitZoom(bounds, screenWidth, screenHeight)
+
+        val worldPx = 256.0 * Math.pow(2.0, zoom)
+        val boxWidthPx = worldPx * (bounds.east - bounds.west) / 360.0
+        val boxHeightPx = worldPx * mercatorSpan(bounds.north, bounds.south)
+
+        assertTrue("box is ${boxWidthPx}px wide in a ${screenWidth}px view", boxWidthPx <= screenWidth + 1)
+        assertTrue("box is ${boxHeightPx}px tall in a ${screenHeight}px view", boxHeightPx <= screenHeight + 1)
+    }
+
+    @Test
+    fun `the tighter axis decides`() {
+        // A convoy strung north to south fits on longitude easily and not at
+        // all on latitude. Taking the looser axis would run the leader off
+        // the top of the screen.
+        val tallBox = Bounds(north = 19.5, south = 18.0, east = 99.0, west = 98.99)
+        val zoom = fitZoom(tallBox, screenWidth, screenHeight)
+
+        val worldPx = 256.0 * Math.pow(2.0, zoom)
+        assertTrue(worldPx * mercatorSpan(tallBox.north, tallBox.south) <= screenHeight + 1)
+    }
+
+    @Test
+    fun `latitude is measured after projection, not in raw degrees`() {
+        // A degree of latitude takes more pixels the further from the equator
+        // the ride is. Fitting on degrees would frame an Arctic box as though
+        // it were an equatorial one and cut riders off the screen.
+        val equator = Bounds(north = 1.0, south = -1.0, east = 100.0, west = 99.0)
+        val arctic = Bounds(north = 71.0, south = 69.0, east = 100.0, west = 99.0)
+
+        assertTrue(
+            fitZoom(arctic, screenWidth, screenHeight) <
+                fitZoom(equator, screenWidth, screenHeight)
+        )
+    }
+
+    @Test
+    fun `an unmeasured view gets the fallback rather than an infinity`() {
+        // Before layout the view is 0 x 0, and "how many times does zero go
+        // into this box" is not a camera.
+        val bounds = requireNotNull(initialCamera(listOf(chiangMai, lampang), null).bounds)
+
+        assertEquals(FALLBACK_ZOOM, fitZoom(bounds, 0, 0), 0.0)
+        assertEquals(FALLBACK_ZOOM, fitZoom(bounds, 1080, 0), 0.0)
+    }
+
+    @Test
+    fun `fitting never zooms closer than the solo view`() {
+        // A box a few metres across — two phones on the same forecourt whose
+        // fixes differ by GPS noise. Without the ceiling this would frame the
+        // gap between them, which is a picture of tarmac.
+        val hair = Bounds(north = 18.78831, south = 18.78830, east = 98.98531, west = 98.98530)
+
+        assertEquals(15.5, fitZoom(hair, screenWidth, screenHeight), 0.0)
+    }
+
+    @Test
+    fun `one impossible coordinate cannot pull the camera off the planet`() {
+        // (0, 0) is a valid pair and a real bug's signature — a fix that
+        // never got a lock. Fitting it together with a rider in Thailand
+        // would show a hemisphere; the floor keeps the map a map.
+        val bounds = requireNotNull(initialCamera(listOf(chiangMai, LatLng(0.0, 0.0)), null).bounds)
+
+        assertTrue(fitZoom(bounds, screenWidth, screenHeight) >= 4.0)
+    }
+
+    @Test
+    fun `knowing nothing still opens on roads, not on a province`() {
+        // The camera for "nobody has reported and this phone has not said
+        // where it is". It cannot be street level — that would claim
+        // knowledge the app does not have — but at the old 12 the screen
+        // covered forty kilometres and had nothing legible on it.
+        val target = initialCamera(riders = emptyList(), myLocation = null)
+
+        assertEquals(FALLBACK_CENTRE, target.centre)
+        assertEquals(14.0, requireNotNull(target.zoom), 0.0)
+    }
+
+    /** The height of a latitude span as a fraction of the whole projected map. */
+    private fun mercatorSpan(north: Double, south: Double): Double {
+        fun y(lat: Double): Double {
+            val projected = Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(lat) / 2.0))
+            return (1.0 - projected / Math.PI) / 2.0
+        }
+        return Math.abs(y(north) - y(south))
+    }
 }

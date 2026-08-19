@@ -155,6 +155,14 @@ data class Waypoint(
     val lng: Double,
     val type: String,
     val orderIndex: Int?,
+    /**
+     * The rider who dropped it.
+     *
+     * Kept because it decides who may take it away again: the server allows
+     * the trip's owner or the member who added it, and a screen that offered
+     * "remove" to everyone would be handing out 403s.
+     */
+    val addedBy: Long? = null,
 ) {
     val isPlanned: Boolean get() = type == TYPE_PLANNED
 
@@ -324,6 +332,61 @@ class TripApi(private val client: ApiClient) {
     /** The trip's planned stops and live drops. */
     suspend fun waypoints(tripId: Long): TripWaypoints =
         JSONObject(client.get("/trips/$tripId/waypoints")).toTripWaypoints()
+
+    /**
+     * Sets where the trip starts, or clears it when [endpoint] is null.
+     *
+     * One end per call, deliberately. `PATCH /trips/:id` treats an absent
+     * field as "leave it alone" and an explicit null as "clear it", and that
+     * distinction is the reason it is a PATCH at all — sending both ends every
+     * time would make "name the destination" indistinguishable from "wipe the
+     * start". Owner-only on the server; the screen offers it to nobody else.
+     */
+    suspend fun setOrigin(tripId: Long, endpoint: TripEndpoint?): Trip =
+        patchEndpoint(tripId, "origin", endpoint)
+
+    /** Sets where the trip is going, or clears it. See [setOrigin]. */
+    suspend fun setDestination(tripId: Long, endpoint: TripEndpoint?): Trip =
+        patchEndpoint(tripId, "destination", endpoint)
+
+    private suspend fun patchEndpoint(tripId: Long, field: String, endpoint: TripEndpoint?): Trip {
+        val value = endpoint?.let {
+            JSONObject()
+                .put("lat", it.lat)
+                .put("lng", it.lng)
+                .put("label", it.label ?: JSONObject.NULL)
+        } ?: JSONObject.NULL
+        return JSONObject(client.patch("/trips/$tripId", JSONObject().put(field, value))).toTrip()
+    }
+
+    /**
+     * Drops a point on the trip.
+     *
+     * [orderIndex] belongs to a planned stop and only to one: the server
+     * refuses it on a live drop rather than ignoring it, because a live point
+     * has no place in a route nobody planned.
+     */
+    suspend fun addWaypoint(
+        tripId: Long,
+        name: String,
+        lat: Double,
+        lng: Double,
+        type: String,
+        orderIndex: Int? = null,
+    ): Waypoint {
+        val body = JSONObject()
+            .put("name", name)
+            .put("lat", lat)
+            .put("lng", lng)
+            .put("type", type)
+        orderIndex?.let { body.put("order_index", it) }
+        return JSONObject(client.post("/trips/$tripId/waypoints", body)).toWaypoint()
+    }
+
+    /** Removes a point. The server allows the trip owner or whoever added it. */
+    suspend fun deleteWaypoint(tripId: Long, waypointId: Long) {
+        client.delete("/trips/$tripId/waypoints/$waypointId")
+    }
 }
 
 internal inline fun <T> JSONArray.map(transform: (JSONObject) -> T): List<T> =
@@ -414,6 +477,7 @@ internal fun JSONObject.toWaypoint() = Waypoint(
     lng = optDouble("lng"),
     type = optStringOrNull("type") ?: Waypoint.TYPE_LIVE,
     orderIndex = optIntOrNull("order_index"),
+    addedBy = if (isNull("added_by")) null else optLong("added_by"),
 )
 
 internal fun JSONObject.toTripWaypoints() = TripWaypoints(

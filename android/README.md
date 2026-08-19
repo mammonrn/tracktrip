@@ -9,8 +9,12 @@ an invitation, and open a trip to invite riders by email, QR code or a shared
 link, see who's on it, and (as owner) end it. **Location sharing works**: a
 rider picks how long to share for and a foreground service reports their
 position every 45 seconds until it lapses, they stop it, or the trip ends.
-There is a settings screen for the profile, language, sharing defaults and
-per-trip sharing toggles, and signing out.
+On the map, pressing and holding places a point: the owner sets where the
+trip starts and where it is going, and anyone on it can drop a stop. There is
+a settings screen for the profile, language, sharing defaults, per-trip
+sharing toggles, background battery use, and signing out. **The app is fully
+translated into Thai** — `StringCoverageTest` fails the build if an English
+string arrives without one.
 
 Google sign-in is wired end to end — Credential Manager obtains a Google ID
 token, it's exchanged at the backend's `POST /auth/google`, and the returned
@@ -27,7 +31,7 @@ inline message rather than crashing.
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
 | Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
-| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions` |
+| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions`, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
@@ -156,10 +160,41 @@ and the theme has an AppCompat parent, and why the locale is applied in
 app/src/main/java/app/ptrip/tracktrip/TracktripApplication.kt) — before any
 activity exists, so there is nothing on screen to recreate.
 
-`values-th/strings.xml` is a **starter set**, not the full translation: the
-strings a rider meets first, so a working switch can be told from a broken one.
-Everything else falls back to English per string, so translating one is a
-matter of adding it to that file.
+`values-th/strings.xml` covers **every** translatable string. It did not
+always, and that is worth knowing about: Android falls back per *string*, not
+per file, so the untranslated majority quietly showed English and the switch
+looked like a stub that did nothing. It never was one — there was simply
+nothing behind most of the screens. [`StringCoverageTest`](
+app/src/test/java/app/ptrip/tracktrip/ui/StringCoverageTest.kt) now compares
+the two files on every build, and also checks that a translation has not
+dropped a `%1$s` on its way across.
+
+`app_name` is the one deliberate exception, marked `translatable="false"`: a
+launcher icon whose caption changes with the phone's language is, to the
+person looking at it, a different app.
+
+## Navigation and going back
+
+The back stack is a plain list of [`Screen`](
+app/src/main/java/app/ptrip/tracktrip/ui/Screen.kt) values, saved through
+`rememberSaveable` as one short token each. That saving is the point: Android
+rebuilds this activity for reasons that have nothing to do with the rider
+navigating — a language change is one of them, and it is one they make
+deliberately — and until it was saved, the history was rebuilt empty and
+dropped them on the trip list. Every screen except the trip list has a back
+control in its header, and the system back button is handled whenever there is
+history to go back through.
+
+## Battery
+
+The foreground service is what lets the app read location with the phone in a
+pocket, and it is not enough on its own: Doze and app-standby still throttle a
+backgrounded app, and a 45-second reporting loop quietly becomes a several-
+minute one. The app asks for Android's standard battery-optimisation exemption
+once, at the moment sharing first starts, and leaves a row in settings for
+anyone who said no or wants to check. What this does **not** cover is the
+extra layer some manufacturers add on top — that is a separate problem and is
+deliberately not attempted here.
 
 ## Session handling
 

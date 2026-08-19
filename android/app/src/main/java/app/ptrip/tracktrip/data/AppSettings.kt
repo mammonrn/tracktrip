@@ -47,10 +47,25 @@ class AppSettings(context: Context) {
         }
         set(value) = prefs.edit().putInt(KEY_SHARING_MINUTES, value ?: UNTIL_STOPPED).apply()
 
+    /**
+     * Whether the rider has already been shown Android's battery-exemption
+     * dialog.
+     *
+     * Asked once, at the moment sharing first starts, and never again from
+     * there: the system dialog is modal and a rider who said no meant it. The
+     * row in settings stays available for anyone who changes their mind, which
+     * is why this records "we asked" rather than "they said yes" — the answer
+     * itself is the system's to keep, and it can change outside the app.
+     */
+    var batteryExemptionAsked: Boolean
+        get() = prefs.getBoolean(KEY_BATTERY_ASKED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BATTERY_ASKED, value).apply()
+
     private companion object {
         const val FILE_NAME = "tracktrip-settings"
         const val KEY_LANGUAGE = "language_tag"
         const val KEY_SHARING_MINUTES = "default_sharing_minutes"
+        const val KEY_BATTERY_ASKED = "battery_exemption_asked"
 
         /** No value written yet. Not a duration anyone could choose. */
         const val ABSENT = -1
