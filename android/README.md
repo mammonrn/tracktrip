@@ -31,7 +31,7 @@ inline message rather than crashing.
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
 | Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
-| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions`, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId` |
+| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
@@ -185,6 +185,35 @@ dropped them on the trip list. Every screen except the trip list has a back
 control in its header, and the system back button is handled whenever there is
 history to go back through.
 
+## Live positions
+
+The map subscribes to the backend's WebSocket and folds each fix into the list
+as the server stores it, so a friend's pin moves the moment the server hears
+about it rather than on this phone's next poll.
+
+**The poll never stops.** It slows to two minutes while the socket is
+connected and returns to twenty seconds the moment it is not — see
+[`LiveCadence`](app/src/main/java/app/ptrip/tracktrip/data/LiveCadence.kt).
+That is not a fallback bolted on; it falls out of what the socket is. The
+socket carries a copy of data that is already stored and already readable over
+REST, so it adds nothing to the app's state and losing it cannot lose any. A
+rider who rides through a valley goes from instant to a-poll-behind and back,
+and is never told, because there is nothing they can do about it and nothing
+they need to.
+
+The reconciliation poll is not zero for a reason of its own: the socket
+delivers positions and nothing else — not somebody joining the trip, leaving
+it, or switching sharing off — so something has to notice those.
+
+Reconnection backs off from one second to thirty, doubling. A connection that
+worked and then dropped starts again at the shortest wait; one that never
+became usable keeps counting, so a phone with a stale token does not hammer a
+server that is refusing it.
+
+Reporting stays on REST. The foreground service posts on its own cadence and
+the server refuses positions over the socket outright — see the backend README
+for why one write path is worth keeping.
+
 ## Battery
 
 The foreground service is what lets the app read location with the phone in a
@@ -192,9 +221,19 @@ pocket, and it is not enough on its own: Doze and app-standby still throttle a
 backgrounded app, and a 45-second reporting loop quietly becomes a several-
 minute one. The app asks for Android's standard battery-optimisation exemption
 once, at the moment sharing first starts, and leaves a row in settings for
-anyone who said no or wants to check. What this does **not** cover is the
-extra layer some manufacturers add on top — that is a separate problem and is
-deliberately not attempted here.
+anyone who said no or wants to check. On top of that, Settings shows the
+**manufacturer's own** killer where there is one — Samsung's sleeping apps,
+Xiaomi's autostart, Oppo/Realme/Vivo's background permissions, OnePlus's deep
+optimisation, Huawei's app launch — because Android's exemption tells those
+layers nothing at all.
+
+That advice is **written out as a path to follow, not a deep link**. Intents
+that open those screens exist, but they are undocumented, differ across skin
+versions, and are removed without notice: a link that worked on MIUI 12 throws
+on 14, and the rider is left with a button that does nothing. A sentence naming
+the setting keeps working when the phone is updated. Phones close to stock are
+shown nothing extra — there is nothing to say, and a section that appeared
+everywhere with generic advice would teach riders to skip it.
 
 ## Session handling
 

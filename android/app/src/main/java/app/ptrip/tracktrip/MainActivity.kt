@@ -631,7 +631,9 @@ private fun tripMapViewModelFactory(
     tripId: Long,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { TripMapViewModel(tripId, container.tripApi, onSessionExpired) }
+    factoryOf {
+        TripMapViewModel(tripId, container.tripApi, container.positionSocket, onSessionExpired)
+    }
 
 private fun profileViewModelFactory(
     container: AppContainer,

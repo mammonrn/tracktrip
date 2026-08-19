@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.PositionSocket
 import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.Trip
@@ -35,6 +36,16 @@ data class TripMapUiState(
      * [RideOrder]) and presenting it silently would read as a fact.
      */
     val orderedByProgress: Boolean = false,
+    /**
+     * Whether the live feed is currently carrying updates.
+     *
+     * Read by the screen to choose its poll cadence, and by nothing else — it
+     * is deliberately not shown to a rider. A socket that has dropped means
+     * the map is a poll behind instead of instant, which is what the app did
+     * for its whole life until now; telling somebody on a motorcycle about it
+     * would be an alarm about a thing they cannot act on.
+     */
+    val live: Boolean = false,
     val error: String? = null,
 ) {
     /** The riders with a fix — the ones that can be drawn. */
@@ -67,11 +78,76 @@ internal val MemberPosition.latLng: LatLng?
 class TripMapViewModel(
     private val tripId: Long,
     private val tripApi: TripApi,
+    private val positionSocket: PositionSocket?,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
+    /**
+     * Folds live positions into the list as the server stores them.
+     *
+     * The socket is a shortcut, never the record: everything it carries is
+     * already stored and already readable by [refresh], so this loop can fail,
+     * stall, or never connect at all and the screen still works — a poll
+     * behind, which is exactly what it was before. That is why nothing here
+     * touches [TripMapUiState.error]: there is no failure worth reporting.
+     *
+     * Null when no socket is available — a preview, or a test.
+     */
+    private fun listenForPositions() {
+        val socket = positionSocket ?: return
+        viewModelScope.launch {
+            socket
+                .positions(tripId) { connected -> _uiState.update { it.copy(live = connected) } }
+                .collect { position -> applyLivePosition(position) }
+        }
+    }
+
+    /**
+     * Replaces one rider's row with a fresher fix.
+     *
+     * Only ever a replacement. A position for somebody who is not in the list
+     * is dropped rather than appended: the roster comes from the poll, which
+     * knows each member's name, photo and level, and a row built from a
+     * position frame alone would appear as a nameless pin until the next
+     * fetch. They join the map a poll later, which is the same moment they
+     * would have before.
+     *
+     * The order is left alone. Re-sorting the list under a rider's finger
+     * every time somebody moves would make it unusable; [refresh] re-orders on
+     * its own beat, which is slow enough to read.
+     */
+    private fun applyLivePosition(position: MemberPosition) {
+        _uiState.update { state ->
+            val index = state.members.indexOfFirst { it.userId == position.userId }
+            if (index < 0) return@update state
+
+            val existing = state.members[index]
+            // A socket can deliver out of order after a reconnection, and a
+            // phone flushing a backlog can produce two fixes a second apart.
+            // The newer one wins; an older one is not news.
+            if (existing.recordedAt != null &&
+                position.recordedAt != null &&
+                position.recordedAt < existing.recordedAt
+            ) {
+                return@update state
+            }
+
+            val members = state.members.toMutableList()
+            members[index] = position
+            state.copy(members = members)
+        }
+        rememberFixes(listOf(position))
+    }
+
     private val _uiState = MutableStateFlow(TripMapUiState())
     val uiState: StateFlow<TripMapUiState> = _uiState.asStateFlow()
+
+    // After the state it writes to, not before it: an initialiser block runs
+    // in declaration order, and one placed above `_uiState` would be starting
+    // a listener that writes to a field that does not exist yet.
+    init {
+        listenForPositions()
+    }
 
     /**
      * The last two *distinct* positions seen for each rider.
@@ -296,22 +372,5 @@ class TripMapViewModel(
 
     fun dismissError() {
         _uiState.update { it.copy(error = null) }
-    }
-
-    companion object {
-        /**
-         * How often the map re-reads positions.
-         *
-         * Faster than the 45s at which a phone *reports*, so a new position
-         * is on screen within about twenty seconds of the server having it
-         * rather than waiting out a full reporting cycle on top of it. Reads
-         * are not rate limited (see `POSITION_RATE_LIMIT` — the ceiling is on
-         * posts), and the payload is one row per member.
-         *
-         * Deliberately not equal to the reporting cadence: two timers of the
-         * same period drift into lockstep and the screen would spend most of
-         * its life showing a fix it is about to replace.
-         */
-        const val POLL_INTERVAL_MS = 20_000L
     }
 }

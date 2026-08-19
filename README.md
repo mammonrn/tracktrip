@@ -292,6 +292,66 @@ the same transaction: every sharing session on that trip is cleared. Nobody
 carries on past the end of a trip; a rider who wants to keep going starts a
 trip of their own. See [Sharing sessions](#sharing-sessions).
 
+### Live positions
+
+`GET /ws` upgrades to a WebSocket carrying positions as the server stores them.
+A rider watching the map used to find out about a friend on their own next
+poll, so the delay they experienced was the reporting cadence *plus* most of a
+polling one. This removes the second half.
+
+Authenticate with `Authorization: Bearer <accessToken>` on the upgrade request,
+or `?token=` for clients that cannot set headers (a browser cannot; the Android
+app can, and does — a token in a URL reaches access logs). An unauthenticated
+socket is closed with **4401**.
+
+Then, as JSON text frames:
+
+| Client sends | Server sends |
+|---|---|
+| `{"type":"subscribe","trip_id":N}` | `{"type":"subscribed","trip_id":N}` |
+| `{"type":"unsubscribe","trip_id":N}` | `{"type":"unsubscribed","trip_id":N}` |
+| `{"type":"ping"}` | `{"type":"pong"}` |
+| — | `{"type":"ready","user_id":N}` on connect |
+| — | `{"type":"position","trip_id":N,"position":{…}}` per stored fix |
+| — | `{"type":"error","error":"…"}` for anything refused |
+
+The `position` payload is exactly what `GET /trips/:id/positions` returns for
+one member, and it is **what the server stored** rather than what was
+submitted — a stale report that the position row refused is not announced,
+because announcing it would drag every watching map backwards while the
+database stayed right.
+
+Subscribing is checked against the same rule the HTTP routes use — membership,
+or the super-user role — through the same function (`readableTrip`), so the two
+cannot drift apart.
+
+**Positions are not accepted over the socket.** A frame of `{"type":"position"}`
+is refused with a message naming `POST /trips/:id/positions`. Writing a fix is
+not one write — it stores a position, refuses one that arrives out of order,
+records a breadcrumb, and credits lifetime distance under a rate limit sized
+against that distance being credited once. A second path into all of that is a
+second place to credit the same kilometre twice, and the first symptom would be
+a rider's level quietly inflating, which nobody reports as a bug. There is also
+nothing to gain: the phone reports from a foreground service on its own
+cadence, and the delay a rider *sees* is the screen refresh, which is the half
+this removes.
+
+**Abuse.** Every connection carries a token bucket of 60 messages a minute and
+may hold at most 8 subscriptions; exceeding either closes the socket with
+**4429** rather than answering, because replying "slow down" to a client in a
+loop is one more message for it to ignore. Frames over 4 KiB are refused before
+they are parsed. `POSITION_RATE_LIMIT` is untouched and still governs writes —
+it counts HTTP requests, and a socket is one request that never ends, so the
+two limits are for two different things.
+
+**Losing it costs nothing but immediacy.** The socket carries a copy of data
+that is already stored and already readable over REST; it adds nothing to the
+state, so a client whose connection drops loses none. The app keeps polling
+throughout — slowly while connected, at its usual rate when not — and
+reconnects underneath with a widening backoff. `createApp` takes the hub as an
+optional argument, so a server built without one behaves exactly as it did
+before sockets existed.
+
 ### Roles
 
 Two account-level roles, in `users.role` (migration `0010`): `user` and
@@ -420,7 +480,9 @@ still show where everyone ended up. Writes are gated **per rider** — see
 anything else, so a non-member gets `403` either way; ending a trip never
 makes it public.
 
-Clients poll `GET`; there is no push yet.
+Clients poll `GET` **and** may subscribe to a WebSocket for the same data as
+it is stored — see [Live positions](#live-positions). The poll is the record;
+the socket is a shortcut.
 
 - `POST /trips/:id/positions` — the caller reports their own position. Returns
   `200` with the stored position.
@@ -452,6 +514,28 @@ Clients poll `GET`; there is no push yet.
   behind one carrier NAT and would otherwise throttle each other. `GET` is
   not capped: the limit is derived from how often a rider reports, and the
   map screen refreshes on its own cadence (every 20 seconds).
+
+- `GET /trips/:id/positions/history` — **the trail**: one point per fix the
+  trip has accepted, oldest first, as `{ trip_id, truncated, points: [{ id,
+  user_id, lat, lng, recorded_at }] }`.
+
+  `GET /trips/:id/positions` answers *where is everyone now* from
+  `member_positions`, which holds one row per rider and is overwritten on
+  every report. This answers *where have they been*, from `position_history` —
+  a different question with a different shape, one row per fix.
+
+  Optional `user_id` (one rider's line rather than eight overlapping ones),
+  `since` (an ISO timestamp — fetch the trail once, then ask only for what has
+  been added), and `limit` (default 500, capped at 1000; an outrageous value is
+  clamped rather than refused). `truncated` says the server had more to give,
+  so a client can tell "that is the whole trail" from "that is as much as you
+  asked for" instead of drawing a line that stops in the middle of a road.
+
+  Only *accepted* fixes are recorded: a stale report is ignored by the position
+  row and by the trail alike, or a phone flushing a backlog would scribble over
+  a route that was already right. Reads stay open on an ended trip — looking at
+  where a group went is most of the point of having gone. Purged for ended
+  trips by the cleanup job after `HISTORY_RETENTION_DAYS`.
 
   **Older fixes are ignored.** A retry, or a phone flushing a backlog after
   losing signal, can deliver an old fix after a newer one; the stored row only

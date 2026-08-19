@@ -89,6 +89,14 @@
     <string name="settings_battery_unrestricted">ไม่ถูกจำกัด</string>
     <string name="settings_battery_optimised_hint">Android อาจหน่วงแอปตอนอยู่เบื้องหลัง ทำให้ตำแหน่งของคุณส่งช้าระหว่างขี่ กดเพื่ออนุญาตให้ทำงานได้เต็มที่</string>
     <string name="settings_battery_unrestricted_hint">Android จะปล่อยให้ PTrips ส่งตำแหน่งต่อได้แม้ปิดหน้าจอระหว่างขี่</string>
+    <string name="settings_battery_vendor_title">เครื่องของคุณมีการตั้งค่าเพิ่มอีกจุด</string>
+    <string name="settings_battery_vendor_samsung">Samsung มีระบบสั่งแอปให้หลับเองแยกจากของ Android ไปที่ ตั้งค่า › แบตเตอรี่ › ขีดจำกัดการใช้งานเบื้องหลัง แล้วเช็คว่า PTrips ไม่ได้อยู่ใน "แอปที่พักการทำงาน" หรือ "แอปที่พักการทำงานระดับลึก" ทางที่ชัวร์ที่สุดคือย้ายไปไว้ใน "แอปที่ไม่พักการทำงาน"</string>
+    <string name="settings_battery_vendor_xiaomi">เครื่อง Xiaomi จะปิดแอปที่ไม่ได้ตั้ง autostart ไว้ ไปที่ ตั้งค่า › แอป › จัดการแอป › PTrips เปิด "เริ่มทำงานอัตโนมัติ" แล้วในหน้าเดียวกันกด "ประหยัดแบตเตอรี่" เลือก "ไม่จำกัด"</string>
+    <string name="settings_battery_vendor_oppo">ไปที่ ตั้งค่า › แบตเตอรี่ › ตัวเลือกประหยัดพลังงาน (หรือ การจัดการแบตเตอรี่ของแอป) › PTrips แล้วอนุญาต "ทำงานเบื้องหลัง" และ "เริ่มทำงานอัตโนมัติ" ไม่งั้น ColorOS จะปิดแอปที่อยู่เบื้องหลังเอง</string>
+    <string name="settings_battery_vendor_realme">ไปที่ ตั้งค่า › แบตเตอรี่ › การจัดการแบตเตอรี่ของแอป › PTrips แล้วอนุญาต "ทำงานเบื้องหลัง" และ "เริ่มทำงานอัตโนมัติ" ไม่งั้น Realme UI จะปิดแอปที่อยู่เบื้องหลังเอง</string>
+    <string name="settings_battery_vendor_vivo">ไปที่ ตั้งค่า › แบตเตอรี่ › การจัดการการใช้พลังงานเบื้องหลัง › PTrips แล้วอนุญาตให้ทำงานเบื้องหลัง และเปิด "เริ่มทำงานอัตโนมัติ" ให้ PTrips ที่ ตั้งค่า › แอป ด้วย</string>
+    <string name="settings_battery_vendor_oneplus">ไปที่ ตั้งค่า › แบตเตอรี่ › การปรับแต่งแบตเตอรี่ › PTrips เลือก "ไม่ปรับแต่ง" ถ้าเป็น OxygenOS 12 ขึ้นไป ให้ปิด "Deep optimisation" กับ "Sleep standby optimisation" ในการตั้งค่าขั้นสูงด้วย</string>
+    <string name="settings_battery_vendor_huawei">ไปที่ ตั้งค่า › แบตเตอรี่ › การเปิดแอป ปิด "จัดการอัตโนมัติ" ของ PTrips แล้วอนุญาต "เปิดอัตโนมัติ", "เปิดโดยแอปอื่น" และ "ทำงานเบื้องหลัง"</string>
 
     <!-- Profile -->
     <string name="profile_title">โปรไฟล์</string>

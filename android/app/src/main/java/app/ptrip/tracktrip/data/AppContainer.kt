@@ -30,6 +30,15 @@ class AppContainer private constructor(context: Context) {
 
     val meApi: MeApi by lazy { MeApi(apiClient) }
 
+    /**
+     * The live position feed. One per process, like the API client: it holds
+     * an OkHttp client configured for long-lived connections, and a second
+     * copy would mean a second connection pool for no gain.
+     */
+    val positionSocket: PositionSocket by lazy {
+        PositionSocket(baseUrl = baseUrl, tokenStore = tokenStore)
+    }
+
     val authApi: AuthApi by lazy { AuthApi(baseUrl = baseUrl) }
 
     val settings: AppSettings by lazy { AppSettings(appContext) }

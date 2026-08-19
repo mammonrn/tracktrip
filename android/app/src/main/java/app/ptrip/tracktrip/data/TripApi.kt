@@ -194,6 +194,33 @@ data class TripWaypoints(
 }
 
 /**
+ * One point on a trip's trail.
+ *
+ * Deliberately smaller than [MemberPosition]: a line is drawn from
+ * coordinates, and a thousand of them carrying names, photos and sharing
+ * state would be a payload nobody reads.
+ */
+data class TrailPoint(
+    val id: Long,
+    val userId: Long,
+    val lat: Double,
+    val lng: Double,
+    val recordedAt: String?,
+)
+
+/**
+ * Where a trip has been, as `GET /trips/:id/positions/history` returns it.
+ *
+ * [truncated] says the server had more to give. Without it a map would draw a
+ * line stopping in the middle of a road with no way to tell that from the end
+ * of the ride.
+ */
+data class Trail(
+    val points: List<TrailPoint> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+/**
  * One rider's level, from GET /trips/:id/member-levels.
  *
  * Only the name and the lifetime total: the map lists a level beside a name,
@@ -400,6 +427,29 @@ class TripApi(private val client: ApiClient) {
         return JSONObject(client.post("/trips/$tripId/waypoints", body)).toWaypoint()
     }
 
+    /**
+     * Where a trip has been: one point per fix the server accepted.
+     *
+     * [sinceIso] asks only for what has been added since a point already held,
+     * which is what makes this usable while riding rather than a single large
+     * read at the start. [userId] narrows it to one rider — eight overlapping
+     * lines is rarely what anyone wants to look at.
+     */
+    suspend fun trail(
+        tripId: Long,
+        userId: Long? = null,
+        sinceIso: String? = null,
+        limit: Int? = null,
+    ): Trail {
+        val query = buildList {
+            userId?.let { add("user_id=$it") }
+            sinceIso?.let { add("since=" + java.net.URLEncoder.encode(it, "UTF-8")) }
+            limit?.let { add("limit=$it") }
+        }.joinToString("&")
+        val path = "/trips/$tripId/positions/history" + if (query.isEmpty()) "" else "?$query"
+        return JSONObject(client.get(path)).toTrail()
+    }
+
     /** Removes a point. The server allows the trip owner or whoever added it. */
     suspend fun deleteWaypoint(tripId: Long, waypointId: Long) {
         client.delete("/trips/$tripId/waypoints/$waypointId")
@@ -495,6 +545,19 @@ internal fun JSONObject.toWaypoint() = Waypoint(
     type = optStringOrNull("type") ?: Waypoint.TYPE_LIVE,
     orderIndex = optIntOrNull("order_index"),
     addedBy = if (isNull("added_by")) null else optLong("added_by"),
+)
+
+internal fun JSONObject.toTrail() = Trail(
+    points = optJSONArray("points")?.map { it.toTrailPoint() } ?: emptyList(),
+    truncated = optBoolean("truncated", false),
+)
+
+internal fun JSONObject.toTrailPoint() = TrailPoint(
+    id = optLong("id"),
+    userId = optLong("user_id"),
+    lat = optDouble("lat"),
+    lng = optDouble("lng"),
+    recordedAt = optStringOrNull("recorded_at"),
 )
 
 internal fun JSONObject.toTripWaypoints() = TripWaypoints(
