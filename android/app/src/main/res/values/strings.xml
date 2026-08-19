@@ -189,6 +189,16 @@
     <string name="map_search_placeholder">Town, road, petrol station…</string>
     <string name="map_search_empty">No place by that name.</string>
     <!--
+      The shortcut pinned above the results. Most points a rider places are
+      where they already are, and the phone has that coordinate already — no
+      typing, no waiting, and nothing taken out of the day's search quota.
+      The two unavailable cases are worded apart because one is a permission
+      the rider can grant and the other is a fix nobody can hurry.
+    -->
+    <string name="map_search_use_my_location">Use my current location</string>
+    <string name="map_search_location_no_permission">Location access is off, so there\'s no position to use.</string>
+    <string name="map_search_location_no_fix">Still looking for your position — give it a moment.</string>
+    <!--
       Why a search failed, worded from the cause rather than from the HTTP
       status. The generic wording for a 404 is "That's no longer there.",
       which on a search box reads as a place that has closed down — while what

@@ -562,6 +562,24 @@ private fun SignedInNavigation(
                 }
             }
 
+            /**
+             * Whether this app may read the phone's position.
+             *
+             * Re-read on the same beat as the speed rather than once when the
+             * screen opened: a rider who grants location from the Android
+             * settings while the map is in front of them — which is exactly
+             * what the "location access is off" line on the search panel
+             * invites — has to see that line go away without reopening the
+             * screen. The check is a cached lookup, not a binder round trip.
+             */
+            var hasLocationPermission by remember { mutableStateOf(false) }
+            LaunchedEffect(screen.tripId) {
+                while (true) {
+                    hasLocationPermission = LocationFix.hasPermission(context)
+                    delay(SPEED_TICK_MS)
+                }
+            }
+
             val searchState by mapViewModel.placeSearch.state.collectAsStateWithLifecycle()
 
             /**
@@ -607,6 +625,7 @@ private fun SignedInNavigation(
                 searchState = searchState,
                 onSearchQueryChanged = mapViewModel.placeSearch::onQueryChanged,
                 onSearchCleared = mapViewModel.placeSearch::clear,
+                hasLocationPermission = hasLocationPermission,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
                     if (LocationFix.hasPermission(context)) centreOnMe() else requestLocation()

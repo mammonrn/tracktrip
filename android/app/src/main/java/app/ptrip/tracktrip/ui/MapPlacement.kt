@@ -1,5 +1,7 @@
 package app.ptrip.tracktrip.ui
 
+import app.ptrip.tracktrip.map.LatLng
+
 /**
  * What a rider can put on the map by pressing and holding on it.
  *
@@ -99,4 +101,49 @@ object MapPlacementRules {
         if (addedBy == null || currentUserId == null) return false
         return addedBy == currentUserId
     }
+}
+
+/**
+ * Whether "use my current location" can be tapped, and why not when it cannot.
+ *
+ * A value rather than a boolean because the two ways it can be unavailable
+ * need different words and have different fixes: one is a permission the
+ * rider can grant, the other is a satellite fix nobody can hurry. Collapsing
+ * them into "disabled" would leave a grey row with no explanation, which is
+ * the thing that makes a rider tap it repeatedly.
+ */
+enum class CurrentLocation {
+    /** There is a fix. The shortcut places it. */
+    READY,
+
+    /** Location permission has not been granted, so there is nothing to read. */
+    NO_PERMISSION,
+
+    /**
+     * Permission is there and no fix has arrived yet — indoors, or the first
+     * few seconds after the screen opened. Worth waiting for; the live feed
+     * fills this in on its own.
+     */
+    NO_FIX,
+}
+
+/**
+ * When the shortcut works.
+ *
+ * Kept apart from the screen because the interesting part is the order of the
+ * checks: no permission is reported as no permission even though it also
+ * produces no fix, since telling a rider to wait for GPS when the app was
+ * never allowed to ask would be waiting for something that cannot arrive.
+ */
+object CurrentLocationRules {
+
+    fun state(hasPermission: Boolean, location: LatLng?): CurrentLocation = when {
+        !hasPermission -> CurrentLocation.NO_PERMISSION
+        location == null -> CurrentLocation.NO_FIX
+        else -> CurrentLocation.READY
+    }
+
+    /** Whether the row does anything when tapped. */
+    fun isUsable(hasPermission: Boolean, location: LatLng?): Boolean =
+        state(hasPermission, location) == CurrentLocation.READY
 }
