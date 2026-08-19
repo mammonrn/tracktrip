@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -30,11 +33,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.view.MotionEvent
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
@@ -42,7 +49,14 @@ import app.ptrip.tracktrip.data.LiveCadence
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.Waypoint
+import app.ptrip.tracktrip.map.Bounds
+import app.ptrip.tracktrip.map.CameraRules
 import app.ptrip.tracktrip.map.CameraTarget
+import app.ptrip.tracktrip.map.FOLLOW_ZOOM
+import app.ptrip.tracktrip.map.MapCamera
+import app.ptrip.tracktrip.map.RouteProgress
+import app.ptrip.tracktrip.map.boundsAround
+import app.ptrip.tracktrip.map.centre
 import app.ptrip.tracktrip.map.EndpointMarker
 import app.ptrip.tracktrip.map.FALLBACK_CENTRE
 import app.ptrip.tracktrip.map.FALLBACK_ZOOM
@@ -72,6 +86,7 @@ import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudReadout
+import app.ptrip.tracktrip.ui.theme.HudRouteIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
@@ -138,6 +153,15 @@ fun TripMapScreen(
      * different fixes.
      */
     lastReportedAtMillis: Long? = null,
+    /**
+     * Whether this phone is broadcasting on *this* trip.
+     *
+     * Decides who the camera belongs to when the screen opens: a rider who is
+     * sharing is the one going somewhere, so the map follows them the way a
+     * navigation app does. Anybody else — watching a ride they are not on —
+     * gets the framing this map has always used and keeps it.
+     */
+    isSharingThisTrip: Boolean = false,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -149,6 +173,26 @@ fun TripMapScreen(
     // about.
     var placing by remember { mutableStateOf<LatLng?>(null) }
     var removing by remember { mutableStateOf<Waypoint?>(null) }
+
+    // Who is driving the camera. See CameraRules — the rule that matters is
+    // that a drag always wins, and nothing takes the map back on its own.
+    var camera by remember(isSharingThisTrip) {
+        mutableStateOf(CameraRules.initial(isSharingThisTrip))
+    }
+    var overview by remember { mutableStateOf<MapOverview?>(null) }
+    var overviewSequence by remember { mutableIntStateOf(0) }
+
+    val destination = state.trip?.destination?.let { LatLng(it.lat, it.lng) }
+
+    // What "the whole journey" means: this rider, and the two ends of the trip
+    // if they have been set. Not the other riders — the overview answers "how
+    // far have I got", and a friend who set off from home three provinces away
+    // would blow the frame out to nothing useful.
+    val overviewPoints = listOfNotNull(
+        myLocation,
+        state.trip?.origin?.let { LatLng(it.lat, it.lng) },
+        destination,
+    )
     var focus by remember { mutableStateOf<MapFocus?>(null) }
     var sequence by remember { mutableIntStateOf(0) }
 
@@ -209,7 +253,14 @@ fun TripMapScreen(
                     trip = state.trip,
                     myLocation = myLocation,
                     focus = focus,
-                    onMarkerTap = { focused = it },
+                    onMarkerTap = {
+                        // Looking at somebody else is an explicit request, and
+                        // it wins over following: without this the camera
+                        // would snap back to this rider on their next fix, a
+                        // second or two after the tap.
+                        camera = MapCamera.FREE
+                        focused = it
+                    },
                     onLongPress = { point ->
                         // Nothing to offer means nothing to open: a member
                         // looking at a finished ride can place neither end
@@ -225,17 +276,81 @@ fun TripMapScreen(
                         )
                         if (allowed && state.trip?.isActive == true) removing = waypoint
                     },
+                    follow = myLocation.takeIf { CameraRules.followsPosition(camera) },
+                    overview = overview,
+                    onUserPan = { camera = CameraRules.afterPan() },
                 )
 
-                HudIconButton(
-                    onClick = onCenterOnMe,
-                    contentDescription = stringResource(R.string.map_center_on_me),
-                    icon = { HudPinIcon(tint = AppPrimary) },
+                // How far there is left to go, down the right-hand edge.
+                // Drawn only when there is something to measure — a trip with
+                // a destination, and a rider with a position to measure from.
+                RouteProgressBar(
+                    fraction = RouteProgress.fraction(
+                        origin = state.trip?.origin?.let { LatLng(it.lat, it.lng) },
+                        destination = destination,
+                        current = myLocation,
+                    ),
+                    remaining = RouteProgress.format(
+                        RouteProgress.remainingKm(destination, myLocation)
+                    ),
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(12.dp)
-                        .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 10.dp, top = 96.dp, bottom = 72.dp),
                 )
+
+                Column(
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    // The whole journey at once: this rider and both ends of
+                    // the trip. Its own control rather than the default,
+                    // because the default while riding is the road ahead —
+                    // and it is hidden entirely when there is no route to take
+                    // in, rather than sitting there doing nothing.
+                    if (overviewPoints.size >= 2) {
+                        HudIconButton(
+                            onClick = {
+                                overviewSequence += 1
+                                boundsAround(overviewPoints)?.let {
+                                    camera = MapCamera.OVERVIEW
+                                    overview = MapOverview(it, overviewSequence)
+                                }
+                            },
+                            contentDescription = stringResource(R.string.map_overview),
+                            icon = { HudRouteIcon(tint = AppPrimary) },
+                            modifier = Modifier
+                                .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                        )
+                    }
+
+                    HudIconButton(
+                        onClick = {
+                            // For a rider who is sharing, this means "follow
+                            // me again" — which the follow effect does on its
+                            // own the moment the camera says so, at the zoom
+                            // following uses. Calling onCenterOnMe as well
+                            // would animate to a different zoom first and
+                            // fight it.
+                            //
+                            // For everyone else, and for a rider whose phone
+                            // has not produced a position yet, it means the
+                            // thing it has always meant: go and find me.
+                            if (isSharingThisTrip && myLocation != null) {
+                                camera = MapCamera.FOLLOW
+                            } else {
+                                onCenterOnMe()
+                            }
+                        },
+                        contentDescription = stringResource(R.string.map_center_on_me),
+                        icon = {
+                            HudPinIcon(
+                                tint = if (camera == MapCamera.FOLLOW) AppPrimary else AppTextMuted
+                            )
+                        },
+                        modifier = Modifier
+                            .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                    )
+                }
             }
 
             HudDivider()
@@ -289,7 +404,12 @@ fun TripMapScreen(
                             fixAgeMinutes = FixAge.minutesAgo(member.recordedAt, nowMs),
                             isSelf = member.userId == currentUserId,
                             focused = member.userId == focused,
-                            onClick = { if (member.hasPosition) focused = member.userId },
+                            onClick = {
+                                if (member.hasPosition) {
+                                    camera = MapCamera.FREE
+                                    focused = member.userId
+                                }
+                            },
                         )
                     }
                 }
@@ -435,6 +555,107 @@ private fun formatCoordinate(value: Double): String =
     String.format(java.util.Locale.US, "%.5f", value)
 
 /**
+ * How far there is left to go, as a column down the edge of the map.
+ *
+ * Vertical because the map is the screen and a horizontal bar would take a
+ * band out of the middle of it; down the right because that is the hand that
+ * is already there. It fills from the bottom, which is the direction a rider
+ * reads a journey filling.
+ *
+ * Straight-line distance, and the label says so — the app has no routing
+ * engine and is not getting one to draw a bar. On a mountain road the number
+ * will read low, and a bar that claimed to know the road would be wrong by
+ * however much the road bends, and wrong confidently.
+ *
+ * Nothing is drawn at all without a destination and a position: an empty bar
+ * would be a claim that the rider has not started, which is a different and
+ * false statement from having nothing to measure.
+ */
+@Composable
+private fun RouteProgressBar(
+    fraction: Double?,
+    remaining: String?,
+    modifier: Modifier = Modifier,
+) {
+    if (fraction == null && remaining == null) return
+
+    // The bar slides rather than jumping between polls, for the same reason
+    // the pins do: a step is read as a glitch, a slide as movement.
+    val filled by animateFloatAsState(
+        targetValue = fraction?.toFloat() ?: 0f,
+        label = "route-progress",
+    )
+
+    Column(
+        modifier = modifier.width(PROGRESS_BAR_WIDTH),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        remaining?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = AppText,
+                modifier = Modifier
+                    .background(AppSurface.copy(alpha = 0.92f), CircleShape)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+
+        if (fraction != null) {
+            Canvas(
+                modifier = Modifier
+                    .width(PROGRESS_BAR_WIDTH)
+                    .weight(1f)
+            ) {
+                val x = size.width / 2f
+                val capRadius = size.width / 2f
+
+                drawLine(
+                    color = AppTextMuted.copy(alpha = 0.35f),
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = size.width,
+                    cap = StrokeCap.Round,
+                )
+                // Filled from the bottom: the rider is at the top of what they
+                // have done, with what is left above them.
+                drawLine(
+                    color = AppPrimary,
+                    start = Offset(x, size.height),
+                    end = Offset(x, size.height * (1f - filled)),
+                    strokeWidth = size.width,
+                    cap = StrokeCap.Round,
+                )
+                drawCircle(
+                    color = AppSurface,
+                    radius = capRadius,
+                    center = Offset(x, size.height * (1f - filled)),
+                )
+                drawCircle(
+                    color = AppPrimary,
+                    radius = capRadius * 0.7f,
+                    center = Offset(x, size.height * (1f - filled)),
+                )
+            }
+
+            Text(
+                text = stringResource(R.string.map_progress_straight_line),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .background(AppSurface.copy(alpha = 0.92f), CircleShape)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/** Wide enough to read as a bar, narrow enough not to be a column of map. */
+private val PROGRESS_BAR_WIDTH = 10.dp
+
+/**
  * The floating header: trip name, the way back, and this rider's own speed.
  *
  * Painted on a near-opaque plate because it sits over map tiles, which are
@@ -520,6 +741,12 @@ private fun RiderMap(
     onMarkerTap: (Long) -> Unit,
     onLongPress: (LatLng) -> Unit,
     onWaypointTap: (Waypoint) -> Unit,
+    /** Where to keep the camera, or null when nothing is following anything. */
+    follow: LatLng?,
+    /** A box to fit once, when the rider asks for the overview. */
+    overview: MapOverview?,
+    /** Called the moment a finger drags the map. */
+    onUserPan: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -673,7 +900,57 @@ private fun RiderMap(
         val target = focus ?: return@LaunchedEffect
         mapView.controller.animateTo(GeoPoint(target.lat, target.lng), FOCUS_ZOOM, null)
     }
+
+    // A finger on the map ends whatever the camera was doing.
+    //
+    // A touch listener rather than osmdroid's `onScroll`, which cannot tell a
+    // drag from the app's own `animateTo` — following would then cancel itself
+    // on the first position it moved to. `false` so the map still handles the
+    // gesture; this only watches.
+    val userPanned by rememberUpdatedState(onUserPan)
+    DisposableEffect(mapView) {
+        mapView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_MOVE) userPanned()
+            false
+        }
+        onDispose { mapView.setOnTouchListener(null) }
+    }
+
+    // Following. Animated rather than snapped, so the map reads as travelling
+    // with the rider rather than jumping under them, and only ever to a
+    // position the caller has decided should be followed.
+    LaunchedEffect(follow) {
+        val target = follow ?: return@LaunchedEffect
+        mapView.controller.animateTo(GeoPoint(target.lat, target.lng), FOLLOW_ZOOM, null)
+    }
+
+    // The overview, applied once per request. Keyed on the whole object, which
+    // carries a sequence number for exactly this reason: asking for the same
+    // overview twice has to move the camera twice, and two identical boxes are
+    // equal.
+    LaunchedEffect(overview) {
+        val requested = overview ?: return@LaunchedEffect
+        var frames = 0
+        while ((mapView.width == 0 || mapView.height == 0) && frames < LAYOUT_WAIT_FRAMES) {
+            withFrameNanos { }
+            frames += 1
+        }
+        mapView.controller.animateTo(
+            GeoPoint(requested.bounds.centre().lat, requested.bounds.centre().lng),
+            fitZoom(requested.bounds, mapView.width, mapView.height),
+            null,
+        )
+    }
 }
+
+/**
+ * A request to frame a box, with a sequence number so that asking twice for
+ * the same box moves the camera twice.
+ *
+ * The same shape and the same reason as [MapFocus]: a rider who has panned
+ * away and taps overview again expects it to work the second time.
+ */
+data class MapOverview(val bounds: Bounds, val sequence: Int)
 
 /**
  * Points the camera as [target] asks, fitting a box when there is one.

@@ -270,3 +270,36 @@ fun HudPowerIcon(
         iconLine(tint, at(0.5f, 0.14f), at(0.5f, 0.48f))
     }
 }
+
+/**
+ * The overview control: a winding route between two points.
+ *
+ * Deliberately not another pin — the button beside it is a pin, and two pins
+ * would be two controls that look like the same one. A road with an end at
+ * each side reads as "the whole way", which is what tapping it shows.
+ */
+@Composable
+fun HudRouteIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = AppPrimary,
+    iconSize: Dp = DEFAULT_ICON_SIZE,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val stroke = size.minDimension * 0.11f
+        val road = Path().apply {
+            moveTo(size.width * 0.22f, size.height * 0.74f)
+            cubicTo(
+                size.width * 0.55f, size.height * 0.74f,
+                size.width * 0.45f, size.height * 0.26f,
+                size.width * 0.78f, size.height * 0.26f,
+            )
+        }
+        drawPath(
+            path = road,
+            color = tint,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+        drawCircle(color = tint, radius = stroke * 1.15f, center = Offset(size.width * 0.22f, size.height * 0.74f))
+        drawCircle(color = tint, radius = stroke * 1.15f, center = Offset(size.width * 0.78f, size.height * 0.26f))
+    }
+}

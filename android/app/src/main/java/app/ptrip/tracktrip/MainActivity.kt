@@ -576,6 +576,7 @@ private fun SignedInNavigation(
                 lastReportedAtMillis = sharing
                     ?.takeIf { it.tripId == screen.tripId }
                     ?.lastReportedAtMillis,
+                isSharingThisTrip = sharing?.tripId == screen.tripId,
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
