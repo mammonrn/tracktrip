@@ -8,11 +8,11 @@ import java.time.format.DateTimeParseException
  *
  * ## Why the screen needs this at all
  *
- * A phone reports its position once every ten minutes — deliberately, it is
- * what keeps a battery alive for a day's ride. The map polls far more often
- * than that, so most refreshes bring back exactly the same coordinates, and a
- * pin that has not moved for three minutes is the *expected* picture rather
- * than a broken one.
+ * A phone reports its position on a fixed cadence, not continuously, so the
+ * map can be a cycle or two behind what a rider is actually doing — and if
+ * their phone is out of signal, considerably more. A pin that has not moved
+ * for a few minutes is usually a report that has not landed yet rather than a
+ * broken screen.
  *
  * Nothing on the screen said so. A rider watching their own pin sit still
  * while they rode had no way to tell "reported four minutes ago, next one due

@@ -93,7 +93,7 @@ class LocationSharingService : Service() {
     }
 
     /**
-     * The reporting loop: a fix roughly every ten minutes until the session
+     * The reporting loop: a fix every [REPORT_INTERVAL_MS] until the session
      * lapses, the trip ends, or the rider stops.
      */
     private suspend fun reportLoop(tripId: Long, expiresAtMillis: Long?) {
@@ -102,10 +102,13 @@ class LocationSharingService : Service() {
         while (true) {
             if (hasExpired(System.currentTimeMillis(), expiresAtMillis)) {
                 // The server would refuse the next report anyway; stopping
-                // here means the notification goes away on time rather than
-                // ten minutes late.
+                // here means the notification goes away on time rather than a
+                // cadence late.
                 break
             }
+
+            // The cycle is timed from here so the wait below can subtract it.
+            val startedAt = System.currentTimeMillis()
 
             val fix = currentLocation()
             if (fix != null) {
@@ -118,15 +121,19 @@ class LocationSharingService : Service() {
                 }
             }
 
-            val wait = nextDelayMillis(
-                nowMillis = System.currentTimeMillis(),
-                expiresAtMillis = expiresAtMillis,
-                intervalMillis = REPORT_INTERVAL_MS,
+            val now = System.currentTimeMillis()
+            // Only expiry ends the loop — a zero wait here means the fix took
+            // longer than one interval, which is a reason to go again at once,
+            // not a reason to stop sharing. The check at the top of the loop
+            // catches a session that has genuinely run out.
+            delay(
+                nextDelayMillis(
+                    nowMillis = now,
+                    expiresAtMillis = expiresAtMillis,
+                    intervalMillis = REPORT_INTERVAL_MS,
+                    elapsedMillis = now - startedAt,
+                )
             )
-            if (wait <= 0L) {
-                break
-            }
-            delay(wait)
         }
 
         stopSharing()
@@ -160,7 +167,7 @@ class LocationSharingService : Service() {
     } catch (e: ApiException) {
         // The server refuses a report once the trip has ended or the rider's
         // session is spent, and says which. Both mean stop; anything else —
-        // no signal, a 500 — is worth another go in ten minutes.
+        // no signal, a 500 — is worth another go on the next cycle.
         if (e.message?.contains("ended", ignoreCase = true) == true) {
             ReportOutcome.STOP
         } else {
@@ -268,11 +275,13 @@ class LocationSharingService : Service() {
         private const val EXTRA_EXPIRES_AT = "expires_at"
         private const val NO_EXPIRY = -1L
 
-        /** The cadence the backend's rate limit was sized for. */
-        internal const val REPORT_INTERVAL_MS = 10 * 60 * 1000L
-
-        /** How long to wait for a fix before giving up on this round. */
-        private const val FIX_TIMEOUT_MS = 60 * 1000L
+        /**
+         * The reporting cadence and its fix budget. Both live in
+         * [ReportCadence], which has no Android in it and can therefore be
+         * held to the backend's rate limit by a plain unit test.
+         */
+        internal const val REPORT_INTERVAL_MS = ReportCadence.INTERVAL_MS
+        private const val FIX_TIMEOUT_MS = ReportCadence.FIX_TIMEOUT_MS
 
         /**
          * Starts sharing on a trip. [expiresAtIso] is the server's own expiry

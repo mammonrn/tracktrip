@@ -35,11 +35,28 @@ fun parseExpiryMillis(iso: String?): Long? {
  * Normally the fixed cadence, but never past the expiry: a session with four
  * minutes left should end in four minutes, not sit through a full interval and
  * report once more after it has lapsed.
+ *
+ * [elapsedMillis] is how long the cycle that just finished took — acquiring a
+ * fix and posting it. It is subtracted, so the cadence is a **period** rather
+ * than a gap: reports land every `intervalMillis` whether the fix came back in
+ * one second or twenty. Sleeping the full interval *after* the work made the
+ * real spacing "interval plus however long the sky took", which nobody can
+ * predict and which no longer rounds to nothing now that the interval is
+ * counted in seconds rather than minutes.
+ *
+ * A cycle that overran its own interval returns 0 — go again now, already
+ * late. That is not a signal to stop; only [hasExpired] decides that.
  */
-fun nextDelayMillis(nowMillis: Long, expiresAtMillis: Long?, intervalMillis: Long): Long {
-    if (expiresAtMillis == null) return intervalMillis
+fun nextDelayMillis(
+    nowMillis: Long,
+    expiresAtMillis: Long?,
+    intervalMillis: Long,
+    elapsedMillis: Long = 0L,
+): Long {
+    val budget = (intervalMillis - elapsedMillis).coerceAtLeast(0L)
+    if (expiresAtMillis == null) return budget
     val remaining = expiresAtMillis - nowMillis
-    return remaining.coerceIn(0L, intervalMillis)
+    return remaining.coerceIn(0L, budget)
 }
 
 /** Whether a session with this expiry has run out at [nowMillis]. */

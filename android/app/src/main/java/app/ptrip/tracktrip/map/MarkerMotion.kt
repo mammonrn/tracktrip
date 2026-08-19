@@ -3,11 +3,10 @@ package app.ptrip.tracktrip.map
 /**
  * Sliding a pin from where a rider was to where they now are.
  *
- * Positions arrive about once every ten minutes — that cadence is deliberate,
- * it is what keeps a phone alive for a day's ride — so a pin that simply
- * repainted at the new coordinates would teleport across the screen with
- * nothing to say which pin went where. The slide is not decoration: it is the
- * only thing tying the old position to the new one.
+ * Positions arrive on a cadence rather than continuously, so a pin that simply
+ * repainted at the new coordinates would jump the whole distance covered since
+ * the last report with nothing to say which pin went where. The slide is not
+ * decoration: it is the only thing tying the old position to the new one.
  *
  * The interpolation is kept here, away from the map view, so it can be tested
  * without a device.

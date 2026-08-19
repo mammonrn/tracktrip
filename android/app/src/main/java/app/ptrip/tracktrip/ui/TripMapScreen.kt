@@ -103,11 +103,11 @@ private const val AGE_TICK_MS = 20_000L
  * by pin to read. The two halves are wired together: tapping a rider in the
  * list moves the map to them, and tapping their pin highlights their row.
  *
- * [myLocation] is this phone's own last known fix, used to open the camera
+ * [myLocation] is this phone's own position, used to open the camera
  * somewhere useful before anyone on the trip has reported. [mySpeedKmh] is
- * this rider's own speed, read from the device rather than from the server —
- * the poll is minutes old by design, and a speedometer that lags by minutes
- * is not a speedometer.
+ * this rider's own speed, read live from the device rather than from the
+ * server — a poll is a cadence behind by definition, and a speedometer that
+ * lags by a cadence is not a speedometer.
  */
 @Composable
 fun TripMapScreen(
@@ -153,8 +153,8 @@ fun TripMapScreen(
     }
 
     // The wall clock, re-read on its own beat. The ages on the rows have to
-    // keep counting up between polls — otherwise "4 min ago" would sit there
-    // for the forty-five seconds until the next fetch and then jump.
+    // keep counting up between polls — otherwise each one would sit still
+    // until the next fetch and then jump.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -675,9 +675,9 @@ private fun MemberMapRow(
                             else -> stringResource(R.string.sharing_on)
                         }
                     )
-                    // How old the fix is. Positions arrive every ten minutes by
-                    // design, so a pin that has not moved is usually correct —
-                    // without this the rider cannot tell that from a dead app.
+                    // How old the fix is. Positions arrive on a cadence, not
+                    // continuously, so a pin a cycle behind is normal — without
+                    // this the rider cannot tell that from a dead app.
                     fixAgeMinutes?.let { minutes ->
                         append(" · ")
                         append(

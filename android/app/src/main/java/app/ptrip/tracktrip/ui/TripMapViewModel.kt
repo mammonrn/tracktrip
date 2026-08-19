@@ -137,8 +137,8 @@ class TripMapViewModel(
     /**
      * Levels, fetched when the roster changes rather than on every poll.
      *
-     * A level moves after hundreds of kilometres; positions move every ten
-     * minutes. Refetching one with the other would double the requests this
+     * A level moves after hundreds of kilometres; positions move every 45
+     * seconds. Refetching one with the other would multiply the requests this
      * screen makes for a badge that is the same all afternoon.
      *
      * Its failure is swallowed on purpose: a missing badge is a row without a
@@ -211,12 +211,16 @@ class TripMapViewModel(
         /**
          * How often the map re-reads positions.
          *
-         * Slower than the ten minutes at which a phone *reports* its own
-         * position, because this is only a screen being refreshed — there is
-         * nothing newer to fetch most of the time. Fast enough that a rider
-         * watching the map sees a friend move within a minute of the server
-         * hearing about it.
+         * Faster than the 45s at which a phone *reports*, so a new position
+         * is on screen within about twenty seconds of the server having it
+         * rather than waiting out a full reporting cycle on top of it. Reads
+         * are not rate limited (see `POSITION_RATE_LIMIT` — the ceiling is on
+         * posts), and the payload is one row per member.
+         *
+         * Deliberately not equal to the reporting cadence: two timers of the
+         * same period drift into lockstep and the screen would spend most of
+         * its life showing a fix it is about to replace.
          */
-        const val POLL_INTERVAL_MS = 45_000L
+        const val POLL_INTERVAL_MS = 20_000L
     }
 }
