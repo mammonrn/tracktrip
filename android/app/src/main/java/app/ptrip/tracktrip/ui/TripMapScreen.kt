@@ -56,6 +56,7 @@ import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
+import app.ptrip.tracktrip.map.reportAgeMinutes
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
 import app.ptrip.tracktrip.ui.theme.AppSurface
