@@ -9,8 +9,8 @@ import org.junit.Test
  * How stale a rider's position is.
  *
  * The number itself is the whole feature: it is what tells a rider that a pin
- * which has not moved for three minutes is a phone reporting on its ten-minute
- * cadence rather than an app that has stopped working.
+ * which has not moved is a report that has not landed yet rather than an app
+ * that has stopped working.
  */
 class FixAgeTest {
 

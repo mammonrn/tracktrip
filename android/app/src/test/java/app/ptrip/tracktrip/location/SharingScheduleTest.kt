@@ -77,4 +77,56 @@ class SharingScheduleTest {
     }
 
     private fun now(): Long = 1_800_000_000_000L
+
+    @Test
+    fun `the cycle's own duration is subtracted, so the cadence is a period`() {
+        // The loop acquires a fix and posts it before sleeping. Sleeping the
+        // full interval afterwards made the real spacing "interval plus
+        // however long the sky took" — invisible at ten minutes, most of a
+        // cycle at forty-five seconds.
+        val interval = 45_000L
+
+        assertEquals(45_000L, nextDelayMillis(now(), null, interval, elapsedMillis = 0L))
+        assertEquals(40_000L, nextDelayMillis(now(), null, interval, elapsedMillis = 5_000L))
+        assertEquals(20_000L, nextDelayMillis(now(), null, interval, elapsedMillis = 25_000L))
+    }
+
+    @Test
+    fun `a cycle that overran its interval asks to go again at once`() {
+        // Zero here means "already late", not "stop" — only hasExpired ends
+        // the loop, which is why the service no longer breaks on a zero wait.
+        val interval = 45_000L
+
+        assertEquals(0L, nextDelayMillis(now(), null, interval, elapsedMillis = interval))
+        assertEquals(0L, nextDelayMillis(now(), null, interval, elapsedMillis = 90_000L))
+    }
+
+    @Test
+    fun `expiry still wins over the remaining budget`() {
+        val interval = 45_000L
+        val now = now()
+
+        // Ten seconds left and a cycle that took five: wait the ten, not the
+        // forty that the cadence alone would have asked for.
+        assertEquals(10_000L, nextDelayMillis(now, now + 10_000L, interval, elapsedMillis = 5_000L))
+        // And a budget smaller than what is left still caps the wait.
+        assertEquals(5_000L, nextDelayMillis(now, now + 30_000L, interval, elapsedMillis = 40_000L))
+    }
+
+    @Test
+    fun `omitting the elapsed time behaves exactly as before`() {
+        // Every existing caller passed three arguments; the default has to be
+        // a no-op or this change would have moved the cadence twice.
+        val interval = 60_000L
+        val now = now()
+
+        assertEquals(
+            nextDelayMillis(now, null, interval),
+            nextDelayMillis(now, null, interval, elapsedMillis = 0L),
+        )
+        assertEquals(
+            nextDelayMillis(now, now + 20_000L, interval),
+            nextDelayMillis(now, now + 20_000L, interval, elapsedMillis = 0L),
+        )
+    }
 }

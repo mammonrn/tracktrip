@@ -475,13 +475,15 @@ private fun SignedInNavigation(
              * The cached fix seeds it, so the camera has somewhere to open
              * instantly, and then the provider's own feed takes over. Reading
              * only the cache — which is what this did — meant reading a value
-             * that nothing refreshes: the sharing service takes one fix every
-             * ten minutes, so between reports the cache ages out and the
-             * speedometer fell back to a dash for minutes at a time.
+             * that nothing refreshes: the sharing service takes one fix per
+             * reporting cycle, so between reports the cache ages out and the
+             * speedometer fell back to a dash — and with sharing switched off
+             * nothing refreshes it at all.
              *
              * The live feed runs only while this screen is composed. The
-             * ten-minute *reporting* cadence is untouched: that one exists for
-             * a phone in a pocket, and this one for a rider watching the map.
+             * background *reporting* cadence is a separate budget: that one
+             * exists for a phone in a pocket, and this one for a rider
+             * watching the map.
              */
             var myFix by remember { mutableStateOf<android.location.Location?>(null) }
             LaunchedEffect(screen.tripId) {

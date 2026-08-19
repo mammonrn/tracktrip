@@ -116,18 +116,17 @@ object LocationFix {
  *
  * `LocationManager.getLastKnownLocation` is a **cache**, not a feed: it holds
  * whatever fix some app on the phone last asked for. Nothing on this phone
- * asks continuously — the sharing service takes a single fix every ten
- * minutes and goes back to sleep — so that cache is refreshed six times an
- * hour and is stale in between. Reading it on a timer produced a speedometer
- * that showed a real speed for a moment after each report and a dash for the
- * eight minutes that followed.
+ * asks continuously — the sharing service takes a single fix per reporting
+ * cycle and goes back to sleep — so that cache is only as fresh as the last
+ * cycle, and only while a rider is sharing at all. Reading it on a timer
+ * produced a speedometer that went blank between reports.
  *
  * This asks the provider for updates directly, so a screen that wants a live
  * reading gets one. It is deliberately **not** used by the reporting service:
- * that one still takes its one-shot fix every ten minutes, because it runs
- * with the phone in a pocket and the battery budget is the whole point. This
- * runs only while a screen is collecting it — the rider is looking at the
- * map — and stops the moment they leave.
+ * that one still takes a single one-shot fix per cycle, because it runs with
+ * the phone in a pocket and the battery budget is the whole point. This runs
+ * only while a screen is collecting it — the rider is looking at the map —
+ * and stops the moment they leave.
  */
 fun LocationFix.updates(
     context: Context,

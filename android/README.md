@@ -8,7 +8,7 @@ project.
 an invitation, and open a trip to invite riders by email, QR code or a shared
 link, see who's on it, and (as owner) end it. **Location sharing works**: a
 rider picks how long to share for and a foreground service reports their
-position every ten minutes until it lapses, they stop it, or the trip ends.
+position every 45 seconds until it lapses, they stop it, or the trip ends.
 There is a settings screen for the profile, language, sharing defaults and
 per-trip sharing toggles, and signing out.
 
@@ -92,7 +92,7 @@ than in each screen that offers it:
 Stopping runs the other way — service down first, then the server — so a
 failed network call still leaves the phone silent.
 
-The service reports every ten minutes via `LocationManager` (not Play
+The service reports every 45 seconds via `LocationManager` (not Play
 Services' fused provider: at that cadence the accuracy is not worth another
 dependency, and this keeps working on a phone whose Play Services are
 unhealthy, which is the phone that ends up on a mountain road). It stops

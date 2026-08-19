@@ -10,14 +10,16 @@ const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
 
 /**
- * A safety net, not a quota. The app reports a position about once every ten
- * minutes, so this leaves roughly a hundredfold headroom — enough that no
- * real rider will ever see it, while a client stuck in a retry loop stops
- * before it fills the database.
+ * A safety net, not a quota. The app reports a position every 45 seconds
+ * while a rider is sharing — 1.33 a minute — so this leaves roughly seven and
+ * a half times headroom: enough that no real rider will ever see it, while a
+ * client stuck in a retry loop stops before it fills the database.
  *
  * Deliberately loose: tightening it towards the real cadence would start
  * catching legitimate bursts (a phone flushing a backlog after losing
  * signal) for no benefit, since the stale-fix rule already discards those.
+ * If the app's cadence is ever taken below 6 seconds this ceiling has to move
+ * with it — ReportCadenceTest on the Android side fails first if it does.
  */
 export const POSITION_RATE_LIMIT = {
   windowMs: 60 * 1000,
