@@ -12,6 +12,20 @@ import path from 'node:path';
  */
 const defaultUploadsDir = path.join(os.homedir(), 'tracktrip', 'uploads');
 
+/**
+ * The accounts that get the super-user role, by email.
+ *
+ * A configured list rather than a database flag somebody sets by hand: the
+ * answer to "who can see every trip on this server?" should be one line in an
+ * environment file that a deploy can diff, not a row nobody remembers writing.
+ * `syncSuperuserRoles` reconciles the users table with it at every boot — see
+ * src/auth/roles.js for what that means when the list changes.
+ *
+ * Defaults to the first super user, so a fresh deploy is not locked out of its
+ * own admin surface before anyone has set the variable.
+ */
+const defaultSuperuserEmails = 'krongkrangrn@gmail.com';
+
 export const config = {
   host: process.env.HOST || '127.0.0.1',
   port: Number(process.env.PORT || 4100),
@@ -23,6 +37,10 @@ export const config = {
   dbPath: path.resolve(process.env.DB_PATH || './data/trip-tracker.db'),
   uploadsDir: path.resolve(process.env.UPLOADS_DIR || defaultUploadsDir),
   historyRetentionDays: Number(process.env.HISTORY_RETENTION_DAYS || 30),
+  superuserEmails: (process.env.SUPERUSER_EMAILS ?? defaultSuperuserEmails)
+    .split(',')
+    .map((email) => email.trim())
+    .filter(Boolean),
 };
 
 export default config;

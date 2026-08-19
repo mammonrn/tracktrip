@@ -20,9 +20,25 @@ data class UserProfile(
     val phone: String?,
     val birthDate: String?,
     val totalKm: Double,
+    /**
+     * What this account is on the server: `user` or `superuser`.
+     *
+     * Read only to decide what to *offer*. It is never a claim of trust —
+     * every route checks the database, so a client that told itself the wrong
+     * thing would get a 403 from the first request it made.
+     */
+    val role: String = ROLE_USER,
 ) {
     /** What to show when there is no name yet — never a blank line. */
     val label: String get() = riderLabel(username, displayName, email ?: "Rider $id")
+
+    /** Whether to offer the things only a super user can do. */
+    val isSuperuser: Boolean get() = role == ROLE_SUPERUSER
+
+    companion object {
+        const val ROLE_USER = "user"
+        const val ROLE_SUPERUSER = "superuser"
+    }
 }
 
 /**
@@ -117,4 +133,8 @@ internal fun JSONObject.toUserProfile() = UserProfile(
     phone = optStringOrNull("phone"),
     birthDate = optStringOrNull("birth_date"),
     totalKm = optDouble("total_km", 0.0),
+    // Defaulted rather than required: a build talking to a server from before
+    // roles existed should behave as though everyone is ordinary, which is
+    // what it was.
+    role = optStringOrNull("role") ?: UserProfile.ROLE_USER,
 )

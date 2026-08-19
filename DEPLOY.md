@@ -86,6 +86,7 @@ nano .env
 | `GOOGLE_CLIENT_ID` | Your Google OAuth client ID(s), comma-separated if you have more than one (e.g. web + Android). |
 | `DB_PATH` | Leave as `./data/trip-tracker.db` unless you have a reason to change it. |
 | `HISTORY_RETENTION_DAYS` | Leave as `30` unless told otherwise. |
+| `SUPERUSER_EMAILS` | Comma-separated emails that may see and manage every trip. The list is the authority — adding an address grants the role at the next restart, removing one takes it away. Leave unset to keep the built-in default. |
 
 Save and exit (`nano`: `Ctrl+O`, `Enter`, then `Ctrl+X`).
 

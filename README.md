@@ -151,6 +151,13 @@ accepting an emailed invite. All routes require
   `role = 'owner'` in the same transaction.
 - `GET /trips` — the caller's trips (owned **and** joined), newest first, each
   with the caller's own `role`.
+- `GET /trips?all=true` — **super users only**: every trip on the server, in
+  the same shape. Trips the caller is not on come back with
+  `role: "superuser"` — not `"owner"`, which would be a lie about a real
+  column, and not `null`, which every client would have to special-case. The
+  parameter is ignored for everyone else, who get their own trips rather than
+  a 403: it is a request for more, and the honest answer to it is everything
+  they are allowed to see. See [Roles](#roles).
 
 #### Where a trip starts and ends
 
@@ -284,6 +291,54 @@ Ending a trip also **stops location sharing for everyone in the group**, in
 the same transaction: every sharing session on that trip is cleared. Nobody
 carries on past the end of a trip; a rider who wants to keep going starts a
 trip of their own. See [Sharing sessions](#sharing-sessions).
+
+### Roles
+
+Two account-level roles, in `users.role` (migration `0010`): `user` and
+`superuser`. This is **not** `trip_members.role`, which is `owner`/`member` and
+says what somebody is on *one trip*. This says what they are on *this
+installation*, and the two never touch — promoting a super user does not
+rewrite anybody's membership, and a super user is not the owner of anybody's
+trips.
+
+One column rather than a roles/permissions/role_permissions triple, because
+there are two kinds of account and one privilege between them. Adding
+`moderator` later is one `CHECK` constraint and one branch; turning a column
+into a join table is a mechanical migration, and going the other way never
+gets done.
+
+**Who is one** is decided by `SUPERUSER_EMAILS`, not by a row somebody
+remembered to set. `syncSuperuserRoles` reconciles the column with that list
+at every boot *and* at every sign-in — the second matters because a fresh
+deploy's first super user has no account until the moment they first sign in.
+Removing an address from the list demotes them at the next restart, which is
+what makes revocation a one-line change with nothing left behind. An account
+with no email address is never touched in either direction.
+
+**What it allows** is a widening of checks that already exist, rather than a
+set of doors of its own:
+
+| | ordinary rider | super user |
+|---|---|---|
+| Read a trip they are on | ✓ | ✓ |
+| Read any trip (`GET /trips/:id/positions`, waypoints, member levels) | 403 | ✓ |
+| Owner-only edits on any trip (`PATCH /trips/:id`, invites, end trip) | 403 | ✓ |
+| `GET /trips` | own trips | own trips |
+| `GET /trips?all=true` | own trips | every trip |
+| **Report a position** to a trip they are not on | 403 | **403** |
+| **Start a sharing session** on a trip they are not on | 403 | **403** |
+
+The last two rows are the line the design turns on: **managing a trip is not
+riding on it**. `requireTripMembership` lets a super user through and leaves
+`req.membership` as `null` — deliberately, rather than synthesising a
+`trip_members` row, which would put them in rosters, in position lists, and in
+the distance credited to real riders. Routes where the caller acts *as a
+member* ask for one explicitly through `requireTripParticipation`, which has no
+bypass.
+
+`GET /me` reports the caller's own `role` so a client knows what to offer. It
+is never a claim of trust: every route checks the database, so a client that
+told itself the wrong thing gets a 403 from its first request.
 
 ### Invites
 
@@ -576,5 +631,6 @@ All variables are documented in `.env.example`:
 | `DB_PATH`                 | Path to the SQLite database file.                                          | `./data/trip-tracker.db`   |
 | `UPLOADS_DIR`             | Where uploaded avatars are written. Must be outside the repo (a deploy replaces the checkout) and must match the `root` in nginx's `location /uploads/` block. | `~/tracktrip/uploads` |
 | `HISTORY_RETENTION_DAYS`  | Days of `position_history` to keep for ended trips before cleanup deletes it. | `30`                     |
+| `SUPERUSER_EMAILS`        | Comma-separated emails granted the super-user role — see [Roles](#roles). The list is the authority: it is reconciled with `users.role` at every boot and sign-in, so removing an address revokes the role. | `krongkrangrn@gmail.com` |
 
 Never commit a real `.env` file — it's excluded via `.gitignore`.

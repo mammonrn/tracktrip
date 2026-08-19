@@ -15,6 +15,10 @@ import { isSharingOn } from '../trips/sharing.js';
  *
  * The same condition is reported as `is_sharing` on every position read, so
  * a client can always tell in advance whether a report would be accepted.
+ *
+ * Being *on* the trip is a separate question, asked by requireTripParticipation
+ * — a super user reaches this middleware without a membership, and reporting a
+ * position is participation rather than management.
  */
 export function requireSharingAllowed(db) {
   return (req, res, next) => {
