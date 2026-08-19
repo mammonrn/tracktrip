@@ -41,7 +41,7 @@ export function createAuthRouter({ db, config, verifyGoogleIdToken }) {
       return res.status(401).json({ error: 'invalid_id_token' });
     }
 
-    const user = upsertGoogleUser(db, profile);
+    const user = upsertGoogleUser(db, profile, new Date(), config.superuserEmails ?? []);
     const accessToken = signAccessToken(user.id, config.jwtSecret);
     const refreshToken = issueRefreshToken(db, user.id);
 

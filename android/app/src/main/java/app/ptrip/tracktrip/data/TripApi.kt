@@ -32,8 +32,16 @@ data class Trip(
     val isActive: Boolean get() = status == STATUS_ACTIVE
     val hasEnded: Boolean get() = !isActive
 
+    /**
+     * Whether this trip is only visible because of who the caller is, rather
+     * than because they are on it. The server says so with a role of its own
+     * — see `GET /trips?all=true`.
+     */
+    val isSuperuserView: Boolean get() = role == ROLE_SUPERUSER
+
     companion object {
         const val ROLE_OWNER = "owner"
+        const val ROLE_SUPERUSER = "superuser"
         const val STATUS_ACTIVE = "active"
     }
 }
@@ -237,8 +245,17 @@ data class LevelProgress(
  */
 class TripApi(private val client: ApiClient) {
 
-    suspend fun listTrips(): List<Trip> =
-        JSONArray(client.get("/trips")).map { it.toTrip() }
+    /**
+     * The rider's own trips, or — for a super user asking — every trip on the
+     * server.
+     *
+     * [all] is opt-in on purpose, and the server ignores it for anyone else: a
+     * super user is still a rider, and a list that silently grew to hold
+     * everybody else's rides would make their own app worse the day they were
+     * promoted.
+     */
+    suspend fun listTrips(all: Boolean = false): List<Trip> =
+        JSONArray(client.get(if (all) "/trips?all=true" else "/trips")).map { it.toTrip() }
 
     suspend fun createTrip(name: String): Trip =
         JSONObject(client.post("/trips", JSONObject().put("name", name))).toTrip()

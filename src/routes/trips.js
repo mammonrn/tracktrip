@@ -4,6 +4,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireTripOwner } from '../auth/tripOwnership.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
+import { ROLE_SUPERUSER, isSuperuser } from '../auth/roles.js';
 import { normalizeEmail } from '../trips/email.js';
 import {
   generateJoinCode,
@@ -217,7 +218,44 @@ export function createTripsRouter({ db, config }) {
     res.json(serializeTrip(updated, { role: 'owner' }));
   });
 
+  /**
+   * The caller's trips — or, for a super user asking with `?all=true`, every
+   * trip on the server.
+   *
+   * Opt-in rather than automatic, and that is the whole design of it. A super
+   * user is still a rider: they open the app to see the ride they are on, and
+   * a list that silently grew to hold everybody else's would make their own
+   * app worse the day they were promoted. The wider view is a thing they ask
+   * for.
+   *
+   * Trips they are not on come back with `role: 'superuser'`. Not 'owner',
+   * which would be a lie about a real column, and not null, which every client
+   * would have to special-case — a distinct value says exactly what the caller
+   * is to this trip: someone who can see it because of who they are, not
+   * because of anything on it.
+   */
   router.get('/trips', auth, (req, res) => {
+    const wantsAll = String(req.query.all).toLowerCase() === 'true';
+
+    if (wantsAll && isSuperuser(req.user)) {
+      const trips = db
+        .prepare(
+          `SELECT trips.*, trip_members.role AS role
+           FROM trips
+           LEFT JOIN trip_members
+             ON trip_members.trip_id = trips.id AND trip_members.user_id = ?
+           ORDER BY trips.created_at DESC, trips.id DESC`
+        )
+        .all(req.user.id);
+
+      return res.json(
+        trips.map((trip) => serializeTrip(trip, { role: trip.role ?? ROLE_SUPERUSER }))
+      );
+    }
+
+    // Asked for by somebody who is not a super user: answered with their own
+    // trips rather than a 403. The parameter is a request for more, and the
+    // honest answer to it is everything they are allowed to see.
     const trips = db
       .prepare(
         `SELECT trips.*, trip_members.role AS role

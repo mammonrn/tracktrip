@@ -20,6 +20,14 @@ data class TripsUiState(
     val error: String? = null,
     /** Id of the invite currently being accepted, so only its row shows a spinner. */
     val acceptingInviteId: Long? = null,
+    /**
+     * Whether [trips] is every trip on the server rather than this rider's.
+     *
+     * Only a super user can turn this on, and only the server decides whether
+     * it takes effect — asking for it as anyone else answers with their own
+     * trips, not with a refusal.
+     */
+    val showingAllTrips: Boolean = false,
 )
 
 /**
@@ -45,7 +53,8 @@ class TripsViewModel(
                 // Sequential rather than parallel: two small requests, and
                 // running them one after another keeps a single failure
                 // attributable to a single call.
-                val trips = tripApi.listTrips()
+                val all = _uiState.value.showingAllTrips
+                val trips = tripApi.listTrips(all = all)
                 val invites = tripApi.listInvites()
                 _uiState.update {
                     it.copy(loading = false, trips = trips, invites = invites, error = null)
@@ -68,7 +77,7 @@ class TripsViewModel(
                 tripApi.acceptInvite(invite.id)
                 // Re-read rather than patch the list locally: accepting also
                 // removes the invite, and the server is the authority on both.
-                val trips = tripApi.listTrips()
+                val trips = tripApi.listTrips(all = _uiState.value.showingAllTrips)
                 val invites = tripApi.listInvites()
                 _uiState.update {
                     it.copy(acceptingInviteId = null, trips = trips, invites = invites)
@@ -79,6 +88,19 @@ class TripsViewModel(
                 _uiState.update { it.copy(acceptingInviteId = null, error = e.message) }
             }
         }
+    }
+
+    /**
+     * Switches between "my trips" and "every trip", for a super user.
+     *
+     * The flag is set before the reload rather than after it, so the list that
+     * comes back is the one the toggle now claims to be showing — the two
+     * cannot disagree even for the moment the request is in flight.
+     */
+    fun setShowAllTrips(showAll: Boolean) {
+        if (_uiState.value.showingAllTrips == showAll) return
+        _uiState.update { it.copy(showingAllTrips = showAll) }
+        refresh()
     }
 
     fun dismissError() {

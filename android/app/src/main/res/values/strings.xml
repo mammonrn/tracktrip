@@ -10,6 +10,14 @@
     <!-- Trip list -->
     <string name="invitations_title">Invitations</string>
     <string name="your_trips_title">Your trips</string>
+    <!--
+      Only a super user ever sees these three: the wider list, the switch that
+      asks for it, and the switch back. See src/auth/roles.js.
+    -->
+    <string name="all_trips_title">All trips</string>
+    <string name="trips_show_all">Show every trip</string>
+    <string name="trips_show_mine">Show only mine</string>
+    <string name="no_trips_at_all">There are no trips on this server yet.</string>
     <string name="no_trips_yet">No trips yet. Create one, or wait to be invited.</string>
     <string name="new_trip">New trip</string>
     <string name="refresh">Refresh</string>

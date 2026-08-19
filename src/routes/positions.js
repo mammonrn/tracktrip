@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireSharingAllowed } from '../auth/sharingAllowed.js';
+import { requireTripParticipation } from '../auth/tripParticipation.js';
 import { countableDistanceKm } from '../trips/distance.js';
 import { isSharingOn } from '../trips/sharing.js';
 
@@ -233,7 +234,17 @@ export function createPositionsRouter({ db, config }) {
   // 27586b2.) Reads are left unlimited: the 10/minute figure is derived from
   // how often a rider *reports*, and a map screen refreshing on a different
   // cadence would otherwise be sharing that budget.
-  router.post('/trips/:id/positions', limitPositionReports, requireSharingAllowed(db), (req, res) => {
+  //
+  // requireTripParticipation is what keeps a super user out of this one: they
+  // pass the membership check without being on the trip, and a position from
+  // somebody who is not riding would be a phantom on everybody's map.
+  const reportGuards = [
+    limitPositionReports,
+    requireTripParticipation(),
+    requireSharingAllowed(db),
+  ];
+
+  router.post('/trips/:id/positions', reportGuards, (req, res) => {
     const { error, value } = validatePositionInput(req.body);
     if (error) {
       return res.status(400).json({ error });

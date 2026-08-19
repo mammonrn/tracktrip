@@ -29,6 +29,10 @@
     <string name="trips_title">ทริป</string>
     <string name="invitations_title">คำเชิญ</string>
     <string name="your_trips_title">ทริปของคุณ</string>
+    <string name="all_trips_title">ทริปทั้งหมด</string>
+    <string name="trips_show_all">ดูทริปทั้งหมด</string>
+    <string name="trips_show_mine">ดูเฉพาะของฉัน</string>
+    <string name="no_trips_at_all">ยังไม่มีทริปบนเซิร์ฟเวอร์นี้เลย</string>
     <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
     <string name="new_trip">ทริปใหม่</string>
     <string name="refresh">รีเฟรช</string>

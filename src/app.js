@@ -7,8 +7,14 @@ import { createInvitesRouter } from './routes/invites.js';
 import { createWaypointsRouter } from './routes/waypoints.js';
 import { createPositionsRouter } from './routes/positions.js';
 import { createSharingRouter } from './routes/sharing.js';
+import { syncSuperuserRoles } from './auth/roles.js';
 
 export function createApp({ db, config, verifyGoogleIdToken }) {
+  // Before the first request, so no route can be served by a process whose
+  // idea of who is a super user is older than its configuration. Cheap: one
+  // scan of a table that has as many rows as the app has riders.
+  syncSuperuserRoles(db, config.superuserEmails ?? []);
+
   const app = express();
   // nginx runs on the same host and connects over loopback, so trusting
   // only loopback addresses is enough for req.ip / X-Forwarded-For to

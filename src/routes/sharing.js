@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
+import { requireTripParticipation } from '../auth/tripParticipation.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
 import {
   expiryFor,
@@ -16,10 +17,15 @@ export function createSharingRouter({ db, config }) {
   // stops sharing for the whole group, and clears every session with it.
   // Starting or stopping on a finished trip would be writing state nothing
   // will ever read, so it is refused outright.
+  // requireTripParticipation as well as requireTripMembership: a sharing
+  // session is a rider saying where *they* are, which is taking part rather
+  // than managing, and a super user passes the membership check without being
+  // on the trip at all. See auth/tripParticipation.js.
   router.use(
     '/trips/:id/share',
     requireAuth(db, config),
     requireTripMembership(db),
+    requireTripParticipation(),
     requireActiveTrip()
   );
 

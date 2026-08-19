@@ -26,6 +26,7 @@ import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.HudChip
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudEmpty
 import app.ptrip.tracktrip.ui.theme.HudError
@@ -57,6 +58,14 @@ fun TripListScreen(
     onRefresh: () -> Unit,
     onScanQr: () -> Unit,
     onOpenSettings: () -> Unit,
+    /**
+     * Whether to offer the "every trip" switch. True only for a super user —
+     * and only as an offer: the server decides what the switch actually
+     * returns, so a build that got this wrong would simply show the rider
+     * their own trips under a wider heading.
+     */
+    isSuperuser: Boolean = false,
+    onShowAllTrips: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -116,15 +125,43 @@ fun TripListScreen(
 
             item {
                 HudSectionHeader(
-                    text = stringResource(R.string.your_trips_title),
+                    text = if (state.showingAllTrips) {
+                        stringResource(R.string.all_trips_title)
+                    } else {
+                        stringResource(R.string.your_trips_title)
+                    },
                     modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
                 )
+            }
+
+            // The one thing a super user can do that nobody else can, and the
+            // only place in the app that says so. Off by default every time
+            // the screen is built: being promoted should not change what this
+            // rider's own app opens on.
+            if (isSuperuser) {
+                item {
+                    HudChip(
+                        text = if (state.showingAllTrips) {
+                            stringResource(R.string.trips_show_mine)
+                        } else {
+                            stringResource(R.string.trips_show_all)
+                        },
+                        onClick = { onShowAllTrips(!state.showingAllTrips) },
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
             }
 
             when {
                 state.loading && state.trips.isEmpty() -> item { HudLoading() }
                 state.trips.isEmpty() -> item {
-                    HudEmpty(stringResource(R.string.no_trips_yet))
+                    HudEmpty(
+                        if (state.showingAllTrips) {
+                            stringResource(R.string.no_trips_at_all)
+                        } else {
+                            stringResource(R.string.no_trips_yet)
+                        }
+                    )
                 }
                 else -> items(state.trips, key = { "trip-${it.id}" }) { trip ->
                     TripCard(trip = trip, onClick = { onOpenTrip(trip) })

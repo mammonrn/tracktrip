@@ -285,6 +285,8 @@ private fun SignedInNavigation(
             onRefresh = tripsViewModel::refresh,
             onScanQr = { backStack.push(Screen.ScanQr) },
             onOpenSettings = { backStack.push(Screen.Settings) },
+            isSuperuser = profile?.isSuperuser == true,
+            onShowAllTrips = tripsViewModel::setShowAllTrips,
             modifier = modifier,
         )
 
