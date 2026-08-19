@@ -216,3 +216,49 @@ private fun mercatorY(latDegrees: Double): Double {
 
 /** Where Web Mercator stops, and where every slippy map cuts its tiles. */
 private const val MERCATOR_LIMIT_DEGREES = 85.05112878
+
+/**
+ * The zoom the camera follows a moving rider at.
+ *
+ * Closer than [SOLO_ZOOM], because this one is being read at speed: at 17 a
+ * phone screen covers a little over a kilometre, which is far enough to see
+ * the next junction coming and close enough that the road under the pin is
+ * the road the rider is on.
+ */
+const val FOLLOW_ZOOM = 17.0
+
+/**
+ * A box containing every point given, with the usual margin.
+ *
+ * The overview camera's half of [initialCamera]: same padding rule, but over
+ * whatever the caller thinks the journey is — this phone's position and the
+ * two ends of the trip — rather than over the riders.
+ *
+ * Null for fewer than two distinct points, because there is no box to fit: one
+ * point is a place, and framing it is [SOLO_ZOOM]'s job.
+ */
+fun boundsAround(points: List<LatLng>): Bounds? {
+    if (points.size < 2) return null
+
+    val north = points.maxOf { it.lat }
+    val south = points.minOf { it.lat }
+    val east = points.maxOf { it.lng }
+    val west = points.minOf { it.lng }
+
+    if (abs(north - south) < TIGHT_CLUSTER_DEGREES && abs(east - west) < TIGHT_CLUSTER_DEGREES) {
+        return null
+    }
+
+    val padLat = max(north - south, TIGHT_CLUSTER_DEGREES) * PADDING_FRACTION
+    val padLng = max(east - west, TIGHT_CLUSTER_DEGREES) * PADDING_FRACTION
+
+    return Bounds(
+        north = north + padLat,
+        south = south - padLat,
+        east = east + padLng,
+        west = west - padLng,
+    )
+}
+
+/** The centre of a box. Where the camera points once it has been fitted. */
+fun Bounds.centre(): LatLng = LatLng((north + south) / 2, (east + west) / 2)

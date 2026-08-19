@@ -124,6 +124,14 @@
     <string name="map_title">Live map</string>
     <string name="map_riders_placed">%1$d of %2$d riders on the map</string>
     <string name="map_center_on_me">Centre on me</string>
+    <!--
+      The overview control and the bar down the edge of the map. The bar's
+      caption says "straight line" because that is what it measures: the app
+      has no routing engine, and a bar that implied it knew the road would be
+      wrong by however much the road bends.
+    -->
+    <string name="map_overview">See the whole route</string>
+    <string name="map_progress_straight_line">direct</string>
     <string name="map_no_position">No position yet</string>
     <string name="map_last_seen">Last known position</string>
     <string name="map_you">%1$s (you)</string>
