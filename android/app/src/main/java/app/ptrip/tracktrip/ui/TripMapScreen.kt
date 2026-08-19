@@ -181,6 +181,17 @@ fun TripMapScreen(
     onSearchQueryChanged: (String) -> Unit = {},
     onSearchCleared: () -> Unit = {},
     /**
+     * Whether this app may read the phone's position at all.
+     *
+     * Passed in rather than checked here so the screen stays testable and so
+     * the answer is re-read on the same beat as everything else location —
+     * a permission granted from the Android settings while this screen is
+     * open has to take effect without it being reopened. Only used to word
+     * the "use my current location" row: [myLocation] being null is what
+     * actually disables it.
+     */
+    hasLocationPermission: Boolean = false,
+    /**
      * When this phone last had a report accepted, or null when it is not
      * sharing on this trip.
      *
@@ -515,6 +526,27 @@ fun TripMapScreen(
                         placing = PendingPlacement(LatLng(place.lat, place.lng), place.name)
                         searching = false
                     },
+                    myLocation = myLocation,
+                    hasLocationPermission = hasLocationPermission,
+                    onUseCurrentLocation = { here ->
+                        // The same ending as picking a search result — the
+                        // one dialog, with the same three buttons — so the
+                        // shortcut is a faster way to the existing flow
+                        // rather than a second flow to learn.
+                        //
+                        // No name is prefilled. "My location" as a label
+                        // would be a name a rider has to delete before typing
+                        // the one they meant, and it means nothing on the map
+                        // an hour later. The start and the finish take no
+                        // label at all; a stop still asks for one, exactly as
+                        // it does after a long press.
+                        sequence += 1
+                        camera = MapCamera.FREE
+                        focused = null
+                        focus = MapFocus(here.lat, here.lng, sequence)
+                        placing = PendingPlacement(here)
+                        searching = false
+                    },
                 )
             }
         }
@@ -575,6 +607,14 @@ private fun PlaceSearchPanel(
     onQueryChanged: (String) -> Unit,
     onClear: () -> Unit,
     onPick: (Place) -> Unit,
+    /**
+     * Where this phone is, and whether it was allowed to know — the two
+     * inputs to the shortcut pinned above the results. See
+     * [CurrentLocationRules].
+     */
+    myLocation: LatLng?,
+    hasLocationPermission: Boolean,
+    onUseCurrentLocation: (LatLng) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -618,8 +658,6 @@ private fun PlaceSearchPanel(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        if (!state.hasPanel) return@Column
-
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -627,6 +665,21 @@ private fun PlaceSearchPanel(
                 .background(AppSurface, AppSearchPanelShape)
                 .border(1.dp, AppLine, AppSearchPanelShape),
         ) {
+            // Pinned above everything, and there before a key is pressed:
+            // most points a rider places are where they already are, and
+            // making them type a name for the spot they are standing on — and
+            // then wait on a geocoder to hand back a coordinate the phone has
+            // had all along — is the long way round. Costs no request.
+            CurrentLocationRow(
+                location = myLocation,
+                hasPermission = hasLocationPermission,
+                onClick = onUseCurrentLocation,
+            )
+
+            if (!state.hasPanel) return@Column
+
+            HudDivider()
+
             state.problem?.let { problem ->
                 // Worded from the reason, not from the HTTP status. The
                 // status's own wording for a 404 is "That's no longer there.",
@@ -655,6 +708,79 @@ private fun PlaceSearchPanel(
                     PlaceSearchRow(place = place, onClick = { onPick(place) })
                 }
             }
+        }
+    }
+}
+
+/**
+ * "Use my current location", as the first row of the panel.
+ *
+ * Reads the fix the screen already holds rather than asking for a new one:
+ * the map is being driven by a live 1 Hz feed while it is open, so the
+ * coordinate under this row is the same one the rider's own dot is drawn at,
+ * and tapping is instant. Nothing is sent to LocationIQ, so nothing is taken
+ * out of the day's quota either.
+ *
+ * Offered for all three placements, not only the start. A rider who has
+ * stopped somewhere worth meeting at wants that spot as the finish or as a
+ * stop just as often as they want it as where they set off from.
+ *
+ * When it cannot be used it stays visible and says why, rather than
+ * disappearing: a row that is missing tells a rider nothing, and one that is
+ * greyed out with no reason gets tapped again and again.
+ */
+@Composable
+private fun CurrentLocationRow(
+    location: LatLng?,
+    hasPermission: Boolean,
+    onClick: (LatLng) -> Unit,
+) {
+    val state = CurrentLocationRules.state(hasPermission, location)
+    val usable = state == CurrentLocation.READY
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            // Only clickable when there is something to place. An enabled-
+            // looking row that does nothing reads as the app being broken.
+            .then(
+                if (usable && location != null) {
+                    Modifier.clickable { onClick(location) }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        HudPinIcon(tint = if (usable) AppPrimary else AppTextMuted)
+        Column(modifier = Modifier.padding(start = 10.dp)) {
+            Text(
+                text = stringResource(R.string.map_search_use_my_location),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (usable) AppText else AppTextMuted,
+            )
+            Text(
+                // The coordinate when there is one, so a rider can see what
+                // they are about to place before the dialog opens; the reason
+                // when there is not.
+                text = when (state) {
+                    CurrentLocation.READY -> stringResource(
+                        R.string.map_place_coordinates,
+                        formatCoordinate(location!!.lat),
+                        formatCoordinate(location.lng),
+                    )
+                    CurrentLocation.NO_PERMISSION ->
+                        stringResource(R.string.map_search_location_no_permission)
+                    CurrentLocation.NO_FIX ->
+                        stringResource(R.string.map_search_location_no_fix)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

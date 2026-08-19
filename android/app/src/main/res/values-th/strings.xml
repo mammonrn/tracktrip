@@ -165,6 +165,10 @@
     <string name="map_search_label">ค้นหาสถานที่</string>
     <string name="map_search_placeholder">อำเภอ ถนน ปั๊มน้ำมัน…</string>
     <string name="map_search_empty">ไม่พบสถานที่ชื่อนี้</string>
+    <!-- ปุ่มลัดด้านบนสุดของผลการค้นหา ใช้พิกัดที่เครื่องมีอยู่แล้ว ไม่กินโควตาค้นหา -->
+    <string name="map_search_use_my_location">ใช้ตำแหน่งปัจจุบัน</string>
+    <string name="map_search_location_no_permission">ยังไม่ได้อนุญาตให้เข้าถึงตำแหน่ง จึงยังไม่มีพิกัดให้ใช้</string>
+    <string name="map_search_location_no_fix">กำลังหาตำแหน่งของคุณอยู่ รอสักครู่</string>
     <!-- สาเหตุที่ค้นหาไม่สำเร็จ แยกตามสาเหตุจริง ไม่ใช่ตามรหัส HTTP -->
     <string name="map_search_not_deployed">เซิร์ฟเวอร์นี้ยังไม่มีระบบค้นหาสถานที่ — โค้ดฝั่งเซิร์ฟเวอร์เก่ากว่าแอป ลองใหม่ไม่ช่วย ต้องอัปเดตเซิร์ฟเวอร์ก่อน</string>
     <string name="map_search_not_configured">เซิร์ฟเวอร์นี้ยังไม่ได้เปิดใช้การค้นหาสถานที่ (ยังไม่ได้ตั้ง API key) กดค้างบนแผนที่ยังใช้ได้ตามปกติ</string>
