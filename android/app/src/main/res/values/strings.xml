@@ -104,6 +104,21 @@
     <string name="settings_battery_unrestricted">Unrestricted</string>
     <string name="settings_battery_optimised_hint">Android may slow this app down while it is in the background, which can hold up your position while you ride. Tap to allow it to run unrestricted.</string>
     <string name="settings_battery_unrestricted_hint">Android will let PTrips keep reporting while you ride with the screen off.</string>
+    <!--
+      The second battery killer, the one Android's own exemption does not
+      cover. Written as a path to follow rather than linked to: the intents
+      that open these screens are undocumented and change between skin
+      versions, so a button would work on one phone and throw on the next.
+      Each string uses the words that maker actually prints on the screen.
+    -->
+    <string name="settings_battery_vendor_title">Your phone has an extra setting</string>
+    <string name="settings_battery_vendor_samsung">Samsung puts unused apps to sleep on its own, separately from Android. Go to Settings › Battery › Background usage limits, and make sure PTrips is not in "Sleeping apps" or "Deep sleeping apps". Adding it to "Never sleeping apps" is the surest way.</string>
+    <string name="settings_battery_vendor_xiaomi">Xiaomi phones stop apps that are not set to autostart. Go to Settings › Apps › Manage apps › PTrips, turn on "Autostart", then open "Battery saver" on the same screen and choose "No restrictions".</string>
+    <string name="settings_battery_vendor_oppo">Go to Settings › Battery › Power saving options (or App battery management) › PTrips, and allow "Background running" and "Auto-launch". ColorOS stops background apps on its own otherwise.</string>
+    <string name="settings_battery_vendor_realme">Go to Settings › Battery › App battery management › PTrips, and allow "Background running" and "Auto-launch". Realme UI stops background apps on its own otherwise.</string>
+    <string name="settings_battery_vendor_vivo">Go to Settings › Battery › Background power consumption management › PTrips and allow it to run in the background. Also turn on "Auto-start" for PTrips under Settings › Apps.</string>
+    <string name="settings_battery_vendor_oneplus">Go to Settings › Battery › Battery optimisation › PTrips and choose "Don\'t optimise". On OxygenOS 12 and later, also turn off "Deep optimisation" and "Sleep standby optimisation" under Advanced settings.</string>
+    <string name="settings_battery_vendor_huawei">Go to Settings › Battery › App launch, turn off "Manage automatically" for PTrips, then allow "Auto-launch", "Secondary launch" and "Run in background".</string>
 
     <!-- Map -->
     <string name="map_title">Live map</string>

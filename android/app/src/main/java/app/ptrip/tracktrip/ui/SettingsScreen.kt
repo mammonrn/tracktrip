@@ -32,7 +32,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import android.os.Build
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.location.PhoneVendor
+import app.ptrip.tracktrip.location.VendorBatteryAdvice
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.ui.theme.AppLine
 import app.ptrip.tracktrip.ui.theme.AppOnPrimary
@@ -54,6 +57,26 @@ import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudPowerIcon
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
+
+/**
+ * The sentence to show this phone's owner about their manufacturer's own
+ * battery killer, or null when there is nothing extra to say.
+ *
+ * A written path rather than a deep link, deliberately — see
+ * [VendorBatteryAdvice] for why a button here would work on one skin version
+ * and throw on the next.
+ */
+private fun vendorAdviceRes(manufacturer: String?): Int? =
+    when (VendorBatteryAdvice.forManufacturer(manufacturer)) {
+        PhoneVendor.SAMSUNG -> R.string.settings_battery_vendor_samsung
+        PhoneVendor.XIAOMI -> R.string.settings_battery_vendor_xiaomi
+        PhoneVendor.OPPO -> R.string.settings_battery_vendor_oppo
+        PhoneVendor.REALME -> R.string.settings_battery_vendor_realme
+        PhoneVendor.VIVO -> R.string.settings_battery_vendor_vivo
+        PhoneVendor.ONEPLUS -> R.string.settings_battery_vendor_oneplus
+        PhoneVendor.HUAWEI -> R.string.settings_battery_vendor_huawei
+        PhoneVendor.OTHER -> null
+    }
 
 /** Which expandable row is open. Empty means none — only one opens at a time. */
 private const val SECTION_NONE = ""
@@ -191,6 +214,25 @@ fun SettingsScreen(
                 color = AppTextMuted,
                 modifier = Modifier.padding(bottom = 12.dp),
             )
+
+            // The manufacturer's own killer, which Android's exemption above
+            // does not touch. Shown on the phones that have one and on no
+            // others: a section that appeared on every phone with generic
+            // advice would teach riders to skip it.
+            vendorAdviceRes(Build.MANUFACTURER)?.let { adviceRes ->
+                Text(
+                    text = stringResource(R.string.settings_battery_vendor_title),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = AppText,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+                )
+                Text(
+                    text = stringResource(adviceRes),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppTextMuted,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
 
             HudDivider()
 

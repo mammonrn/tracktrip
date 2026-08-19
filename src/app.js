@@ -8,8 +8,16 @@ import { createWaypointsRouter } from './routes/waypoints.js';
 import { createPositionsRouter } from './routes/positions.js';
 import { createSharingRouter } from './routes/sharing.js';
 import { syncSuperuserRoles } from './auth/roles.js';
+import { noopHub } from './ws/hub.js';
 
-export function createApp({ db, config, verifyGoogleIdToken }) {
+/**
+ * [hub] is where a stored position is announced so that anyone watching that
+ * trip over a WebSocket sees it at once. Optional: without one the app behaves
+ * exactly as it did before sockets existed, which is what every test that does
+ * not care about them relies on, and what a deployment with the socket layer
+ * switched off would do.
+ */
+export function createApp({ db, config, verifyGoogleIdToken, hub = noopHub }) {
   // Before the first request, so no route can be served by a process whose
   // idea of who is a super user is older than its configuration. Cheap: one
   // scan of a table that has as many rows as the app has riders.
@@ -27,7 +35,7 @@ export function createApp({ db, config, verifyGoogleIdToken }) {
   app.use(createTripsRouter({ db, config }));
   app.use(createInvitesRouter({ db, config }));
   app.use(createWaypointsRouter({ db, config }));
-  app.use(createPositionsRouter({ db, config }));
+  app.use(createPositionsRouter({ db, config, hub }));
   app.use(createSharingRouter({ db, config }));
   return app;
 }

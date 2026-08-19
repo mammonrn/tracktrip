@@ -38,6 +38,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.data.LiveCadence
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.Waypoint
@@ -160,10 +161,17 @@ fun TripMapScreen(
 
     // Polling lives here rather than in the view model so it stops when the
     // map is no longer on screen.
-    LaunchedEffect(Unit) {
+    //
+    // It never stops while the map *is* on screen, even with the live feed
+    // connected. The socket carries what happens while it is listening; it
+    // says nothing about the second it spent reconnecting, and nothing about a
+    // member joining, leaving, or stopping sharing. This is the pass that
+    // makes those right — slow while the socket is doing the work, back to its
+    // usual rate the moment it is not. See LiveCadence.
+    LaunchedEffect(state.live) {
         while (true) {
             onRefresh()
-            delay(TripMapViewModel.POLL_INTERVAL_MS)
+            delay(LiveCadence.pollIntervalMs(state.live))
         }
     }
 

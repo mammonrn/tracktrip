@@ -70,8 +70,10 @@ class MarkerMotionTest {
     fun `the whole slide is over well inside one poll interval`() {
         // A pin still travelling when the next set of positions arrives would
         // be re-aimed mid-flight, and never settle anywhere true. The literal
-        // mirrors `TripMapViewModel.POLL_INTERVAL_MS`, which cannot be read
-        // here without dragging a ViewModel into a plain JVM test.
+        // mirrors `LiveCadence.POLL_MS` — the faster of the two cadences, and
+        // therefore the one the slide has to finish inside. The literal is
+        // here rather than the constant so this file stays free of anything
+        // that would need a device.
         assertTrue(MarkerMotion.DURATION_MS < 20_000L)
     }
 }
