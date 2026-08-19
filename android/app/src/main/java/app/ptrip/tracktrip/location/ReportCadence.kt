@@ -38,14 +38,29 @@ object ReportCadence {
     /**
      * How long to wait for a fix before giving up on this cycle.
      *
-     * Comfortably inside one interval. At the old ten-minute cadence a
-     * sixty-second wait was rounding error; at forty-five seconds it would be
-     * most of the cycle, and one fix taken under a bridge would push every
-     * later report off its beat. A warm receiver answers in a second or two,
-     * so this only bites when the sky is genuinely blocked — and then skipping
-     * to the next cycle beats blocking on it.
+     * ## This was 25 seconds, and 25 seconds was wrong
+     *
+     * It was shortened from sixty when the cadence went from ten minutes to
+     * forty-five seconds, out of a worry that a slow fix would push every
+     * later report off its beat. That worry was already answered, in the same
+     * change, by [nextDelayMillis] subtracting how long the
+     * cycle took — so a fix that takes fifty seconds delays *that* report and
+     * nothing after it. Shortening the budget as well did not protect the
+     * cadence; it only threw away fixes.
+     *
+     * And it threw away the ones that matter. A warm receiver answers in a
+     * second or two — those were never at risk. The fix that needs thirty or
+     * forty seconds is the cold one: a phone that has been in a tank bag with
+     * the screen off, which is precisely the phone this service exists for. At
+     * 25 seconds those cycles timed out and reported **nothing**, silently, and
+     * a rider's pin and speed sat unchanged on everybody's map while their
+     * phone insisted it was sharing.
+     *
+     * Fifty-five seconds: enough for a cold acquisition outdoors, and still
+     * short enough that a fix which is never coming does not hold a cycle past
+     * the next one.
      */
-    const val FIX_TIMEOUT_MS = 25_000L
+    const val FIX_TIMEOUT_MS = 55_000L
 
     /**
      * `POSITION_RATE_LIMIT.max` in `src/routes/positions.js`. Duplicated here

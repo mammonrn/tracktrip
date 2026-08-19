@@ -56,6 +56,7 @@ import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
+import app.ptrip.tracktrip.map.reportAgeMinutes
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
 import app.ptrip.tracktrip.ui.theme.AppSurface
@@ -127,6 +128,16 @@ fun TripMapScreen(
     onCenterOnMe: () -> Unit,
     onPlace: (MapPlacement, LatLng, String) -> Unit,
     onRemoveWaypoint: (Long) -> Unit,
+    /**
+     * When this phone last had a report accepted, or null when it is not
+     * sharing on this trip.
+     *
+     * On screen because its absence cost a ride: with the pins unchanging,
+     * there was no way to tell "my phone has stopped reporting" from "my phone
+     * is reporting and the map is not drawing it", and those need completely
+     * different fixes.
+     */
+    lastReportedAtMillis: Long? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -293,6 +304,7 @@ fun TripMapScreen(
                 state.members.size,
             ),
             speedKmh = mySpeedKmh,
+            reportAgeMinutes = FixAge.reportAgeMinutes(lastReportedAtMillis, nowMs),
             error = state.error,
             onBack = onBack,
             modifier = Modifier.align(Alignment.TopStart),
@@ -433,6 +445,7 @@ private fun MapOverlayBar(
     title: String,
     subtitle: String,
     speedKmh: Int?,
+    reportAgeMinutes: Long?,
     error: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -447,7 +460,21 @@ private fun MapOverlayBar(
             title = title,
             onBack = onBack,
             backContentDescription = stringResource(R.string.back),
-            subtitle = subtitle,
+            subtitle = buildString {
+                append(subtitle)
+                // Only while sharing: on a trip this phone is only watching,
+                // there is no report of its own to be late.
+                reportAgeMinutes?.let { minutes ->
+                    append(" · ")
+                    append(
+                        if (minutes < 1) {
+                            stringResource(R.string.map_reported_now)
+                        } else {
+                            stringResource(R.string.map_reported_minutes, minutes)
+                        }
+                    )
+                }
+            },
             trailing = {
                 HudReadout(
                     label = stringResource(R.string.map_own_speed),

@@ -85,7 +85,9 @@ enum class RiderRank(val apiName: String) {
  * an achievement.
  */
 private val RANK_TINT = mapOf(
-    RiderRank.NOVICE to Color(0xFF9AA0A6),
+    // Grey, but a readable one. The old 0xFF9AA0A6 against this app's
+    // off-white ground was pale enough that the whole badge read as disabled.
+    RiderRank.NOVICE to Color(0xFF6B7280),
     RiderRank.ROOKIE_RIDER to AppTextMuted,
     RiderRank.WANDERER to Color(0xFF6BA7F0),
     RiderRank.VOYAGER to Color(0xFF3B8AEA),
@@ -184,9 +186,26 @@ private fun DrawScope.badge(tint: Color, rank: RiderRank) {
     }
 }
 
-/** Novice: a single dot. The start of the road, and nothing else yet. */
+/**
+ * Novice: a milestone marker — a short post with a filled head.
+ *
+ * It was a single dot of 9% radius, in the palest grey of any rank, and at the
+ * sizes this is actually drawn that is a few pixels in the middle of a ring.
+ * Every rider starts here, so the first badge anybody ever sees read as an
+ * empty circle — reported, reasonably, as "the rank icon is missing".
+ *
+ * A mark rather than a bigger dot: the badge has to say *start of the road*
+ * next to seven others that say chevrons, wings and crowns, and it cannot do
+ * that by being a blob. Every rank's mark now fills a comparable share of its
+ * ring, so no badge looks like a rendering failure.
+ */
 private fun DrawScope.drawNovice(tint: Color) {
-    drawCircle(color = tint, radius = size.minDimension * 0.09f, center = center)
+    val post = Path().apply {
+        moveTo(size.width * 0.5f, size.height * 0.63f)
+        lineTo(size.width * 0.5f, size.height * 0.42f)
+    }
+    strokePath(tint, post)
+    drawCircle(color = tint, radius = size.minDimension * 0.13f, center = at(0.5f, 0.37f))
 }
 
 /** Rookie Rider: one chevron. The first step forward. */

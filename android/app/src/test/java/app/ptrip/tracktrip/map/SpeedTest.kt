@@ -59,10 +59,22 @@ class SpeedTest {
     }
 
     @Test
-    fun `a fix from the future is not trusted either`() {
-        // A device clock adjusted backwards makes the last fix look as if it
-        // were taken later than now.
-        assertNull(Speed.ownKmh(20f, fixAgeMs = -1))
+    fun `a fix stamped in the future is read as a fix from now`() {
+        // This is the ordinary case, not the exotic one. A GPS fix carries the
+        // satellites' clock, and the phone's own clock — set by the network —
+        // routinely runs a second or several behind it, so the age comes out
+        // negative on every fix until the phone catches up. Answering that
+        // with null was a permanent dash on the top bar of a phone that was
+        // reporting a real speed to everybody else's map.
+        assertEquals(72, Speed.ownKmh(20f, fixAgeMs = -1))
+        assertEquals(72, Speed.ownKmh(20f, fixAgeMs = -8_000))
+    }
+
+    @Test
+    fun `an old fix is still refused however the clocks disagree`() {
+        // The guard that matters is unchanged: a reading from half an hour ago
+        // presented as "now" is worse than showing nothing.
+        assertNull(Speed.ownKmh(20f, fixAgeMs = 30 * 60 * 1000L))
     }
 
     @Test

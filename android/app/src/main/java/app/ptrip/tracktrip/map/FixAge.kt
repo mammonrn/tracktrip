@@ -50,3 +50,24 @@ object FixAge {
         }
     }
 }
+
+/**
+ * Whole minutes since this phone last had a report accepted.
+ *
+ * The service has recorded this since it was written and nothing has ever
+ * shown it, which is why a ride where positions stopped landing was
+ * indistinguishable, from the rider's side, from one where they landed and the
+ * screen failed to draw them. The two need completely different fixes, and
+ * guessing between them cost a ride each time.
+ *
+ * Null when this phone is not sharing, or has not yet had a report accepted —
+ * in both cases there is no number, and inventing a zero would claim a
+ * successful report that never happened.
+ */
+fun FixAge.reportAgeMinutes(lastReportedAtMillis: Long?, nowMs: Long): Long? {
+    if (lastReportedAtMillis == null) return null
+    // Clamped for the same reason every other age in this app is: the two
+    // clocks involved need not agree, and a negative number on screen is
+    // nonsense where "just now" is the truth.
+    return ((nowMs - lastReportedAtMillis).coerceAtLeast(0L)) / 60_000L
+}

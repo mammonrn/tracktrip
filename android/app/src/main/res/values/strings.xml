@@ -133,6 +133,14 @@
     <string name="map_speed_unknown">—</string>
     <string name="map_own_speed">Your speed</string>
     <!--
+      When this phone last had a report accepted. Shown only while sharing.
+      The service has always recorded it and nothing showed it, which made a
+      ride where positions stopped landing look exactly like one where they
+      landed and the screen failed to draw them.
+    -->
+    <string name="map_reported_now">Sent just now</string>
+    <string name="map_reported_minutes">Sent %1$d min ago</string>
+    <!--
       How old a rider's last reported position is. Shown because positions
       arrive on a cadence rather than continuously: a pin that has not moved
       is usually correct, and without this it is indistinguishable from a

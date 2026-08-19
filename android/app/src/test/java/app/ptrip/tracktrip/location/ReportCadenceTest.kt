@@ -34,13 +34,28 @@ class ReportCadenceTest {
     }
 
     @Test
-    fun `a fix cannot be waited on for longer than the cycle it belongs to`() {
-        // If the timeout could exceed the interval, one fix under a bridge
-        // would swallow a whole cycle and every later report would run late.
+    fun `a fix that never arrives cannot hold a cycle past the next one`() {
+        // The bound that matters, and the only one. It used to be much
+        // tighter — 25s inside a 45s interval — on the theory that a slow fix
+        // would drag the cadence. It cannot: nextDelayMillis subtracts how
+        // long the cycle took, so a slow fix delays its own report and
+        // nothing after it. What the tight budget did instead was throw away
+        // cold fixes, which are the ones a phone in a tank bag produces, and
+        // report nothing at all on those cycles.
         assertTrue(
-            "fix timeout ${ReportCadence.FIX_TIMEOUT_MS} must leave room inside " +
-                "${ReportCadence.INTERVAL_MS}",
-            ReportCadence.FIX_TIMEOUT_MS < ReportCadence.INTERVAL_MS,
+            "fix timeout ${ReportCadence.FIX_TIMEOUT_MS} must not exceed two intervals",
+            ReportCadence.FIX_TIMEOUT_MS < ReportCadence.INTERVAL_MS * 2,
+        )
+    }
+
+    @Test
+    fun `the budget is long enough for a cold receiver`() {
+        // A warm receiver answers in a second or two and was never at risk.
+        // The fix worth protecting is the first one after the phone has been
+        // asleep in a bag, which routinely takes half a minute outdoors.
+        assertTrue(
+            "a cold fix needs more than ${ReportCadence.FIX_TIMEOUT_MS}ms",
+            ReportCadence.FIX_TIMEOUT_MS >= 45_000L,
         )
     }
 

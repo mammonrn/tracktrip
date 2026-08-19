@@ -138,6 +138,8 @@
     <string name="map_speed_kmh">%1$d กม./ชม.</string>
     <string name="map_speed_unknown">—</string>
     <string name="map_own_speed">ความเร็วคุณ</string>
+    <string name="map_reported_now">ส่งเมื่อสักครู่</string>
+    <string name="map_reported_minutes">ส่งเมื่อ %1$d นาทีที่แล้ว</string>
     <string name="map_fix_age_now">เมื่อสักครู่</string>
     <string name="map_fix_age_minutes">%1$d นาทีที่แล้ว</string>
     <string name="map_origin">จุดเริ่ม</string>
