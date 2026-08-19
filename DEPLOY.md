@@ -87,6 +87,8 @@ nano .env
 | `DB_PATH` | Leave as `./data/trip-tracker.db` unless you have a reason to change it. |
 | `HISTORY_RETENTION_DAYS` | Leave as `30` unless told otherwise. |
 | `SUPERUSER_EMAILS` | Comma-separated emails that may see and manage every trip. The list is the authority — adding an address grants the role at the next restart, removing one takes it away. Leave unset to keep the built-in default. |
+| `LOCATIONIQ_API_KEY` | The access token from <https://my.locationiq.com/dashboard>, which powers the map's place search. **Leave it empty if you don't have one yet** — the server starts fine, place search answers 503 saying it isn't configured, and everything else works. See [Turning on place search](#turning-on-place-search) for filling it in later. |
+| `LOCATIONIQ_COUNTRY_CODES` | Optional. Comma-separated ISO country codes to bias results towards, e.g. `th`. Leave empty to search worldwide. |
 
 Save and exit (`nano`: `Ctrl+O`, `Enter`, then `Ctrl+X`).
 
@@ -238,6 +240,69 @@ pm2 logs tracktrip-api --lines 50
 sudo nginx -t
 sudo journalctl -u nginx -n 50 --no-pager
 ```
+
+---
+
+## Turning on place search
+
+Place search — typing "Pai" instead of hunting for it on the map — runs on
+LocationIQ, and needs an access token this server holds. Until it has one,
+the search answers `503 Place search is not configured on this server.` and
+riders place points by pressing and holding the map, which is what they did
+before and still works either way.
+
+**The key goes in `.env` on the VPS, and nowhere else.** Not in the Android
+app, not in a Gradle property, not in a GitHub secret. A key inside an APK is
+readable by anyone who downloads it, and this one meters a free tier of 5,000
+requests a day shared by every rider on this server.
+
+1. Sign in at <https://my.locationiq.com/dashboard> and copy the access token.
+2. On the VPS:
+
+   ```bash
+   cd /root/tracktrip
+   nano .env
+   ```
+
+   Set the line to your token, with no quotes and no spaces around the `=`:
+
+   ```
+   LOCATIONIQ_API_KEY=pk.0123456789abcdef0123456789abcdef
+   ```
+
+   Optionally bias results towards Thailand:
+
+   ```
+   LOCATIONIQ_COUNTRY_CODES=th
+   ```
+
+3. Restart, so the process picks up the new environment:
+
+   ```bash
+   npm run pm2:restart
+   ```
+
+4. Check it from the VPS itself. The route needs a signed-in rider, so the
+   quickest proof without a token is that it now asks for one rather than
+   reporting itself unconfigured:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     'http://127.0.0.1:4100/geocode/search?q=Pai'
+   ```
+
+   `401` means the key is loaded and the route is live (it is asking you to
+   sign in). Confirm end to end from the app: open a trip's map, tap the
+   magnifier in the header, and type a place name.
+
+No migration, no rebuild of the app, and no downtime beyond the restart —
+the phone has always been asking this server rather than LocationIQ, so the
+same APK starts working the moment the key is there.
+
+`pm2 logs tracktrip-api` prints
+`LOCATIONIQ_API_KEY is not set — GET /geocode/search will answer 503.` at
+boot while the key is missing, which is the quickest way to tell "I forgot
+the key" from "I forgot the restart".
 
 ---
 

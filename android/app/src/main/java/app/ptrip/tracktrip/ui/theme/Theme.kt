@@ -58,6 +58,42 @@ val AppTextMuted = Color(0xFF5F6368)
 /** Warnings and destructive actions. */
 val AppDanger = Color(0xFFD93025)
 
+/**
+ * The route-progress bar's fill.
+ *
+ * ## Why this is not the primary blue
+ *
+ * The bar is drawn *on top of map tiles*, not on the app's own surfaces, and
+ * OpenStreetMap's daylight style is already full of blue: every river, lake,
+ * reservoir and coastal shelf. A blue bar over it disappeared on a real ride —
+ * which is the bug this colour exists to fix — and dimming or thickening a
+ * blue bar would not have helped, because the problem was hue, not weight.
+ *
+ * Orange is the complement of the theme's #1A73E8, so it is the one hue on
+ * the wheel that OSM's palette has almost none of: its greens are vegetation,
+ * its greys are roads and buildings, its beige is landuse. Kept clear of
+ * [AppDanger]'s red as well — a progress bar that reads as an alarm is a
+ * different wrong answer.
+ */
+val AppRouteProgress = Color(0xFFF57C00)
+
+/**
+ * The unfilled part of the bar. Near-black at low opacity rather than a grey:
+ * it has to read over a pale field and over a dark forest alike, and a mid
+ * grey vanished into both.
+ */
+val AppRouteProgressTrack = Color(0xFF202124)
+
+/**
+ * The white casing drawn behind the whole bar.
+ *
+ * The same trick every road atlas uses for a coloured route line: a white
+ * outline underneath means the line never has to contrast with the map, only
+ * with the outline. Without it there is always some tile — a beach, a car
+ * park — that is close enough to the fill colour to swallow it.
+ */
+val AppRouteProgressCasing = Color(0xFFFFFFFF)
+
 /** Hairlines, card edges and dividers. A real grey, not a tinted accent. */
 val AppLine = Color(0xFFDADCE0)
 

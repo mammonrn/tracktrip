@@ -160,6 +160,12 @@
     <string name="map_remove_point_message">\"%1$s\" จะหายไปจากแผนที่ของทุกคน</string>
     <string name="map_remove_point">ลบ</string>
 
+    <!-- ค้นหาสถานที่ด้วยชื่อ แทนการไล่หาบนแผนที่ -->
+    <string name="map_search_places">ค้นหาสถานที่</string>
+    <string name="map_search_label">ค้นหาสถานที่</string>
+    <string name="map_search_placeholder">อำเภอ ถนน ปั๊มน้ำมัน…</string>
+    <string name="map_search_empty">ไม่พบสถานที่ชื่อนี้</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>

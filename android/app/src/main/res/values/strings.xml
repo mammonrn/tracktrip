@@ -178,6 +178,19 @@
     <string name="map_remove_point_message">\"%1$s\" disappears from everyone\'s map.</string>
     <string name="map_remove_point">Remove</string>
 
+    <!--
+      Finding a place by name instead of hunting for it on the map. An
+      addition to the long press, never a replacement: the long press is the
+      only one that works for a spot with no name, and the only one that works
+      at all on a server with no search key configured.
+    -->
+    <string name="map_search_places">Search for a place</string>
+    <string name="map_search_label">Search for a place</string>
+    <string name="map_search_placeholder">Town, road, petrol station…</string>
+    <string name="map_search_empty">No place by that name.</string>
+    <!-- The clear button inside the search field. A glyph, so not translated. -->
+    <string name="map_search_clear_symbol" translatable="false">✕</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
     <string name="location_permission_denied">Location access is off for PTrips. Turn it on in Android\'s app settings to share your position with your group.</string>

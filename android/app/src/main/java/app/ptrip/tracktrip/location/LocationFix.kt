@@ -6,8 +6,9 @@ import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
+import androidx.core.location.LocationRequestCompat
 import androidx.core.os.CancellationSignal
-import android.location.LocationListener
+import androidx.core.location.LocationListenerCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -151,10 +152,39 @@ fun LocationFix.updates(
         else -> return emptyFlow()
     }
 
+    // An explicit request rather than the old
+    // `requestLocationUpdates(provider, minTime, minDistance, listener)`.
+    //
+    // That call says only "no more often than this", and the platform is free
+    // to read it as permission to duty-cycle the GNSS engine down to that
+    // rate — sleeping between fixes and reporting a Doppler speed averaged
+    // over whatever window it happened to be awake for. At 2,000 ms that is
+    // what put the speedometer several km/h behind the bike and left it
+    // reading low while the speed was changing.
+    //
+    // QUALITY_HIGH_ACCURACY is the part that matters: it is the app saying it
+    // wants the engine tracking continuously, which is what a navigation app
+    // asks for and what makes each fix's speed an instantaneous reading
+    // rather than an average. The interval below is then the delivery rate,
+    // not a licence to sleep.
+    val request = LocationRequestCompat.Builder(minIntervalMs)
+        .setQuality(LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        // No floor under the delivery rate: a faster fix is a fresher speed,
+        // and the engine is already awake producing it.
+        .setMinUpdateIntervalMillis(0L)
+        .setMinUpdateDistanceMeters(minDistanceMetres)
+        .build()
+
     return callbackFlow {
-        val listener = LocationListener { location -> trySend(location) }
+        val listener = LocationListenerCompat { location -> trySend(location) }
         try {
-            manager.requestLocationUpdates(provider, minIntervalMs, minDistanceMetres, listener)
+            LocationManagerCompat.requestLocationUpdates(
+                manager,
+                provider,
+                request,
+                Executor { runnable -> runnable.run() },
+                listener,
+            )
         } catch (e: SecurityException) {
             // Permission revoked between the check above and here.
             close()
@@ -204,7 +234,21 @@ fun LocationFix.updatesRetrying(
 const val LIVE_RETRY_MS = 3_000L
 
 /**
- * How often the live feed may deliver. A speedometer that lags by more than a
- * second or two reads as broken on a bike; the provider is free to give less.
+ * How often the live feed may deliver.
+ *
+ * One second, which is the rate a GNSS engine produces fixes at anyway — so
+ * this asks for every fix there is and throws none of them away.
+ *
+ * It used to be two, and that was the largest single cause of the speedometer
+ * reading low on a real ride: it made every reading up to two seconds old
+ * before it was drawn, and — worse — it told the platform the app was happy
+ * with a fix only every two seconds, which is permission to duty-cycle the
+ * GNSS engine and report an averaged speed instead of an instantaneous one.
+ * See the request built in [updates].
+ *
+ * The cost is the screen the rider is already looking at with the map drawing
+ * on it. The background *reporting* cadence is untouched and separate: that
+ * one runs with the phone in a pocket, and its budget is the whole point of
+ * it being a single one-shot fix per cycle.
  */
-const val LIVE_INTERVAL_MS = 2_000L
+const val LIVE_INTERVAL_MS = 1_000L

@@ -37,6 +37,21 @@ export const config = {
   dbPath: path.resolve(process.env.DB_PATH || './data/trip-tracker.db'),
   uploadsDir: path.resolve(process.env.UPLOADS_DIR || defaultUploadsDir),
   historyRetentionDays: Number(process.env.HISTORY_RETENTION_DAYS || 30),
+  /**
+   * The LocationIQ key behind `GET /geocode/search`.
+   *
+   * Server-side only, and that is the point: an API key shipped inside an APK
+   * is readable by anyone who downloads it, and this one meters a shared
+   * 5,000-request-a-day quota. Empty is a supported state — the search route
+   * answers 503 and every other route is unaffected.
+   */
+  locationIqApiKey: (process.env.LOCATIONIQ_API_KEY || '').trim(),
+  /**
+   * Optional comma-separated ISO country codes to bias searches towards, e.g.
+   * `th`. Unset searches the whole planet, which is right for a group who ride
+   * across a border and wrong for nobody.
+   */
+  locationIqCountryCodes: (process.env.LOCATIONIQ_COUNTRY_CODES || '').trim(),
   superuserEmails: (process.env.SUPERUSER_EMAILS ?? defaultSuperuserEmails)
     .split(',')
     .map((email) => email.trim())

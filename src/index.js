@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { verifyGoogleIdToken } from './auth/google.js';
 import { attachWebSocketServer } from './ws/index.js';
 import { PositionHub } from './ws/hub.js';
+import { createLocationIqSearch } from './geocode/locationiq.js';
 
 const db = openDb();
 runMigrations(db);
@@ -15,7 +16,19 @@ runMigrations(db);
 // the same tick.
 const hub = new PositionHub();
 
-const app = createApp({ db, config, verifyGoogleIdToken, hub });
+// Built even without a key: the factory throws a 503-shaped error on use
+// rather than at construction, so the route can say "not configured here"
+// instead of the server refusing to start over a feature that is optional.
+const searchPlaces = createLocationIqSearch({
+  apiKey: config.locationIqApiKey,
+  countryCodes: config.locationIqCountryCodes || undefined,
+});
+
+if (!config.locationIqApiKey) {
+  console.warn('LOCATIONIQ_API_KEY is not set — GET /geocode/search will answer 503.');
+}
+
+const app = createApp({ db, config, verifyGoogleIdToken, hub, searchPlaces });
 
 const server = http.createServer(app);
 attachWebSocketServer(server, { db, config, hub });
