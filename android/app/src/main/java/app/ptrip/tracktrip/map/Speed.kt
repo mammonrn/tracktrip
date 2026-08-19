@@ -46,13 +46,31 @@ object Speed {
     /**
      * This phone's own speed in km/h, or null when the fix is too old, has no
      * speed, or does not exist.
+     *
+     * ## A fix stamped in the future is a fix from a moment ago
+     *
+     * [fixAgeMs] is `System.currentTimeMillis() - fix.time`, and those two
+     * clocks are not the same clock. `Location.getTime()` on a GPS fix comes
+     * from the satellites, which are the more accurate of the two; the phone's
+     * own clock is set by the network and routinely runs a second or several
+     * behind. The subtraction then comes out **negative**, on every fix, for
+     * as long as the phone's clock is behind — and this used to answer that
+     * with null, which is a permanent dash on a phone that is working
+     * perfectly and reporting a real speed to everybody else's map.
+     *
+     * Clamped to zero instead, which is what [app.ptrip.tracktrip.map.FixAge]
+     * has always done with the same skew on the other side of the wire: a fix
+     * from the near future is a fix from now. The staleness guard below is
+     * unaffected — it is there to stop a half-hour-old reading being presented
+     * as current, and a fix stamped ahead of the clock is the opposite of
+     * stale.
      */
     fun ownKmh(
         metresPerSecond: Float?,
         fixAgeMs: Long,
         maxAgeMs: Long = OWN_SPEED_MAX_AGE_MS,
     ): Int? {
-        if (fixAgeMs < 0 || fixAgeMs > maxAgeMs) return null
+        if (fixAgeMs.coerceAtLeast(0L) > maxAgeMs) return null
         return kmh(metresPerSecond?.toDouble())
     }
 }

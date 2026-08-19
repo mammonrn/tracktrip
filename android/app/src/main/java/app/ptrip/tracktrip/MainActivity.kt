@@ -36,7 +36,7 @@ import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AppContainer
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.location.LocationFix
-import app.ptrip.tracktrip.location.updates
+import app.ptrip.tracktrip.location.updatesRetrying
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.Speed
 import app.ptrip.tracktrip.ui.AppLocale
@@ -331,19 +331,34 @@ private fun SignedInNavigation(
             )
         }
 
-        Screen.Profile -> ProfileScreen(
-            state = profileState,
-            // Back to settings once it lands: the changed name and photo are
-            // both visible there, which is a clearer confirmation than a
-            // message on a screen the rider is now finished with.
-            onSave = { patch -> profileViewModel.save(patch) { backStack.pop() } },
-            onAvatarPicked = { picked ->
-                profileViewModel.uploadAvatar(picked.bytes, picked.contentType)
-            },
-            onImageUnreadable = profileViewModel::onImageUnreadable,
-            onBack = { backStack.pop() },
-            modifier = modifier,
-        )
+        Screen.Profile -> {
+            // Re-read on the way in.
+            //
+            // This view model is scoped to the whole signed-in session,
+            // because settings, the trip screen and this one all need the
+            // rider's account — and it loaded exactly once, when the app
+            // started. Everything on it that a rider *changes* here was
+            // therefore right, and the one thing the server changes underneath
+            // them was not: `Ridden` showed the distance they had at sign-in,
+            // so a rider who opened the app, rode for an hour and then looked
+            // at their profile saw the number they set out with. Opening the
+            // screen is exactly the moment to ask again.
+            LaunchedEffect(Unit) { profileViewModel.refresh() }
+
+            ProfileScreen(
+                state = profileState,
+                // Back to settings once it lands: the changed name and photo
+                // are both visible there, which is a clearer confirmation than
+                // a message on a screen the rider is now finished with.
+                onSave = { patch -> profileViewModel.save(patch) { backStack.pop() } },
+                onAvatarPicked = { picked ->
+                    profileViewModel.uploadAvatar(picked.bytes, picked.contentType)
+                },
+                onImageUnreadable = profileViewModel::onImageUnreadable,
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
 
         Screen.ScanQr -> {
             ScanQrScreen(
@@ -492,7 +507,13 @@ private fun SignedInNavigation(
             var myFix by remember { mutableStateOf<android.location.Location?>(null) }
             LaunchedEffect(screen.tripId) {
                 myFix = LocationFix.lastKnown(context)
-                LocationFix.updates(context).collect { myFix = it }
+                // `updatesRetrying`, not `updates`: the plain feed ends when
+                // the provider is switched off, when permission changes, or
+                // when the subscription is refused before delivering anything,
+                // and a collector of it then held its last value for ever.
+                // That is what left the speedometer showing a dash for a whole
+                // ride on a phone that was reporting normally.
+                LocationFix.updatesRetrying(context).collect { myFix = it }
             }
             val myLocation = myFix?.let { LatLng(it.latitude, it.longitude) }
             val mySpeedKmh = myFix?.let { fix ->
@@ -550,6 +571,11 @@ private fun SignedInNavigation(
                     mapViewModel.place(placement, point.lat, point.lng, name)
                 },
                 onRemoveWaypoint = mapViewModel::removeWaypoint,
+                // Only this trip's own reports: `sharing` is what the service
+                // is broadcasting, and it broadcasts to one trip at a time.
+                lastReportedAtMillis = sharing
+                    ?.takeIf { it.tripId == screen.tripId }
+                    ?.lastReportedAtMillis,
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )

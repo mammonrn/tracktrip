@@ -69,4 +69,28 @@ class FixAgeTest {
         // read as though the offset were not there.
         assertEquals(1L, FixAge.minutesAgo("2026-05-01T17:30:00+07:00", now))
     }
+
+    // ---- how long since this phone itself reported ----------------------
+
+    @Test
+    fun `a phone that has never had a report accepted has no report age`() {
+        // Not zero. Zero would claim a successful report that never happened,
+        // which is the exact confusion this readout exists to remove.
+        assertNull(FixAge.reportAgeMinutes(null, now))
+    }
+
+    @Test
+    fun `whole minutes since the last accepted report`() {
+        assertEquals(0L, FixAge.reportAgeMinutes(now - 30_000L, now))
+        assertEquals(1L, FixAge.reportAgeMinutes(now - 90_000L, now))
+        assertEquals(12L, FixAge.reportAgeMinutes(now - 12 * 60_000L, now))
+    }
+
+    @Test
+    fun `a report stamped in the future reads as just now`() {
+        // Same clamp as everywhere else in this app: two clocks need not
+        // agree, and a negative number on screen is nonsense where "just now"
+        // is the truth.
+        assertEquals(0L, FixAge.reportAgeMinutes(now + 5_000L, now))
+    }
 }

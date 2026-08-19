@@ -8,10 +8,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import androidx.core.os.CancellationSignal
 import android.location.LocationListener
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executor
@@ -160,6 +163,45 @@ fun LocationFix.updates(
         awaitClose { manager.removeUpdates(listener) }
     }
 }
+
+/**
+ * The same feed, but one that comes back.
+ *
+ * [updates] ends for reasons that are not the collector's doing and are not
+ * permanent: the provider is switched off and on again, permission is revoked
+ * and re-granted, or the subscription is refused outright and the flow
+ * completes before delivering anything. A collector that simply awaited it
+ * then sat there for ever holding whatever value it had last — which is what
+ * turned the map's speedometer into a dash that never came back, on a phone
+ * that was otherwise working.
+ *
+ * Nothing here reports a failure, deliberately. There is no action a rider on
+ * a motorcycle can take about a location provider that has gone quiet for a
+ * moment, and the reading itself already says so by not changing.
+ */
+fun LocationFix.updatesRetrying(
+    context: Context,
+    minIntervalMs: Long = LIVE_INTERVAL_MS,
+    retryDelayMs: Long = LIVE_RETRY_MS,
+): Flow<Location> = flow {
+    while (true) {
+        // Re-entered rather than cached: `updates` decides on permission and
+        // on which provider exists *at the moment it is called*, so asking
+        // again is what lets a re-granted permission take effect without the
+        // screen being reopened.
+        emitAll(updates(context, minIntervalMs))
+        delay(retryDelayMs)
+    }
+}
+
+/**
+ * How long to wait before re-subscribing to a feed that ended.
+ *
+ * Long enough that a provider which refuses instantly cannot spin, short
+ * enough that a rider who grants permission mid-ride sees their speed within
+ * a few seconds.
+ */
+const val LIVE_RETRY_MS = 3_000L
 
 /**
  * How often the live feed may deliver. A speedometer that lags by more than a

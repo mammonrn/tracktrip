@@ -5,6 +5,7 @@ import supertest from 'supertest';
 import { createApp } from '../src/app.js';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
+import { PositionHub } from '../src/ws/hub.js';
 import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
@@ -22,7 +23,7 @@ const JWT_SECRET = 'test-secret';
  * holds one row per rider and is overwritten on every report, so the instant a
  * fix was replaced, where that rider had been was gone.
  */
-function setup() {
+function setup({ withHub = false, superuserEmails = [] } = {}) {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   runMigrations(db, MIGRATIONS_DIR);
@@ -33,7 +34,8 @@ function setup() {
 
   const app = createApp({
     db,
-    config: { jwtSecret: JWT_SECRET, googleClientIds: ['test'], superuserEmails: [] },
+    config: { jwtSecret: JWT_SECRET, googleClientIds: ['test'], superuserEmails },
+    hub: withHub ? new PositionHub() : undefined,
     verifyGoogleIdToken: async () => {
       throw new Error('unused');
     },
@@ -249,4 +251,66 @@ test('a bad query is a 400, not an empty trail', async (t) => {
 
   assert.equal(res.status, 400);
   assert.match(res.body.error, /limit/);
+});
+
+// ------------------------------------------- lifetime distance, end to end
+
+/**
+ * Whether a ride still credits the rider who rode it.
+ *
+ * Asked as a whole-server question rather than a unit one because the doubt
+ * was about the *route*, not the arithmetic: `POST /positions` grew two new
+ * guards and a hub call when the WebSocket landed, and the concern was that
+ * one of them had quietly stopped the distance being added. `countableDistanceKm`
+ * has its own tests and always passed; what nobody had asserted was that a
+ * sequence of ordinary reports still reaches it.
+ */
+test('a ride credits the rider, with a socket attached and without', async (t) => {
+  for (const withHub of [false, true]) {
+    const ctx = setup({ withHub });
+    const tripId = await ride(ctx);
+
+    // Eight reports, 45 seconds apart — the app's own cadence — each about
+    // 550 m further north. Roughly 3.9 km of riding.
+    for (let i = 0; i < 8; i += 1) {
+      const res = await report(ctx, tripId, ctx.riderId, 18.79 + i * 0.005, 98.98, at(i * 0.75));
+      assert.equal(res.status, 200, `report ${i} (hub: ${withHub})`);
+    }
+
+    const stored = ctx.db.prepare('SELECT total_km FROM users WHERE id = ?').get(ctx.riderId);
+    assert.ok(stored.total_km > 3.5, `credited ${stored.total_km} km (hub: ${withHub})`);
+    assert.ok(stored.total_km < 4.5, `credited ${stored.total_km} km (hub: ${withHub})`);
+
+    // And the account reports it, which is what the profile screen reads.
+    const me = await ctx.as(ctx.riderId).get('/me');
+    assert.equal(me.body.total_km, Math.round(stored.total_km * 100) / 100);
+  }
+});
+
+test('a super user riding their own trip is credited like anyone else', async (t) => {
+  // The role widens what somebody may *read*; it must not change what their
+  // own riding is worth. The account under test is a super user because the
+  // one that reported this was.
+  const ctx = setup({ superuserEmails: ['rider@gmail.com'] });
+  const tripId = await ride(ctx);
+
+  await report(ctx, tripId, ctx.riderId, 18.79, 98.98, at(0));
+  await report(ctx, tripId, ctx.riderId, 18.8, 98.98, at(0.75));
+
+  const stored = ctx.db.prepare('SELECT role, total_km FROM users WHERE id = ?').get(ctx.riderId);
+  assert.equal(stored.role, 'superuser');
+  assert.ok(stored.total_km > 1, `credited ${stored.total_km} km`);
+});
+
+test('the first report of a ride credits nothing, and the second credits the gap', async (t) => {
+  // There is nothing to measure from on the first fix. This is why a rider
+  // who reports once and stops sees 0 km — correctly.
+  const ctx = setup();
+  const tripId = await ride(ctx);
+
+  await report(ctx, tripId, ctx.riderId, 18.79, 98.98, at(0));
+  assert.equal(ctx.db.prepare('SELECT total_km FROM users WHERE id = ?').get(ctx.riderId).total_km, 0);
+
+  await report(ctx, tripId, ctx.riderId, 18.8, 98.98, at(0.75));
+  assert.ok(ctx.db.prepare('SELECT total_km FROM users WHERE id = ?').get(ctx.riderId).total_km > 1);
 });
