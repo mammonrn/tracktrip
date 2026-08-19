@@ -8,7 +8,9 @@ import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
+import app.ptrip.tracktrip.data.TripEndpoint
 import app.ptrip.tracktrip.data.TripWaypoints
+import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RideOrder
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -196,6 +198,95 @@ class TripMapViewModel(
                 lastFix[member.userId] = position
             }
         }
+    }
+
+    /**
+     * Puts a point the rider pressed and held on the map.
+     *
+     * One entry point for all three kinds because from the rider's side it is
+     * one gesture with three answers; underneath, the two ends of a trip are
+     * a PATCH on the trip itself and a waypoint is a row of its own. See
+     * [MapPlacement] for why they are not the same thing.
+     *
+     * A failure is reported the way every other failure on this screen is —
+     * as the line above the map — rather than by holding the dialog open. The
+     * point is already on the rider's screen as a coordinate they chose; what
+     * they need to know is whether the group can see it.
+     */
+    fun place(placement: MapPlacement, lat: Double, lng: Double, name: String) {
+        val label = name.trim().takeIf { it.isNotEmpty() }
+        // A waypoint with no name is refused by the server, so it is refused
+        // here rather than sent: the dialog's button is already disabled in
+        // that state, and this is the guard behind it.
+        if (label == null && MapPlacementRules.nameRequired(placement)) return
+
+        _uiState.update { it.copy(error = null) }
+
+        viewModelScope.launch {
+            try {
+                when (placement) {
+                    MapPlacement.ORIGIN ->
+                        tripApi.setOrigin(tripId, TripEndpoint(lat, lng, label))
+                    MapPlacement.DESTINATION ->
+                        tripApi.setDestination(tripId, TripEndpoint(lat, lng, label))
+                    MapPlacement.WAYPOINT -> tripApi.addWaypoint(
+                        tripId = tripId,
+                        name = label.orEmpty(),
+                        lat = lat,
+                        lng = lng,
+                        type = Waypoint.TYPE_LIVE,
+                    )
+                }
+                // The trip is re-read rather than patched in place: the server
+                // is what decides what a trip's ends are, and one round trip
+                // on an action a rider takes by hand costs nothing.
+                refreshTrip()
+                refresh()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Removes a dropped point.
+     *
+     * The server allows the trip's owner or whoever added it, and answers 403
+     * otherwise — the screen only offers the control to those two, so a
+     * refusal here means the rules changed underneath and is worth showing.
+     */
+    fun removeWaypoint(waypointId: Long) {
+        viewModelScope.launch {
+            try {
+                tripApi.deleteWaypoint(tripId, waypointId)
+                refresh()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Re-reads the trip itself.
+     *
+     * [refresh] only reaches for it when it has none, because a trip's name
+     * and status do not change under a rider watching a map. Its ends do, the
+     * moment they set one.
+     */
+    private suspend fun refreshTrip() {
+        val trip = try {
+            tripApi.listTrips().firstOrNull { it.id == tripId }
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            return
+        } catch (e: ApiException) {
+            return
+        }
+        trip?.let { fresh -> _uiState.update { it.copy(trip = fresh) } }
     }
 
     /** A location the phone could not produce — said out loud, not swallowed. */

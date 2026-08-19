@@ -30,6 +30,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
+    <!-- Doze and app-standby throttle a backgrounded app even when it runs a
+         foreground service: a reporting loop on a 45-second beat quietly
+         becomes one every few minutes, which on a long ride is the rider
+         watching their own pin stop moving. This permission is what allows
+         the standard system dialog to be shown; the exemption itself is
+         always the rider's to give, and it is asked for once, at the moment
+         sharing first starts. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- The tracking notification is how a rider knows their location is going
          out, and how they stop it. Without this grant on Android 13+ the
          service still runs but its notification is hidden, so it is asked for

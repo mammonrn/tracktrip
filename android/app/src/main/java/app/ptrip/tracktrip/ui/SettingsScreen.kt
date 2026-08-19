@@ -51,6 +51,7 @@ import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudGlobeIcon
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
+import app.ptrip.tracktrip.ui.theme.HudPowerIcon
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
@@ -84,6 +85,11 @@ fun SettingsScreen(
 ) {
     var openSection by rememberSaveable { mutableStateOf(SECTION_NONE) }
     var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
+
+    // Read here rather than passed in: it is a system setting, not app state,
+    // and it can change while this screen is open — a rider can grant it from
+    // Android's own settings and come straight back.
+    val battery = rememberBatteryExemption()
 
     fun toggle(section: String) {
         openSection = if (openSection == section) SECTION_NONE else section
@@ -149,6 +155,42 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            HudDivider()
+
+            // Android throttles a backgrounded app even with a foreground
+            // service running, which on a long ride shows up as a rider's own
+            // pin going stale. The row is here permanently, and not only in
+            // the one-off prompt at the start of sharing, because a rider who
+            // said no — or a phone that had the exemption revoked by a
+            // system update — otherwise has nowhere to fix it from.
+            SettingRow(
+                // Tinted like every other row's icon: the shared default is
+                // the danger red it wears on the sign-out button.
+                icon = { HudPowerIcon(tint = AppText) },
+                label = stringResource(R.string.settings_battery),
+                value = stringResource(
+                    if (battery.isExempt) {
+                        R.string.settings_battery_unrestricted
+                    } else {
+                        R.string.settings_battery_optimised
+                    }
+                ),
+                expanded = false,
+                onClick = battery.ask,
+            )
+            Text(
+                text = stringResource(
+                    if (battery.isExempt) {
+                        R.string.settings_battery_unrestricted_hint
+                    } else {
+                        R.string.settings_battery_optimised_hint
+                    }
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
 
             HudDivider()
 

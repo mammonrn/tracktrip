@@ -56,6 +56,12 @@ class ApiClient(
     suspend fun patch(path: String, body: JSONObject): String = send("PATCH", path, jsonBody(body))
 
     /**
+     * No body, and none expected back: the endpoints that use this answer 204.
+     * [send] returns the body as a string, which for a 204 is the empty one.
+     */
+    suspend fun delete(path: String): String = send("DELETE", path, body = null)
+
+    /**
      * A single file upload, as multipart/form-data.
      *
      * Takes the bytes rather than a stream: a request body has to survive

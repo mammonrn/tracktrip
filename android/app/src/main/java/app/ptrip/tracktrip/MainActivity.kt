@@ -303,6 +303,7 @@ private fun SignedInNavigation(
             val requestSharingPermission = rememberSharingPermissionRequest(
                 onGranted = { pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) } },
                 onDenied = settingsViewModel::onPermissionDenied,
+                askBatteryExemption = true,
             )
 
             SettingsScreen(
@@ -422,6 +423,7 @@ private fun SignedInNavigation(
             val requestSharingPermission = rememberSharingPermissionRequest(
                 onGranted = { pendingDuration?.let(detailViewModel::startSharing) },
                 onDenied = detailViewModel::onPermissionDenied,
+                askBatteryExemption = true,
             )
 
             TripDetailScreen(
@@ -542,6 +544,10 @@ private fun SignedInNavigation(
                 onCenterOnMe = {
                     if (LocationFix.hasPermission(context)) centreOnMe() else requestLocation()
                 },
+                onPlace = { placement, point, name ->
+                    mapViewModel.place(placement, point.lat, point.lng, name)
+                },
+                onRemoveWaypoint = mapViewModel::removeWaypoint,
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
