@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -978,6 +977,16 @@ private fun formatCoordinate(value: Double): String =
  * will read low, and a bar that claimed to know the road would be wrong by
  * however much the road bends, and wrong confidently.
  *
+ * ## The labels are not inside the bar's width
+ *
+ * They were, and it made them unreadable: the column carried
+ * `.width(PROGRESS_BAR_TOTAL_WIDTH)`, all 18dp of it, which every child
+ * inherited as a maximum. After the plate's own padding that left a couple of
+ * dp for glyphs, so each label wrapped one character per line and the word
+ * "direct" arrived as six letters stacked vertically down the edge of the
+ * map. Only the [Canvas] is width-constrained now; the column takes whatever
+ * the labels need and hangs them off the right edge.
+ *
  * Nothing is drawn at all without a destination and a position: an empty bar
  * would be a claim that the rider has not started, which is a different and
  * false statement from having nothing to measure.
@@ -998,23 +1007,58 @@ private fun RouteProgressBar(
     )
 
     Column(
-        modifier = modifier.width(PROGRESS_BAR_TOTAL_WIDTH),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        // Deliberately *not* width-constrained. It used to be
+        // `.width(PROGRESS_BAR_TOTAL_WIDTH)`, which is 18dp — and since the
+        // labels are children of this column, that became their maximum width
+        // too. Minus their own padding it left about two dp of room for text,
+        // so every label wrapped one character per line and "direct" came out
+        // as six stacked letters. Only the bar itself has a fixed width; the
+        // column wraps whatever the labels need.
+        modifier = modifier,
+        // End rather than centre, so the bar keeps hugging the right edge
+        // while the label plate grows leftward over the map instead of
+        // dragging the bar away from the edge with it.
+        horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // The number and the caveat that qualifies it, on one plate.
+        //
+        // They used to sit at opposite ends of a bar most of a screen tall,
+        // which put the word "direct" nowhere near the distance it was
+        // describing. It qualifies the number, so it lives with the number —
+        // and it now appears whenever the number does, including on a trip
+        // with a destination but no start, where there is no bar to draw and
+        // the caveat used to be silently dropped.
         remaining?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                // The one number on this bar, so it gets the bar's colour.
-                color = AppRouteProgress,
-                textAlign = TextAlign.Center,
+            Column(
+                horizontalAlignment = Alignment.End,
                 modifier = Modifier
-                    .background(AppSurface.copy(alpha = 0.96f), CircleShape)
-                    .border(1.dp, AppRouteProgress.copy(alpha = 0.5f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
+                    .background(AppSurface.copy(alpha = 0.96f), PROGRESS_LABEL_SHAPE)
+                    .border(1.dp, AppRouteProgress.copy(alpha = 0.5f), PROGRESS_LABEL_SHAPE)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    // The one number on this bar, so it gets the bar's colour.
+                    color = AppRouteProgress,
+                    // Belt and braces against the bug above: if some future
+                    // layout squeezes this again it ends as an ellipsis, which
+                    // is legible, rather than as a column of single letters.
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(R.string.map_progress_straight_line),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppTextMuted,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         if (fraction != null) {
@@ -1068,19 +1112,12 @@ private fun RouteProgressBar(
                     center = head,
                 )
             }
-
-            Text(
-                text = stringResource(R.string.map_progress_straight_line),
-                style = MaterialTheme.typography.labelSmall,
-                color = AppTextMuted,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .background(AppSurface.copy(alpha = 0.96f), CircleShape)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            )
         }
     }
 }
+
+/** Rounded, not a pill: the plate carries two lines now, not one. */
+private val PROGRESS_LABEL_SHAPE = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
 
 /**
  * The coloured part of the bar.
