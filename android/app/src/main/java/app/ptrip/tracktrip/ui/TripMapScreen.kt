@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,6 +41,7 @@ import app.ptrip.tracktrip.map.CameraTarget
 import app.ptrip.tracktrip.map.EndpointMarker
 import app.ptrip.tracktrip.map.FALLBACK_CENTRE
 import app.ptrip.tracktrip.map.FALLBACK_ZOOM
+import app.ptrip.tracktrip.map.FixAge
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.MapConfig
 import app.ptrip.tracktrip.map.MarkerMotion
@@ -87,6 +89,12 @@ private const val BOUNDS_PADDING_PX = 64
 
 /** How many frames to wait for the map to be measured before giving up on fitting. */
 private const val LAYOUT_WAIT_FRAMES = 120
+
+/**
+ * How often the rows' "x min ago" is recomputed. Finer than a minute so the
+ * number never looks stuck, coarse enough to cost nothing.
+ */
+private const val AGE_TICK_MS = 20_000L
 
 /**
  * Where everyone on the trip is.
@@ -144,6 +152,17 @@ fun TripMapScreen(
         }
     }
 
+    // The wall clock, re-read on its own beat. The ages on the rows have to
+    // keep counting up between polls — otherwise "4 min ago" would sit there
+    // for the forty-five seconds until the next fetch and then jump.
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(AGE_TICK_MS)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+
     // The top bar is *over* the map, not above it. As a row in the same column
     // it belonged to the scrolling layout and slid away the moment the map was
     // dragged; a rider then had no trip name and, worse, no way back.
@@ -176,8 +195,12 @@ fun TripMapScreen(
                 HudLoading()
             } else {
                 LazyColumn(
+                    // Wraps its rows, capped — never a fixed share of the
+                    // screen. A weight() here reserved the same slab of height
+                    // for a trip of one as for a trip of ten, and the surplus
+                    // read as a grey hole under the single row.
                     modifier = Modifier
-                        .weight(MEMBER_LIST_WEIGHT)
+                        .heightIn(max = MEMBER_LIST_MAX_HEIGHT)
                         .fillMaxWidth(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
                 ) {
@@ -198,6 +221,7 @@ fun TripMapScreen(
                         MemberMapRow(
                             member = member,
                             levelName = state.levels[member.userId]?.levelName,
+                            fixAgeMinutes = FixAge.minutesAgo(member.recordedAt, nowMs),
                             isSelf = member.userId == currentUserId,
                             focused = member.userId == focused,
                             onClick = { if (member.hasPosition) focused = member.userId },
@@ -266,8 +290,15 @@ private fun speedText(kmh: Int?): String =
     kmh?.let { stringResource(R.string.map_speed_kmh, it) }
         ?: stringResource(R.string.map_speed_unknown)
 
-/** The list gets about a third of the screen; the map keeps the rest. */
-private const val MEMBER_LIST_WEIGHT = 0.55f
+/**
+ * How tall the member list may grow before it starts scrolling.
+ *
+ * A ceiling rather than a share: the list is as tall as the riders in it, so a
+ * solo trip gives its whole screen to the map, and a group of ten still leaves
+ * the map more than half the height. Sized for about five rows, which is the
+ * point at which scrolling is expected anyway.
+ */
+private val MEMBER_LIST_MAX_HEIGHT = 300.dp
 
 /**
  * The osmdroid map, wrapped for Compose.
@@ -597,6 +628,7 @@ private suspend fun slideMarkers(
 private fun MemberMapRow(
     member: MemberPosition,
     levelName: String?,
+    fixAgeMinutes: Long?,
     isSelf: Boolean,
     focused: Boolean,
     onClick: () -> Unit,
@@ -643,6 +675,19 @@ private fun MemberMapRow(
                             else -> stringResource(R.string.sharing_on)
                         }
                     )
+                    // How old the fix is. Positions arrive every ten minutes by
+                    // design, so a pin that has not moved is usually correct —
+                    // without this the rider cannot tell that from a dead app.
+                    fixAgeMinutes?.let { minutes ->
+                        append(" · ")
+                        append(
+                            if (minutes < 1) {
+                                stringResource(R.string.map_fix_age_now)
+                            } else {
+                                stringResource(R.string.map_fix_age_minutes, minutes)
+                            }
+                        )
+                    }
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = AppTextMuted,

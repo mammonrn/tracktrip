@@ -103,6 +103,13 @@
     <string name="map_speed_unknown">—</string>
     <string name="map_own_speed">Your speed</string>
     <!--
+      How old a rider's last reported position is. Shown because positions
+      arrive every ten minutes by design: a pin that has not moved is usually
+      correct, and without this it is indistinguishable from a dead app.
+    -->
+    <string name="map_fix_age_now">just now</string>
+    <string name="map_fix_age_minutes">%1$d min ago</string>
+    <!--
       The list order is worked out from which way the group is heading, not
       from distance along a road — the app has no route to measure against.
       The row says so, because a bare "in front first" would read as a fact.
