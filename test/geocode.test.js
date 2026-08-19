@@ -32,6 +32,15 @@ function setup({ searchPlaces = null } = {}) {
   db.pragma('foreign_keys = ON');
   runMigrations(db, MIGRATIONS_DIR);
 
+  // Captured rather than printed, so the tests can assert what an operator
+  // would see in `pm2 logs` — which is the only place the answer to "did it
+  // actually call LocationIQ?" lives.
+  const logged = [];
+  const searchLogger = {
+    log: (line) => logged.push(line),
+    warn: (line) => logged.push(line),
+  };
+
   const app = createApp({
     db,
     config: { jwtSecret: JWT_SECRET, googleClientIds: ['test-client-id'] },
@@ -39,6 +48,7 @@ function setup({ searchPlaces = null } = {}) {
       throw new Error('unused in these tests');
     },
     searchPlaces,
+    searchLogger,
   });
 
   const insertUser = db.prepare(
@@ -47,7 +57,7 @@ function setup({ searchPlaces = null } = {}) {
   const addUser = (name) =>
     Number(insertUser.run(`sub-${name}`, `${name}@gmail.com`, name).lastInsertRowid);
 
-  return { db, app, addUser, tokenFor: (id) => signAccessToken(id, JWT_SECRET) };
+  return { db, app, addUser, logged, tokenFor: (id) => signAccessToken(id, JWT_SECRET) };
 }
 
 /** One upstream row, in the shape LocationIQ actually sends it. */
@@ -536,4 +546,78 @@ test('a rider hammering the search is throttled, and the throttle is per rider',
     .set('Authorization', `Bearer ${tokenFor(quiet)}`);
   assert.equal(other.status, 200);
   assert.ok(called <= 13);
+});
+
+// --- what an operator can see ----------------------------------------------
+
+test('every search says in the log whether it went upstream or came from cache', async () => {
+  // The bug this answers: "search is broken" looked identical from the phone
+  // whether the server called LocationIQ and got nothing, never called it, or
+  // had no search route at all. Two of those three are invisible without this.
+  const { app, addUser, tokenFor, logged } = setup({
+    searchPlaces: async () => [
+      { name: 'Pai', address: 'Pai', lat: 19.3583, lng: 98.4406, kind: null, osm_id: null },
+    ],
+  });
+  const auth = `Bearer ${tokenFor(addUser('rider'))}`;
+
+  await supertest(app).get('/geocode/search?q=Pai').set('Authorization', auth);
+  await supertest(app).get('/geocode/search?q=Pai').set('Authorization', auth);
+
+  assert.equal(logged.length, 2);
+  assert.match(logged[0], /^geocode: upstream q="Pai" 1 result/);
+  assert.match(logged[1], /^geocode: cache q="Pai" 1 result/);
+});
+
+test('a server with no key says so in the log, every time it is asked', async () => {
+  const { app, addUser, tokenFor, logged } = setup({ searchPlaces: null });
+  const auth = `Bearer ${tokenFor(addUser('rider'))}`;
+
+  await supertest(app).get('/geocode/search?q=Pai').set('Authorization', auth);
+
+  assert.match(logged[0], /^geocode: unconfigured q="Pai" LOCATIONIQ_API_KEY is not set/);
+});
+
+test('a failed search logs the status it failed with', async () => {
+  const { app, addUser, tokenFor, logged } = setup({
+    searchPlaces: async () => {
+      throw new GeocodeError('Place search is busy. Try again in a moment.', 429);
+    },
+  });
+  const auth = `Bearer ${tokenFor(addUser('rider'))}`;
+
+  await supertest(app).get('/geocode/search?q=Pai').set('Authorization', auth);
+
+  assert.match(logged[0], /^geocode: failed q="Pai" 429 /);
+});
+
+test('the log never carries the API key', async () => {
+  // The line exists to be pasted into a chat window when something is wrong.
+  const { app, addUser, tokenFor, logged } = setup({
+    searchPlaces: async () => {
+      throw new GeocodeError('upstream said no', 502);
+    },
+  });
+  const auth = `Bearer ${tokenFor(addUser('rider'))}`;
+
+  await supertest(app).get('/geocode/search?q=Pai').set('Authorization', auth);
+
+  assert.equal(logged.join('\n').includes('key='), false);
+});
+
+test('the search route never answers 404, so a 404 can only mean it is absent', async () => {
+  // This is the contract the app leans on to tell "no such place" apart from
+  // "this server has no place search" — the confusion that had three real
+  // cities reported as "That's no longer there.". Nothing below may 404.
+  const { app, addUser, tokenFor } = setup({ searchPlaces: async () => [] });
+  const auth = `Bearer ${tokenFor(addUser('rider'))}`;
+
+  for (const url of [
+    '/geocode/search?q=zzzzzzzz',   // nothing matched
+    '/geocode/search?q=a',          // too short
+    '/geocode/search?q=Pai&limit=0' // bad limit
+  ]) {
+    const res = await supertest(app).get(url).set('Authorization', auth);
+    assert.notEqual(res.status, 404, `${url} must not answer 404`);
+  }
 });

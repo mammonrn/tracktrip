@@ -23,6 +23,20 @@ import { SearchCache } from '../geocode/cache.js';
 export const SEARCH_RATE_LIMIT = { windowMs: 60 * 1000, max: 12 };
 
 /**
+ * One line per search, so `pm2 logs tracktrip-api` can answer the question
+ * that costs the most time to answer any other way: did this server actually
+ * call LocationIQ, or did something short-circuit before it got there?
+ *
+ * Deliberately says which of the three it was — served from cache, fetched
+ * upstream, or failed — because "the search is broken" has completely
+ * different fixes depending on the answer, and none of them are guessable
+ * from the phone. The query is logged; the key never is.
+ */
+function logSearch(log, outcome, query, detail) {
+  log(`geocode: ${outcome} q=${JSON.stringify(query)}${detail ? ` ${detail}` : ''}`);
+}
+
+/**
  * Place search, proxied.
  *
  * [search] is injected rather than built here so the tests can answer without
@@ -30,10 +44,24 @@ export const SEARCH_RATE_LIMIT = { windowMs: 60 * 1000, max: 12 };
  * never goes near the phone in the first place.
  *
  * Null [search] is the ordinary state of a server whose LOCATIONIQ_API_KEY has
- * not been set yet: the route exists and answers 503 with a message saying so,
- * rather than 404 which would read to the app as "this build is too old".
+ * not been set yet: the route exists and answers 503 with a message saying so.
+ *
+ * **Nothing in this router may ever answer 404.** No matches is a 200 with an
+ * empty list; a bad query is a 400; an unset key is a 503. The app relies on
+ * that: a 404 can then only mean the route is not on the server at all — a
+ * backend older than the app — and it says exactly that rather than the
+ * generic wording for a 404, which is "That's no longer there." and sent a
+ * whole debugging session looking for a missing shopping centre. There is a
+ * test in test/geocode.test.js that holds this.
  */
-export function createGeocodeRouter({ db, config, search = null, cache = new SearchCache() }) {
+export function createGeocodeRouter({
+  db,
+  config,
+  search = null,
+  cache = new SearchCache(),
+  // Injected so the tests can assert what gets logged without printing it.
+  logger = console,
+}) {
   const router = Router();
 
   const limitSearches = rateLimit({
@@ -71,10 +99,12 @@ export function createGeocodeRouter({ db, config, search = null, cache = new Sea
       const cacheKey = `${limit}:${query.toLowerCase()}`;
       const cached = cache.get(cacheKey);
       if (cached) {
+        logSearch(logger.log, 'cache', query, `${cached.length} result(s)`);
         return res.json({ query, results: cached, cached: true });
       }
 
       if (!search) {
+        logSearch(logger.warn, 'unconfigured', query, 'LOCATIONIQ_API_KEY is not set');
         return res
           .status(503)
           .json({ error: 'Place search is not configured on this server.' });
@@ -85,10 +115,13 @@ export function createGeocodeRouter({ db, config, search = null, cache = new Sea
         results = await search(query, { limit });
       } catch (e) {
         if (e instanceof GeocodeError) {
+          logSearch(logger.warn, 'failed', query, `${e.status} ${e.message}`);
           return res.status(e.status).json({ error: e.message });
         }
+        logSearch(logger.warn, 'failed', query, `502 ${e && e.message}`);
         return res.status(502).json({ error: "Couldn't search for places just now." });
       }
+      logSearch(logger.log, 'upstream', query, `${results.length} result(s)`);
 
       // Cached even when empty: "nothing is called that" is an answer worth
       // not paying for twice, and it is a common one while somebody is still

@@ -23,7 +23,16 @@ import { noopHub } from './ws/hub.js';
  * still runs, and that one route answers 503 saying so rather than the whole
  * app refusing to boot over a feature nobody on it is using yet.
  */
-export function createApp({ db, config, verifyGoogleIdToken, hub = noopHub, searchPlaces = null }) {
+export function createApp({
+  db,
+  config,
+  verifyGoogleIdToken,
+  hub = noopHub,
+  searchPlaces = null,
+  // Where the place-search route writes its one line per search. Injected
+  // only so the tests can read it back instead of printing it.
+  searchLogger = console,
+}) {
   // Before the first request, so no route can be served by a process whose
   // idea of who is a super user is older than its configuration. Cheap: one
   // scan of a table that has as many rows as the app has riders.
@@ -43,7 +52,7 @@ export function createApp({ db, config, verifyGoogleIdToken, hub = noopHub, sear
   app.use(createWaypointsRouter({ db, config }));
   app.use(createPositionsRouter({ db, config, hub }));
   app.use(createSharingRouter({ db, config }));
-  app.use(createGeocodeRouter({ db, config, search: searchPlaces }));
+  app.use(createGeocodeRouter({ db, config, search: searchPlaces, logger: searchLogger }));
   return app;
 }
 

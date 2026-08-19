@@ -31,6 +31,74 @@ data class Place(
 }
 
 /**
+ * Why a search did not come back with places.
+ *
+ * ## Why the reason is a value and not just a sentence
+ *
+ * Every one of these used to arrive as [ApiException] carrying whatever
+ * wording suited the HTTP status in general, and on this screen the general
+ * wording was wrong in the worst way: a 404 read as "That's no longer
+ * there." — a sentence about a place that has closed down. What it actually
+ * meant was that the server had no `/geocode/search` route at all, because
+ * the backend running on it predated the feature. Three searches for three
+ * real cities all said the place was gone.
+ *
+ * So the cause is kept as a value the screen can word for itself, in the
+ * rider's own language, and the two "the search does not work here" cases
+ * stay apart — they have different fixes, and the person reading the message
+ * is very often the person who has to apply one.
+ */
+enum class PlaceSearchProblem {
+    /**
+     * The server answered 404, which for this route can only mean it is not
+     * there: the search never answers 404 itself — no matches is a 200 with
+     * an empty list. A backend older than the app, in other words.
+     */
+    NOT_DEPLOYED,
+
+    /** The route is there; `LOCATIONIQ_API_KEY` is not. The server says 503. */
+    NOT_CONFIGURED,
+
+    /** This rider's own minute-long budget, or the server's daily quota. */
+    TOO_MANY,
+
+    /** The server was reached; it could not reach LocationIQ. */
+    UPSTREAM,
+
+    /** The server was never reached at all — no signal, no route to it. */
+    OFFLINE,
+
+    /** Anything else, in which case the server's own words are shown. */
+    UNKNOWN,
+}
+
+/** A search failure, with the reason kept alongside the fallback wording. */
+class PlaceSearchException(
+    val problem: PlaceSearchProblem,
+    message: String,
+    status: Int?,
+) : ApiException(message, status)
+
+/**
+ * What a failed search actually means, from the status it failed with.
+ *
+ * Pure, so the mapping is tested rather than trusted — this is the piece that
+ * was silently wrong, and the only way it shows on screen is as a confusing
+ * sentence that looks like ordinary app copy.
+ */
+fun placeSearchProblem(status: Int?): PlaceSearchProblem = when (status) {
+    // Never produced by the search route itself. See NOT_DEPLOYED.
+    404 -> PlaceSearchProblem.NOT_DEPLOYED
+    503 -> PlaceSearchProblem.NOT_CONFIGURED
+    429 -> PlaceSearchProblem.TOO_MANY
+    // No response to take a status from: the request did not arrive.
+    null -> PlaceSearchProblem.OFFLINE
+    502, 504 -> PlaceSearchProblem.UPSTREAM
+    in 500..599 -> PlaceSearchProblem.UPSTREAM
+    else -> PlaceSearchProblem.UNKNOWN
+}
+
+/**
  * Somewhere to look up a place name.
  *
  * An interface rather than the class alone so the debounce that drives it can
@@ -65,7 +133,19 @@ class PlaceSearchApi(private val client: ApiClient) : PlaceLookup {
      */
     override suspend fun search(query: String, limit: Int): List<Place> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val body = client.get("/geocode/search?q=$encoded&limit=$limit")
+        val body = try {
+            client.get("/geocode/search?q=$encoded&limit=$limit")
+        } catch (e: SessionExpiredException) {
+            // Signing out is about to happen and is not this screen's to
+            // report. Passed through untouched.
+            throw e
+        } catch (e: ApiException) {
+            throw PlaceSearchException(
+                problem = placeSearchProblem(e.status),
+                message = e.message ?: "",
+                status = e.status,
+            )
+        }
         return parsePlaces(body)
     }
 

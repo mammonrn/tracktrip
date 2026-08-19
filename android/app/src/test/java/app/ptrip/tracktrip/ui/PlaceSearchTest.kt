@@ -3,6 +3,7 @@ package app.ptrip.tracktrip.ui
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceLookup
+import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.data.SessionExpiredException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
@@ -176,7 +177,7 @@ class PlaceSearchTest {
         val state = controller.state.value
         assertEquals(listOf(pai), state.results)
         assertTrue(state.searched)
-        assertNull(state.error)
+        assertNull(state.problem)
         assertFalse(state.isEmpty)
     }
 
@@ -216,22 +217,97 @@ class PlaceSearchTest {
         assertTrue(controller.state.value.hasPanel)
     }
 
+    /** A lookup that fails the way the real one does, with a status. */
+    private fun failingWith(status: Int?, message: String = "boom") = object : PlaceLookup {
+        override suspend fun search(query: String, limit: Int): List<Place> =
+            throw ApiException(message, status)
+    }
+
     @Test
-    fun `an unconfigured server's message is shown rather than "nothing found"`() = runTest {
-        val message = "Place search is not configured on this server."
-        val controller = PlaceSearchController(this, object : PlaceLookup {
-            override suspend fun search(query: String, limit: Int): List<Place> =
-                throw ApiException(message)
-        })
+    fun `a server with no search route is not reported as a missing place`() = runTest {
+        // The bug, exactly: the backend had never been deployed, Express 404ed
+        // an unknown path, and the panel said "That's no longer there." about
+        // Bangkok. A 404 here means the route is absent, and nothing else —
+        // the search route answers no-matches with 200 and an empty list.
+        val controller = PlaceSearchController(this, failingWith(404))
+
+        controller.onQueryChanged("Bangkok")
+        advanceUntilIdle()
+
+        assertEquals(PlaceSearchProblem.NOT_DEPLOYED, controller.state.value.problem)
+        // And emphatically not "nothing is called that".
+        assertFalse(controller.state.value.isEmpty)
+    }
+
+    @Test
+    fun `an unconfigured server is told apart from an undeployed one`() = runTest {
+        val controller = PlaceSearchController(this, failingWith(503))
 
         controller.onQueryChanged("Pai")
         advanceUntilIdle()
 
-        // The likeliest failure by a distance, and the one that must not read
-        // as "there is no such place".
-        assertEquals(message, controller.state.value.error)
+        assertEquals(PlaceSearchProblem.NOT_CONFIGURED, controller.state.value.problem)
         assertFalse(controller.state.value.isEmpty)
         assertFalse(controller.state.value.searching)
+    }
+
+    @Test
+    fun `losing signal is not reported as the server refusing`() = runTest {
+        // ApiClient throws with no status when the request never got an
+        // answer. That is worth retrying; a server that said no is not.
+        val controller = PlaceSearchController(this, failingWith(null))
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        assertEquals(PlaceSearchProblem.OFFLINE, controller.state.value.problem)
+    }
+
+    @Test
+    fun `a rate limit and an upstream failure are different problems`() = runTest {
+        val limited = PlaceSearchController(this, failingWith(429))
+        limited.onQueryChanged("Pai")
+        advanceUntilIdle()
+        assertEquals(PlaceSearchProblem.TOO_MANY, limited.state.value.problem)
+
+        val upstream = PlaceSearchController(this, failingWith(502))
+        upstream.onQueryChanged("Pai")
+        advanceUntilIdle()
+        assertEquals(PlaceSearchProblem.UPSTREAM, upstream.state.value.problem)
+    }
+
+    @Test
+    fun `an unrecognised failure keeps the server's own sentence`() = runTest {
+        val controller = PlaceSearchController(this, failingWith(418, "the server is a teapot"))
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        assertEquals(PlaceSearchProblem.UNKNOWN, controller.state.value.problem)
+        assertEquals("the server is a teapot", controller.state.value.serverMessage)
+    }
+
+    @Test
+    fun `a failure clears when the next search succeeds`() = runTest {
+        var fail = true
+        val controller = PlaceSearchController(this, object : PlaceLookup {
+            override suspend fun search(query: String, limit: Int): List<Place> {
+                if (fail) throw ApiException("boom", 502)
+                return listOf(pai)
+            }
+        })
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+        assertEquals(PlaceSearchProblem.UPSTREAM, controller.state.value.problem)
+
+        fail = false
+        controller.onQueryChanged("Pai City")
+        advanceUntilIdle()
+
+        assertNull(controller.state.value.problem)
+        assertNull(controller.state.value.serverMessage)
+        assertEquals(listOf(pai), controller.state.value.results)
     }
 
     @Test
@@ -252,7 +328,7 @@ class PlaceSearchTest {
         assertTrue(expired)
         // Signing out is about to happen; an error line about the search on
         // the way past would be noise.
-        assertNull(controller.state.value.error)
+        assertNull(controller.state.value.problem)
     }
 
     @Test
@@ -264,7 +340,7 @@ class PlaceSearchTest {
 
         assertFalse(controller.state.value.searching)
         assertTrue(controller.state.value.results.isEmpty())
-        assertNull(controller.state.value.error)
+        assertNull(controller.state.value.problem)
     }
 
     @Test

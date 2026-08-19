@@ -89,6 +89,7 @@ import app.ptrip.tracktrip.ui.theme.AppRouteProgressTrack
 import app.ptrip.tracktrip.ui.theme.AppSurfaceAlt
 import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.data.Place
+import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.RankIcon
@@ -626,13 +627,14 @@ private fun PlaceSearchPanel(
                 .background(AppSurface, AppSearchPanelShape)
                 .border(1.dp, AppLine, AppSearchPanelShape),
         ) {
-            state.error?.let { message ->
-                // The likeliest failure by a distance is a server with no
-                // LOCATIONIQ_API_KEY set, which answers with its own sentence
-                // saying so. "Nothing found" would be the wrong thing to tell
-                // somebody about that, so the server's words are used.
+            state.problem?.let { problem ->
+                // Worded from the reason, not from the HTTP status. The
+                // status's own wording for a 404 is "That's no longer there.",
+                // which on a search box is a sentence about a place that has
+                // closed down — and what a 404 here actually means is that the
+                // server has no search route at all.
                 Text(
-                    text = message,
+                    text = placeSearchMessage(problem, state.serverMessage),
                     style = MaterialTheme.typography.bodySmall,
                     color = AppTextMuted,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -685,6 +687,29 @@ private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
         )
     }
 }
+
+/**
+ * What to say when a search fails, in the rider's own language.
+ *
+ * The two "search does not work here" cases are worded apart on purpose. Both
+ * are for somebody to fix rather than for the rider to retry, but they have
+ * different fixes — one needs the backend deployed, the other needs a key in
+ * `.env` — and the person reading this is very often the person who has to
+ * apply one of them.
+ */
+@Composable
+private fun placeSearchMessage(problem: PlaceSearchProblem, serverMessage: String?): String =
+    when (problem) {
+        PlaceSearchProblem.NOT_DEPLOYED -> stringResource(R.string.map_search_not_deployed)
+        PlaceSearchProblem.NOT_CONFIGURED -> stringResource(R.string.map_search_not_configured)
+        PlaceSearchProblem.TOO_MANY -> stringResource(R.string.map_search_too_many)
+        PlaceSearchProblem.UPSTREAM -> stringResource(R.string.map_search_upstream)
+        PlaceSearchProblem.OFFLINE -> stringResource(R.string.map_search_offline)
+        // The one case where the server knows something this app does not, so
+        // its own sentence is better than anything written here in advance.
+        PlaceSearchProblem.UNKNOWN ->
+            serverMessage?.takeIf { it.isNotBlank() } ?: stringResource(R.string.map_search_failed)
+    }
 
 /** Tall enough for four or five results, short enough to leave the map visible. */
 private val SEARCH_RESULTS_MAX_HEIGHT = 240.dp

@@ -188,6 +188,20 @@
     <string name="map_search_label">Search for a place</string>
     <string name="map_search_placeholder">Town, road, petrol station…</string>
     <string name="map_search_empty">No place by that name.</string>
+    <!--
+      Why a search failed, worded from the cause rather than from the HTTP
+      status. The generic wording for a 404 is "That's no longer there.",
+      which on a search box reads as a place that has closed down — while what
+      a 404 on this route actually means is that the server has no search on
+      it at all. The two "not working here" cases stay apart because they have
+      different fixes and the reader is often the one who applies them.
+    -->
+    <string name="map_search_not_deployed">Place search isn\'t on this server yet — its backend is older than this app. Nothing to retry; the server needs updating.</string>
+    <string name="map_search_not_configured">Place search isn\'t switched on for this server yet (no API key). Pressing and holding the map still works.</string>
+    <string name="map_search_too_many">Too many searches just now. Wait a moment and try again.</string>
+    <string name="map_search_upstream">The place search service didn\'t answer. Try again in a moment.</string>
+    <string name="map_search_offline">Can\'t reach the server. Check your connection.</string>
+    <string name="map_search_failed">Couldn\'t search for places just now.</string>
     <!-- The clear button inside the search field. A glyph, so not translated. -->
     <string name="map_search_clear_symbol" translatable="false">✕</string>
 

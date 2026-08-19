@@ -3,6 +3,9 @@ package app.ptrip.tracktrip.ui
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceLookup
+import app.ptrip.tracktrip.data.PlaceSearchException
+import app.ptrip.tracktrip.data.PlaceSearchProblem
+import app.ptrip.tracktrip.data.placeSearchProblem
 import app.ptrip.tracktrip.data.SessionExpiredException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -78,14 +81,26 @@ data class PlaceSearchState(
     val query: String = "",
     val searching: Boolean = false,
     val results: List<Place> = emptyList(),
-    val error: String? = null,
+    /**
+     * Why the last search failed, or null if it did not.
+     *
+     * The reason rather than a sentence, so the screen can say it in the
+     * rider's language and say the right thing — see [PlaceSearchProblem] for
+     * what the wrong thing cost.
+     */
+    val problem: PlaceSearchProblem? = null,
+    /**
+     * What the server said, kept only for [PlaceSearchProblem.UNKNOWN], where
+     * the server knows something this app does not.
+     */
+    val serverMessage: String? = null,
     val searched: Boolean = false,
 ) {
     /** Whether to say "nothing found" rather than leaving the panel blank. */
-    val isEmpty: Boolean get() = searched && !searching && error == null && results.isEmpty()
+    val isEmpty: Boolean get() = searched && !searching && problem == null && results.isEmpty()
 
     /** Whether there is anything at all to draw under the field. */
-    val hasPanel: Boolean get() = searching || error != null || results.isNotEmpty() || isEmpty
+    val hasPanel: Boolean get() = searching || problem != null || results.isNotEmpty() || isEmpty
 }
 
 /**
@@ -130,7 +145,7 @@ class PlaceSearchController(
         }
 
         _state.update {
-            it.copy(query = typed, searching = true, error = null)
+            it.copy(query = typed, searching = true, problem = null, serverMessage = null)
         }
 
         pending = scope.launch {
@@ -167,15 +182,31 @@ class PlaceSearchController(
                 // flight, and painting a stale answer under a newer query is
                 // the bug this whole class exists to avoid.
                 if (PlaceSearchRules.normalize(it.query) != query) it
-                else it.copy(searching = false, searched = true, results = results, error = null)
+                else it.copy(
+                    searching = false,
+                    searched = true,
+                    results = results,
+                    problem = null,
+                    serverMessage = null,
+                )
             }
         } catch (e: SessionExpiredException) {
             _state.update { it.copy(searching = false) }
             onSessionExpired()
         } catch (e: ApiException) {
+            // A lookup that is not [PlaceSearchApi] — a stub, a preview —
+            // throws a plain ApiException, so the reason is derived from the
+            // status here as well rather than only inside the API class.
+            val problem = (e as? PlaceSearchException)?.problem ?: placeSearchProblem(e.status)
             _state.update {
                 if (PlaceSearchRules.normalize(it.query) != query) it
-                else it.copy(searching = false, searched = true, results = emptyList(), error = e.message)
+                else it.copy(
+                    searching = false,
+                    searched = true,
+                    results = emptyList(),
+                    problem = problem,
+                    serverMessage = e.message,
+                )
             }
         }
     }
