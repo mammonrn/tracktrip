@@ -160,6 +160,19 @@
     <string name="map_remove_point_message">\"%1$s\" จะหายไปจากแผนที่ของทุกคน</string>
     <string name="map_remove_point">ลบ</string>
 
+    <!-- ค้นหาสถานที่ด้วยชื่อ แทนการไล่หาบนแผนที่ -->
+    <string name="map_search_places">ค้นหาสถานที่</string>
+    <string name="map_search_label">ค้นหาสถานที่</string>
+    <string name="map_search_placeholder">อำเภอ ถนน ปั๊มน้ำมัน…</string>
+    <string name="map_search_empty">ไม่พบสถานที่ชื่อนี้</string>
+    <!-- สาเหตุที่ค้นหาไม่สำเร็จ แยกตามสาเหตุจริง ไม่ใช่ตามรหัส HTTP -->
+    <string name="map_search_not_deployed">เซิร์ฟเวอร์นี้ยังไม่มีระบบค้นหาสถานที่ — โค้ดฝั่งเซิร์ฟเวอร์เก่ากว่าแอป ลองใหม่ไม่ช่วย ต้องอัปเดตเซิร์ฟเวอร์ก่อน</string>
+    <string name="map_search_not_configured">เซิร์ฟเวอร์นี้ยังไม่ได้เปิดใช้การค้นหาสถานที่ (ยังไม่ได้ตั้ง API key) กดค้างบนแผนที่ยังใช้ได้ตามปกติ</string>
+    <string name="map_search_too_many">ค้นหาถี่เกินไป รอสักครู่แล้วลองใหม่</string>
+    <string name="map_search_upstream">บริการค้นหาสถานที่ไม่ตอบกลับ ลองใหม่อีกสักครู่</string>
+    <string name="map_search_offline">ติดต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบการเชื่อมต่อ</string>
+    <string name="map_search_failed">ค้นหาสถานที่ไม่สำเร็จในตอนนี้</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>

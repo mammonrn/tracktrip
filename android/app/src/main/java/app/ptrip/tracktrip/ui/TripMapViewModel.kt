@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.PlaceLookup
 import app.ptrip.tracktrip.data.PositionSocket
 import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -80,7 +81,26 @@ class TripMapViewModel(
     private val tripApi: TripApi,
     private val positionSocket: PositionSocket?,
     private val onSessionExpired: () -> Unit,
+    /**
+     * Place search, or null in a preview or a test that does not exercise it.
+     * The controller below does nothing at all when it is null, so nothing on
+     * the screen has to check.
+     */
+    placeSearchApi: PlaceLookup? = null,
 ) : ViewModel() {
+
+    /**
+     * Typing a place name instead of hunting for it on the map.
+     *
+     * Scoped to this view model so the debounce survives a recomposition —
+     * held in the composable it would restart on every keystroke, which is
+     * precisely the thing a debounce exists to prevent.
+     */
+    val placeSearch = PlaceSearchController(
+        scope = viewModelScope,
+        api = placeSearchApi,
+        onSessionExpired = onSessionExpired,
+    )
 
     /**
      * Folds live positions into the list as the server stores them.

@@ -36,12 +36,19 @@ object Speed {
      * How old this phone's own fix may be before its speed stops being worth
      * showing.
      *
-     * The top bar reads the last fix the device already has rather than asking
-     * for a new one — that is what makes it instant and free — but a fix from
-     * half an hour ago carries the speed the rider was doing half an hour ago,
-     * and showing that as "now" is worse than showing nothing.
+     * A fix carries the speed the rider was doing when it was taken, and
+     * showing that as "now" is worse than showing nothing.
+     *
+     * Twelve seconds, down from two minutes. Two minutes was set when the top
+     * bar read whatever fix the device happened to be holding — a cache the
+     * sharing service refreshed once a reporting cycle — and at that cadence
+     * anything tighter would have shown a dash most of the time. The readout
+     * has been on a live 1 Hz feed since; against that, twelve seconds is a
+     * dozen missed fixes in a row, which is a phone in a tunnel and not a
+     * phone doing 60. Anything longer is the readout quietly holding a stale
+     * number, which is precisely the "reads behind the bike" complaint.
      */
-    const val OWN_SPEED_MAX_AGE_MS = 2 * 60 * 1000L
+    const val OWN_SPEED_MAX_AGE_MS = 12_000L
 
     /**
      * This phone's own speed in km/h, or null when the fix is too old, has no

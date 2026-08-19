@@ -16,9 +16,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.border
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -35,6 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -73,7 +82,14 @@ import app.ptrip.tracktrip.map.initialCamera
 import app.ptrip.tracktrip.map.reportAgeMinutes
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
+import app.ptrip.tracktrip.ui.theme.AppLine
+import app.ptrip.tracktrip.ui.theme.AppRouteProgress
+import app.ptrip.tracktrip.ui.theme.AppRouteProgressCasing
+import app.ptrip.tracktrip.ui.theme.AppRouteProgressTrack
+import app.ptrip.tracktrip.ui.theme.AppSurfaceAlt
 import app.ptrip.tracktrip.ui.theme.AppSurface
+import app.ptrip.tracktrip.data.Place
+import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.RankIcon
@@ -87,6 +103,7 @@ import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
 import app.ptrip.tracktrip.ui.theme.HudReadout
 import app.ptrip.tracktrip.ui.theme.HudRouteIcon
+import app.ptrip.tracktrip.ui.theme.HudSearchIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
@@ -107,6 +124,15 @@ import org.osmdroid.views.overlay.Marker
  * to what it already was and nothing would happen.
  */
 data class MapFocus(val lat: Double, val lng: Double, val sequence: Int)
+
+/**
+ * A point waiting for a rider to say what it is.
+ *
+ * [name] is empty for a point pressed and held on the map — there is nothing
+ * to call it yet — and carries the place's own name when it came out of the
+ * search box, which is the entire saving of typing that a search offers.
+ */
+data class PendingPlacement(val point: LatLng, val name: String = "")
 
 private const val FOCUS_ZOOM = 16.0
 
@@ -144,6 +170,17 @@ fun TripMapScreen(
     onPlace: (MapPlacement, LatLng, String) -> Unit,
     onRemoveWaypoint: (Long) -> Unit,
     /**
+     * What the place search is showing, and the two things a rider does to it.
+     *
+     * An *addition* to pressing and holding the map, never a replacement:
+     * dropping a stop at the viewpoint you are standing at has no name to
+     * type, and a rider planning a route from the sofa has no idea where on
+     * the map "Mae Hong Son" is. Both gestures end in the same dialog.
+     */
+    searchState: PlaceSearchState = PlaceSearchState(),
+    onSearchQueryChanged: (String) -> Unit = {},
+    onSearchCleared: () -> Unit = {},
+    /**
      * When this phone last had a report accepted, or null when it is not
      * sharing on this trip.
      *
@@ -171,7 +208,12 @@ fun TripMapScreen(
     // it is. Held here rather than in the view model: nothing has happened
     // yet, and a half-finished gesture is not state the server needs to know
     // about.
-    var placing by remember { mutableStateOf<LatLng?>(null) }
+    var placing by remember { mutableStateOf<PendingPlacement?>(null) }
+
+    // Whether the search panel is open. A panel rather than a box that is
+    // always there: it covers the top of the route-progress bar while it is
+    // open, and a rider who is riding rather than planning is not typing.
+    var searching by rememberSaveable { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Waypoint?>(null) }
 
     // Who is driving the camera. See CameraRules — the rule that matters is
@@ -266,7 +308,9 @@ fun TripMapScreen(
                         // looking at a finished ride can place neither end
                         // nor a stop, and a dialog with no buttons is worse
                         // than no dialog.
-                        if (placementsAllowed(state.trip).isNotEmpty()) placing = point
+                        if (placementsAllowed(state.trip).isNotEmpty()) {
+                            placing = PendingPlacement(point)
+                        }
                     },
                     onWaypointTap = { waypoint ->
                         val allowed = MapPlacementRules.canRemoveWaypoint(
@@ -293,13 +337,28 @@ fun TripMapScreen(
                     remaining = RouteProgress.format(
                         RouteProgress.remainingKm(destination, myLocation)
                     ),
+                    // Taller than it was: the old insets gave up 168dp of a
+                    // screen the bar is the only thing on, and a short bar is
+                    // a short answer to "how much is left". The bottom inset
+                    // is what it is because the overview and centre-on-me
+                    // buttons live under it in the same corner.
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .padding(end = 10.dp, top = 96.dp, bottom = 72.dp),
+                        .padding(
+                            end = 12.dp,
+                            top = PROGRESS_BAR_TOP_INSET,
+                            bottom = PROGRESS_BAR_BOTTOM_INSET,
+                        ),
                 )
 
+                // Bottom *left*, not bottom right, since the progress bar was
+                // made long enough to be read: the two used to share the
+                // right-hand corner, and the buttons painted over the bottom
+                // 118dp of the bar — the part nearest the start of the ride.
+                // The right edge is the gauge now; the left holds the
+                // controls.
                 Column(
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     // The whole journey at once: this rider and both ends of
@@ -416,28 +475,60 @@ fun TripMapScreen(
             }
         }
 
-        MapOverlayBar(
-            title = state.trip?.name ?: stringResource(R.string.map_title),
-            subtitle = stringResource(
-                R.string.map_riders_placed,
-                state.placed.size,
-                state.members.size,
-            ),
-            speedKmh = mySpeedKmh,
-            reportAgeMinutes = FixAge.reportAgeMinutes(lastReportedAtMillis, nowMs),
-            error = state.error,
-            onBack = onBack,
-            modifier = Modifier.align(Alignment.TopStart),
-        )
+        Column(modifier = Modifier.align(Alignment.TopStart)) {
+            MapOverlayBar(
+                title = state.trip?.name ?: stringResource(R.string.map_title),
+                subtitle = stringResource(
+                    R.string.map_riders_placed,
+                    state.placed.size,
+                    state.members.size,
+                ),
+                speedKmh = mySpeedKmh,
+                reportAgeMinutes = FixAge.reportAgeMinutes(lastReportedAtMillis, nowMs),
+                error = state.error,
+                onBack = onBack,
+                // Offered only to a rider who has somewhere to put what they
+                // find. On a finished trip a member can place nothing, and a
+                // search whose every result opens a dialog with no buttons is
+                // worse than no search.
+                canSearch = placementsAllowed(state.trip).isNotEmpty(),
+                searchOpen = searching,
+                onToggleSearch = {
+                    searching = !searching
+                    if (!searching) onSearchCleared()
+                },
+            )
+
+            if (searching && placementsAllowed(state.trip).isNotEmpty()) {
+                PlaceSearchPanel(
+                    state = searchState,
+                    onQueryChanged = onSearchQueryChanged,
+                    onClear = onSearchCleared,
+                    onPick = { place ->
+                        // Straight to the map as well as into the dialog: a
+                        // rider deciding between two results wants to see
+                        // where they are, not read two addresses.
+                        sequence += 1
+                        camera = MapCamera.FREE
+                        focused = null
+                        focus = MapFocus(place.lat, place.lng, sequence)
+                        placing = PendingPlacement(LatLng(place.lat, place.lng), place.name)
+                        searching = false
+                    },
+                )
+            }
+        }
     }
 
-    placing?.let { point ->
+    placing?.let { pending ->
         PlacePointDialog(
-            point = point,
+            point = pending.point,
+            initialName = pending.name,
             options = placementsAllowed(state.trip),
             onPlace = { placement, name ->
-                onPlace(placement, point, name)
+                onPlace(placement, pending.point, name)
                 placing = null
+                onSearchCleared()
             },
             onDismiss = { placing = null },
         )
@@ -457,6 +548,173 @@ fun TripMapScreen(
         )
     }
 }
+
+
+/**
+ * Type a place name, pick it off a list, and place it.
+ *
+ * ## Why this sits under the top bar rather than in the dialog
+ *
+ * The long press already had a dialog, and putting the search inside it would
+ * mean pressing and holding somewhere on the map first — which is exactly the
+ * thing a rider who does not know where the place is cannot do. So the box
+ * opens from the header instead, and a result taken from it opens the *same*
+ * dialog with the coordinate and the name already filled in.
+ *
+ * It opens rather than sitting there because it covers the top of the
+ * route-progress bar while it is open, and a rider who is riding rather than
+ * planning is not typing.
+ *
+ * Nothing about the long press changes. It is still the way to place a point
+ * that has no name — the viewpoint you are standing at — and still the only
+ * one that works with the server's search key unset.
+ */
+@Composable
+private fun PlaceSearchPanel(
+    state: PlaceSearchState,
+    onQueryChanged: (String) -> Unit,
+    onClear: () -> Unit,
+    onPick: (Place) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(AppSurface.copy(alpha = 0.94f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        OutlinedTextField(
+            value = state.query,
+            onValueChange = onQueryChanged,
+            singleLine = true,
+            label = { Text(stringResource(R.string.map_search_label)) },
+            placeholder = { Text(stringResource(R.string.map_search_placeholder)) },
+            trailingIcon = {
+                // One slot, two jobs: the spinner while a request is out, and
+                // a way to empty the box once there is something in it. They
+                // never both apply — a search in flight has text behind it,
+                // and the spinner is the more urgent thing to say.
+                if (state.searching) {
+                    CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        color = AppPrimary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                } else if (state.query.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.map_search_clear_symbol),
+                        color = AppTextMuted,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .clickable(onClick = onClear)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = AppSurface,
+                unfocusedContainerColor = AppSurface,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (!state.hasPanel) return@Column
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .background(AppSurface, AppSearchPanelShape)
+                .border(1.dp, AppLine, AppSearchPanelShape),
+        ) {
+            state.problem?.let { problem ->
+                // Worded from the reason, not from the HTTP status. The
+                // status's own wording for a 404 is "That's no longer there.",
+                // which on a search box is a sentence about a place that has
+                // closed down — and what a 404 here actually means is that the
+                // server has no search route at all.
+                Text(
+                    text = placeSearchMessage(problem, state.serverMessage),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTextMuted,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
+
+            if (state.isEmpty) {
+                Text(
+                    text = stringResource(R.string.map_search_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTextMuted,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
+
+            LazyColumn(modifier = Modifier.heightIn(max = SEARCH_RESULTS_MAX_HEIGHT)) {
+                items(state.results, key = { it.key }) { place ->
+                    PlaceSearchRow(place = place, onClick = { onPick(place) })
+                }
+            }
+        }
+    }
+}
+
+/** One result: what it is called, and where that is. */
+@Composable
+private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = place.name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = AppText,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // The full address, which is what tells two places with the same name
+        // apart — and there are a great many 7-Elevens.
+        Text(
+            text = place.address,
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * What to say when a search fails, in the rider's own language.
+ *
+ * The two "search does not work here" cases are worded apart on purpose. Both
+ * are for somebody to fix rather than for the rider to retry, but they have
+ * different fixes — one needs the backend deployed, the other needs a key in
+ * `.env` — and the person reading this is very often the person who has to
+ * apply one of them.
+ */
+@Composable
+private fun placeSearchMessage(problem: PlaceSearchProblem, serverMessage: String?): String =
+    when (problem) {
+        PlaceSearchProblem.NOT_DEPLOYED -> stringResource(R.string.map_search_not_deployed)
+        PlaceSearchProblem.NOT_CONFIGURED -> stringResource(R.string.map_search_not_configured)
+        PlaceSearchProblem.TOO_MANY -> stringResource(R.string.map_search_too_many)
+        PlaceSearchProblem.UPSTREAM -> stringResource(R.string.map_search_upstream)
+        PlaceSearchProblem.OFFLINE -> stringResource(R.string.map_search_offline)
+        // The one case where the server knows something this app does not, so
+        // its own sentence is better than anything written here in advance.
+        PlaceSearchProblem.UNKNOWN ->
+            serverMessage?.takeIf { it.isNotBlank() } ?: stringResource(R.string.map_search_failed)
+    }
+
+/** Tall enough for four or five results, short enough to leave the map visible. */
+private val SEARCH_RESULTS_MAX_HEIGHT = 240.dp
+
+private val AppSearchPanelShape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
 
 /** What this rider may place on this trip. Null trip means nothing yet. */
 private fun placementsAllowed(trip: Trip?): List<MapPlacement> {
@@ -481,8 +739,19 @@ private fun PlacePointDialog(
     options: List<MapPlacement>,
     onPlace: (MapPlacement, String) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * The name the point arrives with, which is the searched place's own when
+     * it came from the search box and empty when it came from a long press.
+     *
+     * Keyed on the point rather than remembered flat: picking a second search
+     * result without closing the dialog has to replace the first one's name,
+     * and a bare `rememberSaveable` would keep showing the first.
+     */
+    initialName: String = "",
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable(point, initialName) {
+        mutableStateOf(initialName.take(MapPlacementRules.LABEL_MAX_LENGTH))
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -562,6 +831,22 @@ private fun formatCoordinate(value: Double): String =
  * is already there. It fills from the bottom, which is the direction a rider
  * reads a journey filling.
  *
+ * ## Drawn to be seen on a map, not on a card
+ *
+ * The first version was the theme blue on a grey track, 10dp wide, inset a
+ * long way at both ends — and on a real ride it was invisible. Everything
+ * about that is fixed here at once, because none of the three fixes works
+ * alone:
+ *
+ *  - **Orange, not blue.** OSM's daylight style is full of blue water. See
+ *    [AppRouteProgress].
+ *  - **A white casing.** The same thing a road atlas does with a coloured
+ *    route line: the fill then only has to contrast with its own outline,
+ *    never with whatever tile happens to be behind it.
+ *  - **Longer and thicker.** 14dp instead of 10, and nearly the full height
+ *    of the map instead of two thirds — a bar that is mostly inset reads as
+ *    a decoration rather than a gauge.
+ *
  * Straight-line distance, and the label says so — the app has no routing
  * engine and is not getting one to draw a bar. On a mountain road the number
  * will read low, and a bar that claimed to know the road would be wrong by
@@ -587,7 +872,7 @@ private fun RouteProgressBar(
     )
 
     Column(
-        modifier = modifier.width(PROGRESS_BAR_WIDTH),
+        modifier = modifier.width(PROGRESS_BAR_TOTAL_WIDTH),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -595,9 +880,13 @@ private fun RouteProgressBar(
             Text(
                 text = it,
                 style = MaterialTheme.typography.labelSmall,
-                color = AppText,
+                fontWeight = FontWeight.SemiBold,
+                // The one number on this bar, so it gets the bar's colour.
+                color = AppRouteProgress,
+                textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .background(AppSurface.copy(alpha = 0.92f), CircleShape)
+                    .background(AppSurface.copy(alpha = 0.96f), CircleShape)
+                    .border(1.dp, AppRouteProgress.copy(alpha = 0.5f), CircleShape)
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
@@ -605,37 +894,52 @@ private fun RouteProgressBar(
         if (fraction != null) {
             Canvas(
                 modifier = Modifier
-                    .width(PROGRESS_BAR_WIDTH)
+                    .width(PROGRESS_BAR_TOTAL_WIDTH)
                     .weight(1f)
             ) {
                 val x = size.width / 2f
-                val capRadius = size.width / 2f
+                val barWidth = PROGRESS_BAR_WIDTH.toPx()
+                val casingWidth = barWidth + 2 * PROGRESS_BAR_CASING.toPx()
+                val top = Offset(x, 0f)
+                val bottom = Offset(x, size.height)
+                val head = Offset(x, size.height * (1f - filled))
 
+                // White underneath the whole length, so the fill contrasts
+                // with its own outline rather than with the map.
                 drawLine(
-                    color = AppTextMuted.copy(alpha = 0.35f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = size.width,
+                    color = AppRouteProgressCasing,
+                    start = top,
+                    end = bottom,
+                    strokeWidth = casingWidth,
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = AppRouteProgressTrack.copy(alpha = 0.28f),
+                    start = top,
+                    end = bottom,
+                    strokeWidth = barWidth,
                     cap = StrokeCap.Round,
                 )
                 // Filled from the bottom: the rider is at the top of what they
                 // have done, with what is left above them.
                 drawLine(
-                    color = AppPrimary,
-                    start = Offset(x, size.height),
-                    end = Offset(x, size.height * (1f - filled)),
-                    strokeWidth = size.width,
+                    color = AppRouteProgress,
+                    start = bottom,
+                    end = head,
+                    strokeWidth = barWidth,
                     cap = StrokeCap.Round,
                 )
+                // The head of the fill, marked so the eye finds "here" without
+                // having to find the join between two colours.
                 drawCircle(
-                    color = AppSurface,
-                    radius = capRadius,
-                    center = Offset(x, size.height * (1f - filled)),
+                    color = AppRouteProgressCasing,
+                    radius = casingWidth / 2f,
+                    center = head,
                 )
                 drawCircle(
-                    color = AppPrimary,
-                    radius = capRadius * 0.7f,
-                    center = Offset(x, size.height * (1f - filled)),
+                    color = AppRouteProgress,
+                    radius = barWidth / 2f,
+                    center = head,
                 )
             }
 
@@ -645,15 +949,44 @@ private fun RouteProgressBar(
                 color = AppTextMuted,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .background(AppSurface.copy(alpha = 0.92f), CircleShape)
+                    .background(AppSurface.copy(alpha = 0.96f), CircleShape)
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
     }
 }
 
-/** Wide enough to read as a bar, narrow enough not to be a column of map. */
-private val PROGRESS_BAR_WIDTH = 10.dp
+/**
+ * The coloured part of the bar.
+ *
+ * 14dp rather than the 10 it was: on a 400dp-wide screen that is still under
+ * four per cent of the width, and it is the difference between a gauge and a
+ * hairline seen through a visor at speed.
+ */
+private val PROGRESS_BAR_WIDTH = 14.dp
+
+/** How far the white casing stands out past the fill, on each side. */
+private val PROGRESS_BAR_CASING = 2.dp
+
+/** The column's own width: the bar, its casing, and room for the round cap. */
+private val PROGRESS_BAR_TOTAL_WIDTH = PROGRESS_BAR_WIDTH + PROGRESS_BAR_CASING * 2
+
+/**
+ * How far the bar starts below the top of the map.
+ *
+ * Just clear of the floating header, which is about 68dp tall. The search
+ * panel opens *below* that and would cover the top of the bar — which is why
+ * it is a panel that opens rather than a box that is always there.
+ */
+private val PROGRESS_BAR_TOP_INSET = 76.dp
+
+/**
+ * How far the bar stops short of the bottom.
+ *
+ * A margin now, not a clearance: the controls that used to sit in this corner
+ * moved to the other one precisely so this number could be small.
+ */
+private val PROGRESS_BAR_BOTTOM_INSET = 16.dp
 
 /**
  * The floating header: trip name, the way back, and this rider's own speed.
@@ -670,6 +1003,9 @@ private fun MapOverlayBar(
     error: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    canSearch: Boolean = false,
+    searchOpen: Boolean = false,
+    onToggleSearch: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -697,6 +1033,17 @@ private fun MapOverlayBar(
                 }
             },
             trailing = {
+                if (canSearch) {
+                    HudIconButton(
+                        onClick = onToggleSearch,
+                        contentDescription = stringResource(R.string.map_search_places),
+                        icon = {
+                            HudSearchIcon(
+                                tint = if (searchOpen) AppPrimary else AppTextMuted
+                            )
+                        },
+                    )
+                }
                 HudReadout(
                     label = stringResource(R.string.map_own_speed),
                     value = speedText(speedKmh),

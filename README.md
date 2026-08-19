@@ -716,5 +716,49 @@ All variables are documented in `.env.example`:
 | `UPLOADS_DIR`             | Where uploaded avatars are written. Must be outside the repo (a deploy replaces the checkout) and must match the `root` in nginx's `location /uploads/` block. | `~/tracktrip/uploads` |
 | `HISTORY_RETENTION_DAYS`  | Days of `position_history` to keep for ended trips before cleanup deletes it. | `30`                     |
 | `SUPERUSER_EMAILS`        | Comma-separated emails granted the super-user role — see [Roles](#roles). The list is the authority: it is reconciled with `users.role` at every boot and sign-in, so removing an address revokes the role. | `krongkrangrn@gmail.com` |
+| `LOCATIONIQ_API_KEY`      | LocationIQ access token behind `GET /geocode/search`, the map's place search. Server-side only — see [Place search](#place-search). Unset is supported: that one route answers 503 and nothing else changes. | *(empty)* |
+| `LOCATIONIQ_COUNTRY_CODES`| Optional comma-separated ISO 3166-1 alpha-2 codes to bias searches towards, e.g. `th`. Unset searches the whole planet. | *(empty)* |
 
 Never commit a real `.env` file — it's excluded via `.gitignore`.
+
+## Place search
+
+`GET /geocode/search?q=<name>&limit=<n>` turns a typed place name into
+coordinates, so a rider can set a trip's start, finish or a stop by name
+instead of hunting for the spot on the map. Pressing and holding the map
+still does the same job and is unaffected — the search is an addition, not a
+replacement, and it is the long press that keeps working for a viewpoint with
+no name and on a server with no key set.
+
+```
+GET /geocode/search?q=Pai
+→ { "query": "Pai",
+    "cached": false,
+    "results": [
+      { "name": "Pai",
+        "address": "Pai, Mae Hong Son, Thailand",
+        "lat": 19.3583, "lng": 98.4406,
+        "kind": "town", "osm_id": "1234567" }
+    ] }
+```
+
+**The key lives here, not in the app.** LocationIQ authenticates with a single
+token on a free tier of 5,000 requests a day for the whole server. A token
+shipped inside the APK is one `unzip` away from being read and spent by
+somebody else, so the phone asks this server and the server holds the token.
+
+**Three things defend that quota**, and each covers a case the others do not:
+
+- the app waits for typing to stop before it asks (450 ms), so a nine-letter
+  place name costs one request rather than nine;
+- the server caches answers for ten minutes, so ten riders typing the same
+  name cost one request rather than ten;
+- the route is behind `requireAuth` and rate-limited to 12 searches a minute
+  **per rider** — keyed on the rider rather than the IP, because a group
+  riding together is usually behind one carrier NAT.
+
+**Without `LOCATIONIQ_API_KEY` set** the route answers `503` with
+`{"error": "Place search is not configured on this server."}` and the app
+shows that sentence under the search box. Nothing else on the server is
+affected. Filling the key in later needs no migration and no new build of the
+app: put it in `.env` on the VPS and `npm run pm2:restart`.

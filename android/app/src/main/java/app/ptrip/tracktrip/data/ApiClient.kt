@@ -14,14 +14,26 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** A failure with a message already fit to put in front of the user. */
-open class ApiException(message: String) : Exception(message)
+/**
+ * A failure with a message already fit to put in front of the user.
+ *
+ * [status] is the HTTP status it came from, or null when the request never
+ * got an answer at all — no connection, DNS, a timeout.
+ *
+ * Carried because the message alone is not enough for a caller that can say
+ * something better than this class can. The place search is the case that
+ * proved it: a 404 on `/geocode/search` means the *route is not on the
+ * server*, and the generic wording for a 404 — "That's no longer there." —
+ * sent a real debugging session looking for a missing place instead of a
+ * backend that had never been deployed.
+ */
+open class ApiException(message: String, val status: Int? = null) : Exception(message)
 
 /**
  * The session is gone for good — the refresh token was rejected, so there is
  * nothing left to retry with and the user has to sign in again.
  */
-class SessionExpiredException : ApiException("Your session expired. Please sign in again.")
+class SessionExpiredException : ApiException("Your session expired. Please sign in again.", 401)
 
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -130,6 +142,9 @@ class ApiClient(
         val response = try {
             client.newCall(builder.build()).execute()
         } catch (e: IOException) {
+            // No status: there was no response to take one from, and that is
+            // exactly what tells "the server said no" from "there was no
+            // server". Callers rely on the difference.
             throw ApiException("Can't reach the server. Check your connection.")
         }
         return Outcome(response)
@@ -188,7 +203,7 @@ class ApiClient(
             val payload = it.body.string()
             if (it.isSuccessful) return payload
 
-            throw ApiException(serverMessage(payload) ?: genericMessage(it.code))
+            throw ApiException(serverMessage(payload) ?: genericMessage(it.code), it.code)
         }
 
         /**

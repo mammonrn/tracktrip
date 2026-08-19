@@ -35,10 +35,13 @@ import app.ptrip.tracktrip.auth.GoogleSignInResult
 import app.ptrip.tracktrip.auth.requestGoogleIdToken
 import app.ptrip.tracktrip.data.AppContainer
 import app.ptrip.tracktrip.data.Trip
+import android.os.SystemClock
+import app.ptrip.tracktrip.location.LiveFix
 import app.ptrip.tracktrip.location.LocationFix
 import app.ptrip.tracktrip.location.updatesRetrying
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.Speed
+import kotlinx.coroutines.delay
 import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
@@ -513,15 +516,53 @@ private fun SignedInNavigation(
                 // and a collector of it then held its last value for ever.
                 // That is what left the speedometer showing a dash for a whole
                 // ride on a phone that was reporting normally.
-                LocationFix.updatesRetrying(context).collect { myFix = it }
+                LocationFix.updatesRetrying(context).collect { fix ->
+                    // Out-of-order delivery is real: a GNSS engine that has
+                    // been batching flushes its queue oldest-first, *after* a
+                    // newer fix has already arrived. Taking whatever came last
+                    // meant showing a speed from several seconds ago — which
+                    // is the "reads behind the bike" symptom, arriving through
+                    // a route no amount of tightening the cadence would fix.
+                    if (LiveFix.isNewer(myFix?.elapsedRealtimeNanos, fix.elapsedRealtimeNanos)) {
+                        myFix = fix
+                    }
+                }
             }
             val myLocation = myFix?.let { LatLng(it.latitude, it.longitude) }
-            val mySpeedKmh = myFix?.let { fix ->
-                Speed.ownKmh(
-                    metresPerSecond = fix.speed.takeIf { fix.hasSpeed() },
-                    fixAgeMs = System.currentTimeMillis() - fix.time,
-                )
+
+            /**
+             * The speed on the top bar.
+             *
+             * Held in its own state and recomputed on a timer rather than
+             * derived from [myFix] alone, because the *age* of a fix changes
+             * without the fix changing. Derived, a feed that went quiet left
+             * the last number on screen for ever — the staleness guard in
+             * [Speed.ownKmh] would never be re-evaluated, so a phone that lost
+             * GPS in a tunnel kept confidently displaying the speed it was
+             * doing on the way in.
+             *
+             * The age itself comes off the monotonic clock, not the wall
+             * clock: see [LiveFix]. That removes the satellite-versus-network
+             * clock skew this used to have to clamp around, and with it the
+             * last place a stale reading could hide.
+             */
+            var mySpeedKmh by remember { mutableStateOf<Int?>(null) }
+            LaunchedEffect(screen.tripId) {
+                while (true) {
+                    mySpeedKmh = myFix?.let { fix ->
+                        Speed.ownKmh(
+                            metresPerSecond = fix.speed.takeIf { fix.hasSpeed() },
+                            fixAgeMs = LiveFix.ageMs(
+                                nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+                                fixElapsedRealtimeNanos = fix.elapsedRealtimeNanos,
+                            ),
+                        )
+                    }
+                    delay(SPEED_TICK_MS)
+                }
             }
+
+            val searchState by mapViewModel.placeSearch.state.collectAsStateWithLifecycle()
 
             /**
              * Where the rider is, best effort: the phone's own idea first,
@@ -563,6 +604,9 @@ private fun SignedInNavigation(
                 centreOn = centreOn,
                 myLocation = myLocation,
                 mySpeedKmh = mySpeedKmh,
+                searchState = searchState,
+                onSearchQueryChanged = mapViewModel.placeSearch::onQueryChanged,
+                onSearchCleared = mapViewModel.placeSearch::clear,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
                     if (LocationFix.hasPermission(context)) centreOnMe() else requestLocation()
@@ -653,13 +697,28 @@ private fun settingsViewModelFactory(
         )
     }
 
+/**
+ * How often the speed readout re-checks how old its fix is.
+ *
+ * A second, matching the feed it is reading. It only writes state when the
+ * displayed number actually changes, so a rider holding a steady speed
+ * recomposes nothing.
+ */
+private const val SPEED_TICK_MS = 1_000L
+
 private fun tripMapViewModelFactory(
     container: AppContainer,
     tripId: Long,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
     factoryOf {
-        TripMapViewModel(tripId, container.tripApi, container.positionSocket, onSessionExpired)
+        TripMapViewModel(
+            tripId = tripId,
+            tripApi = container.tripApi,
+            positionSocket = container.positionSocket,
+            onSessionExpired = onSessionExpired,
+            placeSearchApi = container.placeSearchApi,
+        )
     }
 
 private fun profileViewModelFactory(

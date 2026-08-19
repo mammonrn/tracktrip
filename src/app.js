@@ -7,6 +7,7 @@ import { createInvitesRouter } from './routes/invites.js';
 import { createWaypointsRouter } from './routes/waypoints.js';
 import { createPositionsRouter } from './routes/positions.js';
 import { createSharingRouter } from './routes/sharing.js';
+import { createGeocodeRouter } from './routes/geocode.js';
 import { syncSuperuserRoles } from './auth/roles.js';
 import { noopHub } from './ws/hub.js';
 
@@ -16,8 +17,22 @@ import { noopHub } from './ws/hub.js';
  * exactly as it did before sockets existed, which is what every test that does
  * not care about them relies on, and what a deployment with the socket layer
  * switched off would do.
+ *
+ * [searchPlaces] is the forward geocoder behind `GET /geocode/search`. Also
+ * optional, and for a similar reason: a server with no LOCATIONIQ_API_KEY set
+ * still runs, and that one route answers 503 saying so rather than the whole
+ * app refusing to boot over a feature nobody on it is using yet.
  */
-export function createApp({ db, config, verifyGoogleIdToken, hub = noopHub }) {
+export function createApp({
+  db,
+  config,
+  verifyGoogleIdToken,
+  hub = noopHub,
+  searchPlaces = null,
+  // Where the place-search route writes its one line per search. Injected
+  // only so the tests can read it back instead of printing it.
+  searchLogger = console,
+}) {
   // Before the first request, so no route can be served by a process whose
   // idea of who is a super user is older than its configuration. Cheap: one
   // scan of a table that has as many rows as the app has riders.
@@ -37,6 +52,7 @@ export function createApp({ db, config, verifyGoogleIdToken, hub = noopHub }) {
   app.use(createWaypointsRouter({ db, config }));
   app.use(createPositionsRouter({ db, config, hub }));
   app.use(createSharingRouter({ db, config }));
+  app.use(createGeocodeRouter({ db, config, search: searchPlaces, logger: searchLogger }));
   return app;
 }
 

@@ -66,6 +66,11 @@ zxing-android-embedded = { group = "com.journeyapps", name = "zxing-android-embe
 # so the real implementation has to be on the test classpath for anything that
 # parses an API response to be testable without a device.
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+# Virtual time for the JVM tests. The place-search debounce is a delay, and a
+# test that actually waited 450ms per case would be a test nobody runs; this
+# advances the clock instead of the wall.
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 json = { group = "org.json", name = "json", version.ref = "json" }
 
 # EncryptedSharedPreferences for auth tokens at rest.

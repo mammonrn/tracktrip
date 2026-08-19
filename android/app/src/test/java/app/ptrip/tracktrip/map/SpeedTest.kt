@@ -2,7 +2,9 @@ package app.ptrip.tracktrip.map
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import app.ptrip.tracktrip.location.LIVE_INTERVAL_MS
 
 /**
  * Metres per second in, kilometres per hour out.
@@ -51,11 +53,49 @@ class SpeedTest {
 
     @Test
     fun `a stale fix reports no speed rather than an old one`() {
-        // The top bar reads the fix the device already holds. One from an hour
-        // ago carries the speed from an hour ago, and showing that as "now"
-        // is worse than showing a dash.
+        // A fix carries the speed the rider was doing when it was taken, and
+        // showing that as "now" is worse than showing a dash.
         assertNull(Speed.ownKmh(20f, fixAgeMs = Speed.OWN_SPEED_MAX_AGE_MS + 1))
         assertEquals(20, Speed.ownKmh(5.55f, fixAgeMs = Speed.OWN_SPEED_MAX_AGE_MS))
+    }
+
+    @Test
+    fun `the staleness limit is a handful of missed fixes, not a couple of minutes`() {
+        // The readout is on a live 1 Hz feed. It used to read whatever fix the
+        // device happened to be holding, refreshed once a reporting cycle, and
+        // the two-minute limit that suited that is a licence to display a
+        // two-minute-old speed against this one — which is the "reads behind
+        // the bike" complaint, arriving by the slowest possible route.
+        assertTrue(
+            "the limit should be a small multiple of the live feed's interval",
+            Speed.OWN_SPEED_MAX_AGE_MS <= 20 * LIVE_INTERVAL_MS
+        )
+        assertTrue(
+            "and not so tight that a fix or two lost in traffic blanks it",
+            Speed.OWN_SPEED_MAX_AGE_MS >= 5 * LIVE_INTERVAL_MS
+        )
+        // A minute-old reading is refused outright.
+        assertNull(Speed.ownKmh(20f, fixAgeMs = 60_000))
+    }
+
+    @Test
+    fun `nothing between the wire and the screen averages the speed`() {
+        // The bug report was "60 km/h on the clocks, about 10 short on the
+        // screen", and the first suspicion was smoothing in here. There is
+        // none, and this is what says so: one fix in, one number out, no
+        // history, no window. Two consecutive readings that differ by 20 km/h
+        // are shown as two readings that differ by 20 km/h.
+        assertEquals(36, Speed.ownKmh(10f, fixAgeMs = 0))
+        assertEquals(72, Speed.ownKmh(20f, fixAgeMs = 0))
+        assertEquals(36, Speed.ownKmh(10f, fixAgeMs = 0))
+    }
+
+    @Test
+    fun `sixty on the clocks is sixty on the screen`() {
+        // 16.6667 m/s is exactly 60 km/h. The conversion is not where the ten
+        // units went.
+        assertEquals(60, Speed.ownKmh(16.6667f, fixAgeMs = 0))
+        assertEquals(60, Speed.kmh(16.6667))
     }
 
     @Test

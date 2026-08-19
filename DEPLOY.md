@@ -87,6 +87,8 @@ nano .env
 | `DB_PATH` | Leave as `./data/trip-tracker.db` unless you have a reason to change it. |
 | `HISTORY_RETENTION_DAYS` | Leave as `30` unless told otherwise. |
 | `SUPERUSER_EMAILS` | Comma-separated emails that may see and manage every trip. The list is the authority — adding an address grants the role at the next restart, removing one takes it away. Leave unset to keep the built-in default. |
+| `LOCATIONIQ_API_KEY` | The access token from <https://my.locationiq.com/dashboard>, which powers the map's place search. **Leave it empty if you don't have one yet** — the server starts fine, place search answers 503 saying it isn't configured, and everything else works. See [Turning on place search](#turning-on-place-search) for filling it in later. |
+| `LOCATIONIQ_COUNTRY_CODES` | Optional. Comma-separated ISO country codes to bias results towards, e.g. `th`. Leave empty to search worldwide. |
 
 Save and exit (`nano`: `Ctrl+O`, `Enter`, then `Ctrl+X`).
 
@@ -238,6 +240,98 @@ pm2 logs tracktrip-api --lines 50
 sudo nginx -t
 sudo journalctl -u nginx -n 50 --no-pager
 ```
+
+---
+
+## Turning on place search
+
+Place search — typing "Pai" instead of hunting for it on the map — runs on
+LocationIQ, and needs an access token this server holds. Until it has one,
+the search answers `503 Place search is not configured on this server.` and
+riders place points by pressing and holding the map, which is what they did
+before and still works either way.
+
+**The key goes in `.env` on the VPS, and nowhere else.** Not in the Android
+app, not in a Gradle property, not in a GitHub secret. A key inside an APK is
+readable by anyone who downloads it, and this one meters a free tier of 5,000
+requests a day shared by every rider on this server.
+
+1. Sign in at <https://my.locationiq.com/dashboard> and copy the access token.
+2. On the VPS:
+
+   ```bash
+   cd /root/tracktrip
+   nano .env
+   ```
+
+   Set the line to your token, with no quotes and no spaces around the `=`:
+
+   ```
+   LOCATIONIQ_API_KEY=pk.0123456789abcdef0123456789abcdef
+   ```
+
+   Optionally bias results towards Thailand:
+
+   ```
+   LOCATIONIQ_COUNTRY_CODES=th
+   ```
+
+3. Restart, so the process picks up the new environment:
+
+   ```bash
+   npm run pm2:restart
+   ```
+
+4. Check it from the VPS itself. The route needs a signed-in rider, so the
+   quickest proof without a token is that it now asks for one rather than
+   reporting itself unconfigured:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     'http://127.0.0.1:4100/geocode/search?q=Pai'
+   ```
+
+   `401` means the key is loaded and the route is live (it is asking you to
+   sign in). Confirm end to end from the app: open a trip's map, tap the
+   magnifier in the header, and type a place name.
+
+No migration, no rebuild of the app, and no downtime beyond the restart —
+the phone has always been asking this server rather than LocationIQ, so the
+same APK starts working the moment the key is there.
+
+### Reading what the search says when it fails
+
+Each message on the phone names one cause, and each cause has one fix. They
+are worded apart deliberately: the first time this feature was tested, every
+failure looked the same on screen and the search was blamed for a backend
+that had never been deployed.
+
+| On the phone | What it means | Fix |
+|---|---|---|
+| "…isn't on this server yet — its backend is older than this app" | The server has no `/geocode/search` route. `curl` it and you get a 404 HTML page. | Deploy the backend: `git pull` on the VPS, then `npm run pm2:restart`. **Not** a key problem. |
+| "…isn't switched on for this server yet (no API key)" | Route is there; `LOCATIONIQ_API_KEY` is empty. | The steps above. |
+| "Too many searches just now" | This rider passed 12 searches a minute, or LocationIQ's daily quota is spent. | Wait. If it persists, the 5,000/day free tier is exhausted. |
+| "The place search service didn't answer" | This server could not reach LocationIQ, or LocationIQ errored. | Check the VPS's outbound network; see the log line below. |
+| "No place by that name." | It worked. LocationIQ genuinely has no match. | Try a fuller name — OSM stores malls as e.g. "เซ็นทรัลพลาซา เชียงราย", not "เซ็นทรัลเชียงราย". |
+
+### Did the server actually call LocationIQ?
+
+Every search writes one line, so this is answerable without guessing:
+
+```bash
+pm2 logs tracktrip-api --lines 50 | grep geocode
+```
+
+```
+geocode: upstream q="Pai" 3 result(s)        ← called LocationIQ, got 3
+geocode: cache q="Pai" 3 result(s)           ← answered from the 10-minute cache
+geocode: unconfigured q="Pai" LOCATIONIQ_API_KEY is not set
+geocode: failed q="Pai" 429 Place search is busy. Try again in a moment.
+```
+
+**No `geocode:` lines at all** while the phone is showing an error means the
+request never reached the route — which is the "backend is older than the
+app" case in the table above. The key is never written to the log.
 
 ---
 

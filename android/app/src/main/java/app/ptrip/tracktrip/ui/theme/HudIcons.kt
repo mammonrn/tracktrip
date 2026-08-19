@@ -303,3 +303,37 @@ fun HudRouteIcon(
         drawCircle(color = tint, radius = stroke * 1.15f, center = Offset(size.width * 0.78f, size.height * 0.26f))
     }
 }
+
+/**
+ * Search: a magnifier.
+ *
+ * The one glyph in the set that everybody already knows, so it is drawn plain
+ * — a circle and a handle at 45°, on the same stroke weight as the rest.
+ */
+@Composable
+fun HudSearchIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = AppPrimary,
+    iconSize: Dp = DEFAULT_ICON_SIZE,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val radius = size.minDimension * 0.28f
+        val centre = Offset(size.width * 0.42f, size.height * 0.42f)
+
+        drawCircle(
+            color = tint,
+            radius = radius,
+            center = centre,
+            style = Stroke(width = iconStroke(), cap = StrokeCap.Round),
+        )
+
+        // The handle starts on the circle's edge rather than at its centre,
+        // so the two strokes meet instead of the line crossing the lens.
+        val edge = radius * 0.707f
+        iconLine(
+            tint,
+            Offset(centre.x + edge, centre.y + edge),
+            Offset(size.width * 0.86f, size.height * 0.86f),
+        )
+    }
+}

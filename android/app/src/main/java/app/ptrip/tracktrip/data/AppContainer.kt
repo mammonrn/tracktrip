@@ -31,6 +31,17 @@ class AppContainer private constructor(context: Context) {
     val meApi: MeApi by lazy { MeApi(apiClient) }
 
     /**
+     * Place search, proxied by this app's own backend.
+     *
+     * Through the backend rather than straight to LocationIQ because the API
+     * key is metered and an APK cannot keep one — see [PlaceSearchApi]. The
+     * object exists whether or not the server has a key configured: without
+     * one the endpoint answers 503 with a message saying so, which is what
+     * the search panel shows.
+     */
+    val placeSearchApi: PlaceSearchApi by lazy { PlaceSearchApi(apiClient) }
+
+    /**
      * The live position feed. One per process, like the API client: it holds
      * an OkHttp client configured for long-lived connections, and a second
      * copy would mean a second connection pool for no gain.
