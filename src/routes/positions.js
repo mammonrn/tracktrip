@@ -11,21 +11,44 @@ const HEADING_MAX_DEGREES = 360;
 const BATTERY_MAX_PCT = 100;
 
 /**
- * A safety net, not a quota. The app reports a position every 45 seconds
- * while a rider is sharing — 1.33 a minute — so this leaves roughly seven and
- * a half times headroom: enough that no real rider will ever see it, while a
- * client stuck in a retry loop stops before it fills the database.
+ * A safety net, not a quota.
  *
- * Deliberately loose: tightening it towards the real cadence would start
- * catching legitimate bursts (a phone flushing a backlog after losing
- * signal) for no benefit, since the stale-fix rule already discards those.
- * If the app's cadence is ever taken below 6 seconds this ceiling has to move
- * with it — ReportCadenceTest on the Android side fails first if it does.
+ * ## Why this moved from 10 to 30
+ *
+ * The app reported every 45 seconds — 1.33 a minute — and 10 left roughly
+ * seven and a half times headroom. The cadence is now 10 seconds, which is 6
+ * a minute, and against a ceiling of 10 that headroom would have been about
+ * 1.4x once the boundary of a fixed window is accounted for (a perfectly
+ * periodic 10-second signal puts 6 or 7 posts in any given 60-second window,
+ * depending on phase).
+ *
+ * 1.4x is not a safety net. It is a ceiling the normal cadence brushes, and
+ * the first thing it would have caught is a rider whose phone ran a cycle
+ * slightly fast — a 429 on a real report, which this limiter exists
+ * specifically never to do.
+ *
+ * 30 restores the character it was given: five times the real cadence, so it
+ * only ever trips on something genuinely broken, while still stopping a
+ * client stuck in a retry loop long before it fills the database.
+ *
+ * The Android side keeps a copy of this number and a test that fails when the
+ * two part company — see `ReportCadence.BACKEND_MAX_POSTS_PER_MINUTE` and
+ * ReportCadenceTest. Changing this without changing that is the failure mode
+ * the pair exists to prevent.
  */
 export const POSITION_RATE_LIMIT = {
   windowMs: 60 * 1000,
-  max: 10,
+  max: 30,
 };
+
+/**
+ * The reporting cadence the ceiling above is sized against, in seconds.
+ *
+ * Duplicated from `ReportCadence.INTERVAL_MS` on the Android side for the
+ * same reason that file duplicates the ceiling: the two live in different
+ * languages and only a test on each side keeps the copies honest.
+ */
+export const CLIENT_REPORT_INTERVAL_SECONDS = 10;
 
 function serializePosition(row, { tripActive, nowIso }) {
   // The row carries the rider's sharing session, LEFT JOINed, so a member

@@ -546,6 +546,24 @@ fun TripMapScreen(
                         }
                     }
 
+                    // A trail switched on with nothing to draw looks exactly
+                    // like a broken button, and that is what it looked like on
+                    // a real device: the control works, the fetch works, and
+                    // the trip simply had no history — nothing is recorded
+                    // until somebody shares their position. So the row says so
+                    // rather than leaving the rider to guess which of the two
+                    // it was.
+                    if (state.trailsVisible && state.trailsEmpty) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.map_trails_none_yet),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppTextMuted,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+
                     if (state.orderedByProgress) {
                         item {
                             // The order is a guess from a heading, not a road
@@ -1415,7 +1433,7 @@ private fun RiderMap(
     // rebuilt on its own trigger, and a shared list would have one of them
     // clearing the other's overlays.
     val routeLines = remember { mutableListOf<Polyline>() }
-    val trailLines = remember { mutableMapOf<Long, Polyline>() }
+    val trailLines = remember { mutableListOf<Polyline>() }
 
     // Press and hold anywhere to place a point.
     //
@@ -1747,25 +1765,36 @@ private fun syncRouteLine(
 private fun syncTrails(
     view: MapView,
     trails: Map<Long, List<LatLng>>,
-    drawn: MutableMap<Long, Polyline>,
+    drawn: MutableList<Polyline>,
 ) {
-    (drawn.keys - trails.keys).toList().forEach { userId ->
-        drawn.remove(userId)?.let { view.overlays.remove(it) }
-    }
+    // Rebuilt wholesale, which is what the note above always claimed and what
+    // the code did not do: it kept one Polyline per rider, added it to the map
+    // empty and unpainted, and configured it afterwards.
+    //
+    // That is *not* a proven cause of anything — this runs on the main thread,
+    // so no draw pass can land between the add and the setPoints, and the data
+    // path either side of it is covered by tests. It is a consistency change:
+    // syncRouteLine, the one that visibly works, builds each line complete and
+    // only then adds it, and two shapes of the same job in one file is one
+    // shape too many when somebody is trying to work out why one of them drew
+    // nothing. A couple of hundred points every thirty seconds is not a budget
+    // worth keeping the difference for.
+    drawn.forEach { view.overlays.remove(it) }
+    drawn.clear()
 
     trails.forEach { (userId, points) ->
         if (points.size < 2) return@forEach
-        val line = drawn[userId] ?: Polyline(view).also {
-            drawn[userId] = it
-            // Bottom of the pile, under the route and under every pin.
-            view.overlays.add(0, it)
-            it.outlinePaint.strokeWidth = TRAIL_LINE_WIDTH_PX
-            it.outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-            it.outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
-            it.outlinePaint.color = riderColor(userId).copy(alpha = TRAIL_ALPHA).toArgb()
-            it.setOnClickListener { _, _, _ -> false }
+        val line = Polyline(view).apply {
+            setPoints(points.map { GeoPoint(it.lat, it.lng) })
+            outlinePaint.strokeWidth = TRAIL_LINE_WIDTH_PX
+            outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+            outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+            outlinePaint.color = riderColor(userId).copy(alpha = TRAIL_ALPHA).toArgb()
+            setOnClickListener { _, _, _ -> false }
         }
-        line.setPoints(points.map { GeoPoint(it.lat, it.lng) })
+        // Bottom of the pile, under the route and under every pin.
+        view.overlays.add(0, line)
+        drawn += line
     }
 
     view.invalidate()

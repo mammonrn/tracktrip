@@ -145,6 +145,12 @@
     -->
     <string name="map_trails_show">Show where everyone has been</string>
     <string name="map_trails_hide">Hide where everyone has been</string>
+    <!--
+      Shown when the trail is on and there is nothing to draw. Without it, a
+      switched-on trail with no history is indistinguishable from a switched-on
+      trail that is broken — which is exactly how it read on a real ride.
+    -->
+    <string name="map_trails_none_yet">No trail yet — trails are drawn from positions riders have shared</string>
     <string name="map_no_position">No position yet</string>
     <string name="map_last_seen">Last known position</string>
     <string name="map_you">%1$s (you)</string>

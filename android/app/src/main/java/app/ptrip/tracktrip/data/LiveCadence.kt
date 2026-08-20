@@ -26,10 +26,30 @@ object LiveCadence {
     /**
      * The poll when the socket is not carrying updates.
      *
-     * The cadence the app has used since positions started arriving every 45
-     * seconds: fast enough that a new fix is on screen within about twenty
-     * seconds of the server having it, and deliberately not equal to the
-     * reporting period so the two timers do not drift into lockstep.
+     * ## Why this stayed at twenty seconds when reporting went to ten
+     *
+     * Reporting used to be every 45 seconds, so this poll was never the
+     * limiting factor: a fix was on screen within twenty seconds of the server
+     * having it, and the server only had a new one every forty-five. At a
+     * ten-second cadence that reverses — the poll is now what a rider waits
+     * for, on this path.
+     *
+     * It stays at twenty anyway, for two reasons.
+     *
+     * The first is that this is not the path. The socket delivers every stored
+     * fix the moment it is stored, so a rider with a connection sees the whole
+     * benefit of the faster cadence without this number moving at all. This is
+     * the fallback for a socket that has dropped, and on that fallback the
+     * worst-case staleness has just improved from about a minute to twenty
+     * seconds without anybody changing anything.
+     *
+     * The second is what halving it would cost: every viewer's read traffic
+     * doubles, permanently, to take at most ten seconds off a path that is
+     * already better than it was yesterday. That is the wrong trade to make on
+     * a phone that is also now posting three times as often.
+     *
+     * Deliberately not equal to the reporting period either, so the two timers
+     * do not drift into lockstep.
      */
     const val POLL_MS = 20_000L
 

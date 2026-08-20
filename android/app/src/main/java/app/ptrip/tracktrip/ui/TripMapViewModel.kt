@@ -56,6 +56,18 @@ data class TripMapUiState(
     /** Whether the rider wants trails drawn. Remembered between rides. */
     val trailsVisible: Boolean = true,
     /**
+     * Whether the trail has been asked for and come back with nothing.
+     *
+     * Its own flag rather than `trails.isEmpty()`, because those are two
+     * different states with the same shape and only one of them is worth
+     * saying out loud: "not fetched yet" is a moment, and "fetched, and this
+     * trip has no history in the window" is a fact a rider needs, because it
+     * is the state where switching the trail on looks exactly like a broken
+     * button. Nothing is recorded until somebody actually shares their
+     * position, and a rider testing the map has usually not.
+     */
+    val trailsEmpty: Boolean = false,
+    /**
      * Whether [members] is ordered leader-first rather than by how recently
      * each rider reported.
      *
@@ -421,9 +433,12 @@ class TripMapViewModel(
         if (!_uiState.value.trailsVisible) return
         viewModelScope.launch {
             val nowMs = now()
-            val since = Breadcrumbs.sinceIso(nowMs, Breadcrumbs.newest(trailPoints))
-            val trail = try {
-                tripApi.trail(tripId, sinceIso = since)
+            // The loop that chases a truncated answer lives in Breadcrumbs so
+            // it can be tested against a stub — see Breadcrumbs.collect.
+            trailPoints = try {
+                Breadcrumbs.collect(trailPoints, nowMs) { since, limit ->
+                    tripApi.trail(tripId, sinceIso = since, limit = limit)
+                }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
                 return@launch
@@ -431,11 +446,11 @@ class TripMapViewModel(
                 return@launch
             }
 
-            trailPoints = Breadcrumbs.merge(trailPoints, trail.points, nowMs)
             // Recomputed even when nothing arrived: the window is a moving
             // one, so the tail of every line ages out whether or not the head
             // grew.
-            _uiState.update { it.copy(trails = Breadcrumbs.byRider(trailPoints, nowMs)) }
+            val lines = Breadcrumbs.byRider(trailPoints, nowMs)
+            _uiState.update { it.copy(trails = lines, trailsEmpty = lines.isEmpty()) }
         }
     }
 
@@ -451,7 +466,13 @@ class TripMapViewModel(
         val visible = !_uiState.value.trailsVisible
         if (!visible) trailPoints = emptyList()
         _uiState.update {
-            it.copy(trailsVisible = visible, trails = if (visible) it.trails else emptyMap())
+            it.copy(
+                trailsVisible = visible,
+                trails = if (visible) it.trails else emptyMap(),
+                // Switching on says nothing yet — the fetch has not run. Only
+                // the fetch coming back empty earns the message.
+                trailsEmpty = false,
+            )
         }
         onTrailsVisibleChanged(visible)
         // Not refetched here: the screen's own loop is keyed on this flag and
