@@ -295,4 +295,5 @@
     <string name="error_cancelled_or_aborted">Google ปิดหน้าเข้าสู่ระบบไปโดยไม่ได้ส่งบัญชีกลับมา ถ้าคุณไม่ได้กดยกเลิกเอง เป็นไปได้ว่า package name และใบรับรองของบิลด์นี้ยังไม่ได้ลงทะเบียนในโปรเจกต์ Google Cloud ดูรายละเอียดได้ใน logcat แท็ก TracktripSignIn</string>
     <string name="error_sign_in_failed">เข้าสู่ระบบด้วย Google ไม่สำเร็จ ลองใหม่อีกครั้ง</string>
     <string name="error_unexpected_credential">ได้ข้อมูลรับรองชนิดที่ไม่คาดคิดจาก Google</string>
+    <string name="error_active_trip_exists">คุณกำลังอยู่ในทริป \"%1$s\" อยู่แล้ว จบทริปนั้นก่อนจึงจะเริ่มหรือเข้าร่วมทริปใหม่ได้</string>
 </resources>

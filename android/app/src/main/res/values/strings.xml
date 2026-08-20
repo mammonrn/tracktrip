@@ -401,6 +401,17 @@
     <string name="invite_share_chooser">Share invite</string>
     <string name="language_system">Match my phone</string>
 
+    <!--
+      The one server refusal the app words itself.
+      Everywhere else the backend's own English `error` string is shown, which
+      keeps the app's rules in step with the server's. This one is different:
+      a rider meets it the first time they forget to end a ride, it stands
+      between them and the thing they opened the app to do, and the trip's name
+      is the half that matters — "you already have an active trip" sends
+      somebody to a list of forty to work out which.
+    -->
+    <string name="error_active_trip_exists">You\'re already on \"%1$s\". End that trip before starting or joining another.</string>
+
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>
     <!--

@@ -168,19 +168,46 @@ duration there is consenting. Android's location dialog is raised only when the
 switch is about to start sending, and never when turning it off — a kill switch
 that waits on a dialog is not a kill switch.
 
-#### One active trip per rider is an assumption, not a constraint
+#### One active trip per rider — now a backend rule
 
-Nothing enforces it. `trips` has no such constraint, `POST /trips` no such
-guard, accepting an invite and redeeming a join code neither, and
-`sharing_sessions` is keyed `(trip_id, user_id)` — so the server would happily
-hold two live sessions for one rider. The **phone** is what makes it one:
-`SharingState` holds a single `ActiveSharing`.
+It began as an assumption this screen relied on and nothing enforced. The
+backend enforces it now: `POST /trips`, accepting an invite and redeeming a
+join code all answer `409` while the caller is already on an active trip, with
+a trigger under them (migration `0013`). The root README has the rule; what
+matters here is that the trip list can no longer contain two running trips for
+one rider, so the switch never has to choose.
 
-`DeviceSharing.onSwitched` therefore takes the **first** running trip rather
-than asserting there is only one. `GET /trips` orders `created_at DESC, id DESC`,
-so that is the most recently started — the one somebody who has somehow left two
-trips open is actually riding. Deliberately not a picker: the picker is what
-this change removed.
+`DeviceSharing.onSwitched` still takes the **first** running trip rather than
+asserting there is only one, and that is not belt-and-braces for its own sake.
+The rule was added after the fact and deliberately does not evict anybody who
+was already on two — their trips are real rides with positions in them — so
+those riders exist, and the switch has to do something sensible for them.
+`GET /trips` orders `created_at DESC, id DESC`, so the first is the most
+recently started: the one somebody with two open trips is actually riding.
+Deliberately not a picker; the picker is what this change removed.
+
+### Being refused for being mid-ride
+
+The client shows the server's own `error` string for any refusal, which keeps
+the app's rules in step with the server's — and leaves them in English on a
+phone that may be set to Thai. That is the right trade for a message a rider
+meets once. It is the wrong one for this refusal, which every rider meets the
+first time they forget to end a ride, and which stands between them and the
+thing they opened the app to do.
+
+So the backend sends `code: "active_trip_exists"` and the trip that is in the
+way, `ApiClient` turns that one body into `ActiveTripException`, and
+[`ui/ApiErrorText.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/ApiErrorText.kt) words it in the
+rider's language with the trip **named** — "you already have an active trip"
+sends somebody to a list of forty to work out which, and the answer is usually
+a ride they forgot to end months ago. The server's sentence stays as the
+fallback for a build talking to a server that predates the code, and every
+other failure still prints exactly what the server said.
+
+Three screens can meet it: **Create trip**, **Scan to join**, and the trip
+list, when an invitation is accepted. A refused invite stays pending on the
+server, so nothing is taken from the rider by the refusal.
 
 ## The trip list
 

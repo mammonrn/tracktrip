@@ -36,11 +36,19 @@ function setup() {
     return new Date(BASE_TIME + joinSequence * 60_000).toISOString();
   };
 
-  /** A trip with the given members, joined in the order listed. */
-  const addTrip = (name, ownerId, memberIds = []) => {
+  /**
+   * A trip with the given members, joined in the order listed.
+   *
+   * Ended by default, because every trip these tests build except the one
+   * under test is a *past* ride — that is what "ridden with before" counts.
+   * It also has to be: one active trip per rider (migration 0013), so a
+   * fixture that left a rider's whole history running would be building a
+   * state the API refuses to create.
+   */
+  const addTrip = (name, ownerId, memberIds = [], { status = 'ended' } = {}) => {
     const tripId = Number(
-      db.prepare('INSERT INTO trips (name, owner_id) VALUES (?, ?)').run(name, ownerId)
-        .lastInsertRowid
+      db.prepare('INSERT INTO trips (name, owner_id, status) VALUES (?, ?, ?)')
+        .run(name, ownerId, status).lastInsertRowid
     );
     const insertMember = db.prepare(
       'INSERT INTO trip_members (trip_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)'
@@ -65,7 +73,7 @@ test('suggests riders from past trips, and not the ones already here', async () 
   const alreadyHere = addUser('alreadyhere');
 
   addTrip('Last year', me, [oldFriend, alreadyHere]);
-  const newTrip = addTrip('This year', me, [alreadyHere]);
+  const newTrip = addTrip('This year', me, [alreadyHere], { status: 'active' });
 
   const res = await suggestions(app, newTrip, tokenFor(me));
 
@@ -84,7 +92,7 @@ test('never suggests the rider asking', async () => {
   const friend = addUser('friend');
 
   addTrip('Last year', me, [friend]);
-  const newTrip = addTrip('This year', me);
+  const newTrip = addTrip('This year', me, [], { status: 'active' });
 
   const res = await suggestions(app, newTrip, tokenFor(me));
 
@@ -103,7 +111,7 @@ test('someone met on a trip run by somebody else still counts', async () => {
   // A trip I was only a member of. The other guest is still someone I have
   // ridden with, which is the whole question this endpoint answers.
   addTrip('Somebody else\'s ride', host, [me, strangerAtTheStop]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -120,7 +128,7 @@ test('someone I have never ridden with is not suggested', async () => {
   const theirFriend = addUser('theirfriend');
 
   addTrip('Not my trip', unrelated, [theirFriend]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -136,7 +144,7 @@ test('a rider met on several trips is offered once, with the count', async () =>
   addTrip('Ages ago', me, [often]);
   addTrip('A while back', me, [once]);
   addTrip('Recently', me, [often, once]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -161,7 +169,7 @@ test('the rider ridden with most often comes first, not the most recent', async 
   addTrip('March', me, [regular]);
   // The most recent trip, but the only one with this rider on it.
   addTrip('April', me, [metOnce]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -182,7 +190,7 @@ test('riders on the same count fall back to who was ridden with most recently', 
 
   addTrip('First', me, [earlier]);
   addTrip('Second', me, [later]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -205,7 +213,7 @@ test('everyone is offered — there is no cap', async () => {
     addTrip(`Trip ${i}`, me, [friend]);
   }
 
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
   const res = await suggestions(app, mine, tokenFor(me));
 
   assert.equal(res.body.length, 15);
@@ -222,7 +230,7 @@ test('suggestions carry the username the app prefers to show', async () => {
   const friend = addUser('friend');
   db.prepare('UPDATE users SET username = ? WHERE id = ?').run('speedy', friend);
   addTrip('Last year', me, [friend]);
-  const mine = addTrip('Mine', me);
+  const mine = addTrip('Mine', me, [], { status: 'active' });
 
   const res = await suggestions(app, mine, tokenFor(me));
 
@@ -235,7 +243,7 @@ test('members cannot see suggestions for a trip they do not own', async () => {
   const owner = addUser('owner');
   const member = addUser('member');
   const stranger = addUser('stranger');
-  const trip = addTrip('Pai run', owner, [member]);
+  const trip = addTrip('Pai run', owner, [member], { status: 'active' });
 
   // Suggestions feed the invite form, which is owner-only — offering them to
   // someone whose tap would 403 would be worse than not offering them.
@@ -248,7 +256,7 @@ test('an ended trip has nothing to suggest', async () => {
   const me = addUser('me');
   const friend = addUser('friend');
   addTrip('Last year', me, [friend]);
-  const trip = addTrip('This year', me);
+  const trip = addTrip('This year', me, [], { status: 'active' });
   db.prepare("UPDATE trips SET status = 'ended' WHERE id = ?").run(trip);
 
   assert.equal((await suggestions(app, trip, tokenFor(me))).status, 409);
@@ -257,7 +265,7 @@ test('an ended trip has nothing to suggest', async () => {
 test('suggestions need a signed-in rider', async () => {
   const { app, addUser, addTrip } = setup();
   const me = addUser('me');
-  const trip = addTrip('Mine', me);
+  const trip = addTrip('Mine', me, [], { status: 'active' });
 
   assert.equal((await supertest(app).get(`/trips/${trip}/suggested-invitees`)).status, 401);
 });

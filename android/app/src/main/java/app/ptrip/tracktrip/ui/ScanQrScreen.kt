@@ -55,6 +55,8 @@ import com.journeyapps.barcodescanner.DefaultDecoderFactory
 fun ScanQrScreen(
     joining: Boolean,
     error: String?,
+    /** Set when the join was refused for a trip still running — see [apiErrorText]. */
+    blockedByTripName: String? = null,
     onCodeScanned: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -86,7 +88,7 @@ fun ScanQrScreen(
             backContentDescription = stringResource(R.string.back),
         )
 
-        error?.let { HudError(it) }
+        apiErrorText(error, blockedByTripName)?.let { HudError(it) }
 
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth(),

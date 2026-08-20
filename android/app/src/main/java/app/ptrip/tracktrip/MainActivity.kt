@@ -489,6 +489,7 @@ private fun SignedInNavigation(
             ScanQrScreen(
                 joining = joinState.joining,
                 error = joinState.error,
+                blockedByTripName = joinState.blockedByTripName,
                 onCodeScanned = { code ->
                     joinViewModel.join(code) { trip ->
                         // Straight to the trip that was just joined — the
@@ -511,6 +512,7 @@ private fun SignedInNavigation(
             CreateTripScreen(
                 creating = createState.creating,
                 error = createState.error,
+                blockedByTripName = createState.blockedByTripName,
                 onCreate = { name ->
                     createViewModel.create(name) { trip ->
                         // Straight into the new trip: the next thing anyone

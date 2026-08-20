@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.data.ActiveTripException
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.Trip
@@ -15,6 +16,8 @@ import kotlinx.coroutines.launch
 data class JoinTripUiState(
     val joining: Boolean = false,
     val error: String? = null,
+    /** The trip already running that this join was refused for, if it was. */
+    val blockedByTripName: String? = null,
 )
 
 /**
@@ -41,13 +44,18 @@ class JoinTripViewModel(
         if (_uiState.value.joining) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(joining = true, error = null) }
+            _uiState.update { it.copy(joining = true, error = null, blockedByTripName = null) }
             try {
                 val result = tripApi.joinByCode(code)
                 _uiState.update { it.copy(joining = false) }
                 onJoined(result.trip)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
+            } catch (e: ActiveTripException) {
+                // Scanning a friend's code while still out on your own ride.
+                _uiState.update {
+                    it.copy(joining = false, error = e.message, blockedByTripName = e.tripName)
+                }
             } catch (e: ApiException) {
                 // The server's wording is better than anything decided here:
                 // an expired code and an unknown one are different problems

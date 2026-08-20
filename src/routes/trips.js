@@ -14,6 +14,11 @@ import {
   serializeJoinCode,
 } from '../trips/joinCodes.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
+import {
+  activeTripConflict,
+  activeTripFor,
+  isOneActiveTripAbort,
+} from '../trips/activeTrip.js';
 import { progressFor } from '../users/levels.js';
 
 const NAME_MIN_LENGTH = 1;
@@ -206,6 +211,11 @@ export function createTripsRouter({ db, config }) {
    * Creates a trip. `origin` and `destination` are optional here — a rider
    * naming a trip from the trip list often has no idea where it is going yet,
    * and PATCH below is how they fill it in later.
+   *
+   * Refused while the rider is already out on one: see trips/activeTrip.js.
+   * The check is here and the enforcement is in migration 0013 — this exists
+   * to produce a sentence that names the trip in the way, which a trigger
+   * cannot.
    */
   router.post('/trips', auth, (req, res) => {
     const { error, value } = validateTripInput(req.body);
@@ -218,7 +228,22 @@ export function createTripsRouter({ db, config }) {
       return res.status(400).json({ error: endpoints.error });
     }
 
-    const tripId = insertTrip(value.name, req.user.id, endpoints.value);
+    const held = activeTripFor(db, req.user.id);
+    if (held) {
+      return res.status(409).json(activeTripConflict(held));
+    }
+
+    let tripId;
+    try {
+      tripId = insertTrip(value.name, req.user.id, endpoints.value);
+    } catch (e) {
+      // The trigger fired, so another request for this rider landed in the
+      // gap above. A conflict either way — not a server fault.
+      if (isOneActiveTripAbort(e)) {
+        return res.status(409).json(activeTripConflict(activeTripFor(db, req.user.id)));
+      }
+      throw e;
+    }
     const created = db.prepare('SELECT * FROM trips WHERE id = ?').get(tripId);
     res.status(201).json(serializeTrip(created, { role: 'owner' }));
   });
@@ -552,9 +577,24 @@ export function createTripsRouter({ db, config }) {
         .get(trip.id, req.user.id);
 
       // Already a member is a success, not a conflict: two riders scanning the
-      // same QR twice should both end up looking at the trip.
+      // same QR twice should both end up looking at the trip. Which is also
+      // why the rule below excludes this trip — scanning a code for the ride
+      // you are already on must not be refused for being that ride.
       if (!existing) {
-        joinByCode(trip.id, req.user.id);
+        const held = activeTripFor(db, req.user.id, { excludeTripId: trip.id });
+        if (held) {
+          return res.status(409).json(activeTripConflict(held));
+        }
+        try {
+          joinByCode(trip.id, req.user.id);
+        } catch (e) {
+          if (isOneActiveTripAbort(e)) {
+            return res
+              .status(409)
+              .json(activeTripConflict(activeTripFor(db, req.user.id, { excludeTripId: trip.id })));
+          }
+          throw e;
+        }
       }
 
       const membership = db

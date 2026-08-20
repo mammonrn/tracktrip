@@ -2,6 +2,11 @@ import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { normalizeEmail } from '../trips/email.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
+import {
+  activeTripConflict,
+  activeTripFor,
+  isOneActiveTripAbort,
+} from '../trips/activeTrip.js';
 
 export function createInvitesRouter({ db, config }) {
   const router = Router();
@@ -75,7 +80,24 @@ export function createInvitesRouter({ db, config }) {
       return res.status(409).json({ error: 'trip has ended' });
     }
 
-    acceptInvite(invite.id, invite.trip_id, req.user.id, new Date().toISOString());
+    // One active trip per rider — see trips/activeTrip.js. The invite is left
+    // pending rather than consumed, so it is still there to accept once the
+    // trip in the way has ended.
+    const held = activeTripFor(db, req.user.id, { excludeTripId: trip.id });
+    if (held) {
+      return res.status(409).json(activeTripConflict(held));
+    }
+
+    try {
+      acceptInvite(invite.id, invite.trip_id, req.user.id, new Date().toISOString());
+    } catch (e) {
+      if (isOneActiveTripAbort(e)) {
+        return res
+          .status(409)
+          .json(activeTripConflict(activeTripFor(db, req.user.id, { excludeTripId: trip.id })));
+      }
+      throw e;
+    }
 
     const accepted = db.prepare('SELECT * FROM trip_invites WHERE id = ?').get(invite.id);
     res.json({

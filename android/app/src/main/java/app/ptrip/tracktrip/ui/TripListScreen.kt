@@ -127,7 +127,7 @@ fun TripListScreen(
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )
 
-        state.error?.let { HudError(it) }
+        apiErrorText(state.error, state.blockedByTripName)?.let { HudError(it) }
 
         LazyColumn(
             modifier = Modifier.weight(1f),

@@ -84,6 +84,23 @@ const endTrip = (app, tripId, ownerToken) =>
 
 const validFix = { lat: 18.79, lng: 98.98 };
 
+/**
+ * Lets a fixture build the one state migration 0013 refuses to create: a
+ * rider on two active trips.
+ *
+ * Dropping the triggers is deliberate rather than a way round the rule. The
+ * rule stops that state being *made* from now on; it does not unmake the
+ * riders already in it, because their trips are real rides with real positions
+ * in them and evicting one is a decision for whoever owns the data — see the
+ * migration. So those riders exist, and what these tests hold is that the
+ * readers keep their two trips apart, which was true before the rule and has
+ * to stay true for as long as anybody is in that state.
+ */
+function allowLegacySecondActiveTrip(db) {
+  db.exec('DROP TRIGGER IF EXISTS trip_members_one_active_trip');
+  db.exec('DROP TRIGGER IF EXISTS trips_one_active_trip_on_reactivate');
+}
+
 // ─── POST ───────────────────────────────────────────────────────────────────
 
 test('POST stores a rider position and GET reads it back', async () => {
@@ -335,6 +352,7 @@ test('a member who has never reported is still listed, with null position fields
 
 test("GET does not leak another trip's positions", async () => {
   const { app, db, tripId, ownerToken, ownerId, memberToken, memberId } = setup();
+  allowLegacySecondActiveTrip(db);
 
   const otherTripId = Number(
     db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Other', ?, 'active')").run(ownerId)
@@ -499,6 +517,7 @@ test('each rider is credited only for their own riding', async () => {
 
 test('distance is measured within a trip, not across two of them', async () => {
   const { app, db, tripId, ownerToken, ownerId } = setup();
+  allowLegacySecondActiveTrip(db);
 
   const otherTripId = Number(
     db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Bangkok', ?, 'active')").run(ownerId)
@@ -718,6 +737,7 @@ test('a non-member of an ended trip still gets 403, on reads and writes alike', 
 
 test('ending one trip does not close positions on another', async () => {
   const { app, db, tripId, ownerToken, ownerId } = setup();
+  allowLegacySecondActiveTrip(db);
 
   const otherTripId = Number(
     db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Still riding', ?, 'active')").run(

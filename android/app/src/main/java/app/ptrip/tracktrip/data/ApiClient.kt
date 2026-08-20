@@ -30,6 +30,30 @@ import java.util.concurrent.TimeUnit
 open class ApiException(message: String, val status: Int? = null) : Exception(message)
 
 /**
+ * The backend refused because this rider is already out on a trip.
+ *
+ * A class of its own rather than a 409 with a message, because this is the one
+ * refusal the app can word better than the server can. Server messages are
+ * English — the client shows them verbatim, which is right for "trip has
+ * ended" and for everything else a rider meets once — and this one they will
+ * meet whenever they forget to end a ride, on a phone that may well be set to
+ * Thai. So the body carries `code` and the trip that is in the way, and the
+ * screens say it in the rider's own language, with [message] left as the
+ * fallback for a server that has not learned the code yet.
+ */
+class ActiveTripException(
+    message: String,
+    val tripId: Long?,
+    val tripName: String,
+) : ApiException(message, 409) {
+
+    companion object {
+        /** The `code` the backend sends with it. See src/trips/activeTrip.js. */
+        const val CODE = "active_trip_exists"
+    }
+}
+
+/**
  * The session is gone for good — the refresh token was rejected, so there is
  * nothing left to retry with and the user has to sign in again.
  */
@@ -203,7 +227,36 @@ class ApiClient(
             val payload = it.body.string()
             if (it.isSuccessful) return payload
 
-            throw ApiException(serverMessage(payload) ?: genericMessage(it.code), it.code)
+            val message = serverMessage(payload) ?: genericMessage(it.code)
+            throw activeTripRefusal(payload, message) ?: ApiException(message, it.code)
+        }
+
+        /**
+         * The one refusal the app re-words, or null for every other failure.
+         *
+         * Read defensively: a body missing the trip it named would leave the
+         * screens with a blank to interpolate, and a plain [ApiException]
+         * carrying the server's own sentence is a better answer than "You're
+         * already on \"\"".
+         */
+        private fun activeTripRefusal(payload: String, message: String): ApiException? = try {
+            val json = JSONObject(payload)
+            val trip = json.optJSONObject("active_trip")
+            val name = trip?.optString("name").orEmpty()
+            if (json.optString("code") != ActiveTripException.CODE ||
+                trip == null ||
+                name.isEmpty()
+            ) {
+                null
+            } else {
+                ActiveTripException(
+                    message = message,
+                    tripId = trip.optLong("id").takeIf { it > 0L },
+                    tripName = name,
+                )
+            }
+        } catch (e: Exception) {
+            null
         }
 
         /**

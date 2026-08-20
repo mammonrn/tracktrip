@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.data.ActiveTripException
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.Invite
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -20,6 +21,14 @@ data class TripsUiState(
     val trips: List<Trip> = emptyList(),
     val invites: List<Invite> = emptyList(),
     val error: String? = null,
+    /**
+     * The trip already running that an invite could not be accepted onto.
+     *
+     * Kept apart from [error] because the screen can say this one better than
+     * the server can — see [ActiveTripException]. Null for every other
+     * failure, which is when [error] is the whole answer.
+     */
+    val blockedByTripName: String? = null,
     /** Id of the invite currently being accepted, so only its row shows a spinner. */
     val acceptingInviteId: Long? = null,
     /**
@@ -107,7 +116,9 @@ class TripsViewModel(
         if (_uiState.value.acceptingInviteId != null) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(acceptingInviteId = invite.id, error = null) }
+            _uiState.update {
+                it.copy(acceptingInviteId = invite.id, error = null, blockedByTripName = null)
+            }
             try {
                 tripApi.acceptInvite(invite.id)
                 // Re-read rather than patch the list locally: accepting also
@@ -122,6 +133,17 @@ class TripsViewModel(
                 loadPodiums()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
+            } catch (e: ActiveTripException) {
+                // Invited to a ride while still out on one. The invite stays
+                // pending on the server, so the list below is unchanged and
+                // the rider can take it up once they have ended theirs.
+                _uiState.update {
+                    it.copy(
+                        acceptingInviteId = null,
+                        error = e.message,
+                        blockedByTripName = e.tripName,
+                    )
+                }
             } catch (e: ApiException) {
                 _uiState.update { it.copy(acceptingInviteId = null, error = e.message) }
             }
