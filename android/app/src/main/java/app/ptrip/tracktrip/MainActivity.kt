@@ -639,6 +639,8 @@ private fun SignedInNavigation(
                 onCloseRouteSetup = mapViewModel::closeRouteSetup,
                 onPickRoutePoint = mapViewModel::pickRoutePoint,
                 onRemoveRouteStop = mapViewModel::removeRouteStop,
+                onRemoveRouteRow = mapViewModel::removeRouteRow,
+                onMoveRoutePoint = mapViewModel::moveRoutePoint,
                 onConfirmRoute = mapViewModel::confirmRoute,
                 hasLocationPermission = hasLocationPermission,
                 onRefresh = mapViewModel::refresh,

@@ -162,7 +162,6 @@
     <string name="map_remove_point">ลบ</string>
 
     <!-- ค้นหาสถานที่ด้วยชื่อ แทนการไล่หาบนแผนที่ -->
-    <string name="map_search_label">ค้นหาสถานที่</string>
     <string name="map_search_placeholder">อำเภอ ถนน ปั๊มน้ำมัน…</string>
     <string name="map_search_empty">ไม่พบสถานที่ชื่อนี้</string>
     <!-- ปุ่มลัดด้านบนสุดของผลการค้นหา ใช้พิกัดที่เครื่องมีอยู่แล้ว ไม่กินโควตาค้นหา -->
@@ -189,14 +188,12 @@
     <string name="map_route_pick_stop">เพิ่มจุดแวะ</string>
     <string name="map_route_pick_hint">หรือกดค้างบนแผนที่ตรงไหนก็ได้เพื่อเลือกจุดนั้น</string>
     <string name="map_route_summary_title">เส้นทางของคุณ</string>
-    <string name="map_route_ends">%1$s → %2$s</string>
     <string name="map_route_measuring">กำลังคำนวณเส้นทาง…</string>
     <string name="map_route_duration_minutes">%1$d นาที</string>
     <string name="map_route_duration_hours">%1$d ชม.</string>
     <string name="map_route_duration_hours_minutes">%1$d ชม. %2$d นาที</string>
     <string name="map_route_confirm">ยืนยันเส้นทาง</string>
-    <string name="map_route_add_stops">เพิ่มจุดแวะ</string>
-    <string name="map_route_stops">จุดแวะ</string>
+    <string name="map_route_stop">จุดแวะ</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">ตั้งชื่อจุดแวะนี้</string>
     <string name="map_route_stop_default_name">จุดแวะ %1$d</string>

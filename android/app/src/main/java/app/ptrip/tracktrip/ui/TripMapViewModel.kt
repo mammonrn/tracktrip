@@ -545,6 +545,45 @@ class TripMapViewModel(
     }
 
     /**
+     * Clears one row of the route list — an end, or a stop.
+     *
+     * The same call for all three because on the list they are one thing: a
+     * row with a cross on it. Which of them it was is [RouteSetupRules]'
+     * business, and clearing an end leaves the row asking to be filled rather
+     * than shortening the list under the rider's finger.
+     */
+    fun removeRouteRow(index: Int) {
+        _uiState.update { it.copy(routeDraft = RouteSetupRules.withoutRow(it.routeDraft, index)) }
+        refreshRoutePreview()
+    }
+
+    /**
+     * Drags one row of the route list to another position.
+     *
+     * ## Why this is the whole of "the order index updates immediately"
+     *
+     * A stop's `order_index` is not stored on the draft — it *is* the stop's
+     * position in [RouteDraft.stops], read off the list by [confirmRoute] and
+     * by [RouteSetupRules.draftWaypoints]. So this one update renumbers the
+     * pins on the map, re-measures the road, and fixes what the confirm will
+     * write, with no second field that could fall out of step with it.
+     *
+     * And it stays a draft. Nothing here is sent: the trip's waypoints are
+     * untouched until the rider confirms, exactly as with every other edit on
+     * this card.
+     */
+    fun moveRoutePoint(from: Int, to: Int) {
+        val before = _uiState.value.routeDraft
+        val after = RouteSetupRules.moved(before, from, to)
+        // A drag that changed nothing must not spend a routing request. A
+        // finger crossing a row boundary and coming back is one gesture and
+        // several of these.
+        if (after == before) return
+        _uiState.update { it.copy(routeDraft = after) }
+        refreshRoutePreview()
+    }
+
+    /**
      * Writes the draft to the trip.
      *
      * Exactly the calls the old flow made when a rider finished setting both
