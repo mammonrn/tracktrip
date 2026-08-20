@@ -205,7 +205,9 @@ the time from `GET /directions`, and three things to do with it:
   this one is read by anyone who has used Google Maps as "begin guiding me".
 - **Add stops** — the same picker again, appending a `planned` waypoint per
   pick, `order_index` counting on from the highest already on the trip. No
-  re-ordering: stops go in the order they were added.
+  re-ordering: stops go in the order they were added. The sheet's distance and
+  time re-route as each one lands, so the figures above the confirm button are
+  the ride the button is about to save.
 - **Close** — throws the draft away. Nothing in it was ever sent.
 
 **Nothing is written until Confirm.** That is the point of holding a draft
@@ -217,13 +219,18 @@ draft — its flags, its stops, its road — and closing it puts the trip back
 exactly as it was.
 
 **The routing quota is defended the same way it was.** A preview is one request
-per pair of ends a rider actually settles on, keyed on that pair through the
-same [`map/RouteRequests.kt`](
+per route a rider actually settles on, keyed on the whole `RoutePlan` through
+the same [`map/RouteRequests.kt`](
 app/src/main/java/app/ptrip/tracktrip/map/RouteRequests.kt) rule the trip's own
-route uses, with the same five-minute wait after a failure. A draft whose two
-ends are the trip's own ends is not fetched at all — that route has already
-been fetched, for exactly that pair — which is the common case of opening the
-card to look at what is set.
+route uses, with the same five-minute wait after a failure. A draft that is the
+route the trip already has is not fetched at all — that one has already been
+fetched — which is the common case of opening the card to look at what is set.
+
+Adding a stop *is* a new route and does cost a request, which is the price of
+the sheet quoting the right distance. The server's limit of six routes a minute
+per rider is unchanged, so a rider adding stops faster than one every ten
+seconds will hit it; the sheet then falls back to the leg measure captioned
+"direct" until the five-minute wait is up.
 
 **Editing after confirming is the same card.** It opens seeded from the trip,
 so changing one end is one tap. Removing a stop is still a tap on its pin.
@@ -237,9 +244,23 @@ the long press, which is unchanged.
 ### The route line
 
 With a road route fetched (`GET /directions` — see the backend README), the
-map draws it between the trip's start and finish: a wide white casing with the
-orange fill on top, the same trick a road atlas uses and the same one the
-progress bar down the edge of the map uses.
+map draws it from the trip's start, **through its planned stops in order**, to
+its finish: a wide white casing with the orange fill on top, the same trick a
+road atlas uses and the same one the progress bar down the edge of the map
+uses.
+
+**The stops used not to be in it.** They were drawn as pins and left out of the
+routing call entirely, so the line ran start to finish past everything the ride
+had been planned around — and the distance and the time were the wrong
+journey's, not just the drawing. What goes into the call is now
+[`map/RoutePlan.kt`](app/src/main/java/app/ptrip/tracktrip/map/RoutePlan.kt):
+the two ends and the planned waypoints, sorted by `order_index`, in one request
+that returns one geometry through all of them.
+
+Only *planned* waypoints. A `live` one is a point somebody dropped because they
+stopped there — the viewpoint, the place the group actually turned round — and
+routing through those would redraw everyone's route the moment one rider marked
+where they had a coffee.
 
 **The first version of this drew a nearly straight line, and the drawing code
 was not why.** The server asked LocationIQ for `overview=simplified`, which is
@@ -252,15 +273,31 @@ daylight OSM tile disappears the moment it crosses a motorway drawn in a
 similar colour; with a casing the fill only has to contrast with its own
 outline.
 
-The route is fetched **once per pair of endpoints**, not once per poll —
+The route is fetched **once per route**, not once per poll —
 [`map/RouteRequests.kt`](
 app/src/main/java/app/ptrip/tracktrip/map/RouteRequests.kt) is that rule, and
-`RouteRequestsTest` is what holds it. When there is a route, the progress bar
-measures along it ([`map/RouteGeometry.kt`](
+`RouteRequestsTest` is what holds it. The rule is keyed on the whole
+`RoutePlan`, which is what makes adding a stop re-ask for the road exactly once
+while a poll still never does.
+
+When there is a route, the progress bar measures along it
+([`map/RouteGeometry.kt`](
 app/src/main/java/app/ptrip/tracktrip/map/RouteGeometry.kt)) and its caption
-reads "by road"; without one — no key on the server, no road between the
-points, or a rider more than 20 km off the line — it falls back to the
-straight-line measure and the caption reads "direct", exactly as before.
+reads "by road" — along the whole line, stops included, so a ride planned round
+a viewpoint is measured as that ride.
+
+Without one — no key on the server, no road between the points, or a rider more
+than 20 km off the line — it falls back to a straight-line measure captioned
+"direct", as before. On a trip with stops that fallback measures the *legs*
+(start → stop → stop → finish) rather than the gap between the two ends: see
+[`map/DirectProgress.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/DirectProgress.kt). On a trip with no
+stops it is the same gap-closing measure it has always been, to the last
+decimal place — that is what `DirectProgressTest` pins.
+
+Note that the fallback is a *measure*, not a drawn line. Nothing is drawn on
+the map when there is no road route: an invented straight line between two
+towns is not a road, and drawing one would make a claim the app cannot back.
 
 ### Trails
 

@@ -2,7 +2,9 @@ package app.ptrip.tracktrip.data
 
 import app.ptrip.tracktrip.map.LatLng
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -133,5 +135,74 @@ class DirectionsParsingTest {
         val route = parseRouteLine("""{"route": {"points": [$points], "distance_km": 60}}""")!!
 
         assertEquals(600, route.points.size)
+    }
+}
+
+/**
+ * The request path, which is the half of this file that fails silently.
+ *
+ * A wrong separator, a missing parameter or a locale-formatted number all come
+ * back from the server as a 400, and the map answers a 400 by drawing no line
+ * at all — indistinguishable from a server with no routing key. So the path is
+ * built by a pure function and asserted whole here rather than trusted.
+ */
+class DirectionsPathTest {
+
+    private val chiangMai = LatLng(18.7883, 98.9853)
+    private val pai = LatLng(19.3583, 98.4406)
+    private val lampang = LatLng(18.2888, 99.4908)
+
+    @Test
+    fun `a route with no stops asks for exactly what it always asked for`() {
+        assertEquals(
+            "/directions?from=18.78830%2C98.98530&to=19.35830%2C98.44060",
+            directionsPath(chiangMai, pai),
+        )
+    }
+
+    @Test
+    fun `stops travel in one parameter, semicolon separated, in order`() {
+        val path = directionsPath(chiangMai, pai, listOf(lampang, chiangMai))
+
+        // %2C is a comma inside a coordinate, %3B the separator between them.
+        assertEquals(
+            "/directions?from=18.78830%2C98.98530&to=19.35830%2C98.44060" +
+                "&waypoints=18.28880%2C99.49080%3B18.78830%2C98.98530",
+            path,
+        )
+    }
+
+    @Test
+    fun `an empty stop list adds no parameter at all`() {
+        // A server older than this app has no `waypoints` to read; a trip with
+        // no stops must ask it exactly the question it already understands.
+        assertFalse("waypoints" in directionsPath(chiangMai, pai, emptyList()))
+    }
+
+    @Test
+    fun `coordinates are locale-fixed, decimal point and all`() {
+        val thai = java.util.Locale.getDefault()
+        try {
+            // A phone whose locale writes 18,7883 would otherwise send a
+            // four-part coordinate and be refused, silently.
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("th-TH-u-nu-thai"))
+            val path = directionsPath(chiangMai, pai, listOf(lampang))
+            assertTrue("18.78830" in java.net.URLDecoder.decode(path, "UTF-8"))
+            assertTrue("18.28880,99.49080" in java.net.URLDecoder.decode(path, "UTF-8"))
+        } finally {
+            java.util.Locale.setDefault(thai)
+        }
+    }
+
+    @Test
+    fun `what the server sends back is what comes out the other end`() {
+        // The round trip this file's two halves make between them: the path is
+        // built here, and the answer to it parses into the line the map draws.
+        val line = parseRouteLine(
+            """{"route":{"points":[{"lat":18.7,"lng":98.9},{"lat":18.8,"lng":99.0}],
+               "distance_km":12.5,"duration_min":25}}"""
+        )
+        assertEquals(2, line?.points?.size)
+        assertEquals(25, line?.durationMinutes)
     }
 }
