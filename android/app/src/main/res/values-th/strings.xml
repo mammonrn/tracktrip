@@ -34,6 +34,7 @@
     <string name="trips_show_mine">ดูเฉพาะของฉัน</string>
     <string name="trips_archive_show">ทริปย้อนหลัง (%1$d)</string>
     <string name="trips_archive_hide">ดูเฉพาะล่าสุด</string>
+    <string name="trip_podium_place">อันดับ %1$d %2$s ถึงจุดหมาย</string>
     <string name="no_trips_at_all">ยังไม่มีทริปบนเซิร์ฟเวอร์นี้เลย</string>
     <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
     <string name="new_trip">ทริปใหม่</string>

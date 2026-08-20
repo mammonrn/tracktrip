@@ -24,6 +24,12 @@
     -->
     <string name="trips_archive_show">Archived trips (%1$d)</string>
     <string name="trips_archive_hide">Show recent only</string>
+    <!--
+      One face on a trip card's podium, spoken rather than seen: the numeral is
+      on the badge and the order is left to right, so this exists for the
+      screen reader that has neither.
+    -->
+    <string name="trip_podium_place">%1$d. %2$s reached the finish</string>
     <string name="no_trips_at_all">There are no trips on this server yet.</string>
     <string name="no_trips_yet">No trips yet. Create one, or wait to be invited.</string>
     <string name="new_trip">New trip</string>

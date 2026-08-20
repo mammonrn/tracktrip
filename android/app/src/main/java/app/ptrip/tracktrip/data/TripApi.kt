@@ -257,6 +257,9 @@ data class LevelProgress(
  * route is a write followed by a re-read, and what the rider is left looking
  * at afterwards is the whole of the question — so a test needs a server that
  * answers the re-read with what the write just sent it.
+ *
+ * `listInvites` is open because the trip list reads it on the way in, and a
+ * test about how many `members` calls that screen makes has to get past it.
  */
 open class TripApi(private val client: ApiClient) {
 
@@ -293,7 +296,7 @@ open class TripApi(private val client: ApiClient) {
     suspend fun renameTrip(tripId: Long, name: String): Trip =
         JSONObject(client.patch("/trips/$tripId", JSONObject().put("name", name))).toTrip()
 
-    suspend fun listInvites(): List<Invite> =
+    open suspend fun listInvites(): List<Invite> =
         JSONArray(client.get("/invites")).map { it.toInvite() }
 
     /** Returns the trip just joined, so the caller can go straight to it. */
