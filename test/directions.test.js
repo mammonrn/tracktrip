@@ -6,9 +6,11 @@ import { createApp } from '../src/app.js';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
 import { GeocodeError } from '../src/geocode/locationiq.js';
+import { parseWaypoints } from '../src/routes/directions.js';
 import {
   LOCATIONIQ_DIRECTIONS_URL,
   MAX_ROUTE_POINTS,
+  MAX_WAYPOINTS,
   buildDirectionsUrl,
   capPoints,
   createLocationIqDirections,
@@ -626,4 +628,210 @@ test('nothing on this route ever answers 404', async () => {
     const res = await supertest(app).get(path).set(auth);
     assert.notEqual(res.status, 404, path);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Stops on the route
+ *
+ * The bug these are about: a trip's planned stops were drawn as pins and left
+ * out of the routing call entirely, so the line ran start to finish past
+ * everything the ride had been planned around — and the distance and the time
+ * were the wrong journey's, not just the drawing.
+ * ------------------------------------------------------------------ */
+
+test('the path threads every stop, in order, still lng,lat', () => {
+  const url = buildDirectionsUrl({
+    apiKey: 'k',
+    from: { lat: 18.7883, lng: 98.9853 },
+    waypoints: [
+      { lat: 19.3583, lng: 98.4406 },
+      { lat: 19.3011, lng: 97.9654 },
+    ],
+    to: { lat: 18.2888, lng: 99.4908 },
+    url: 'https://example.test/directions/driving',
+  });
+
+  // One call, one geometry, no seams — and the coordinate order is the thing
+  // most likely to be silently wrong here, so it is asserted whole.
+  assert.ok(
+    url.startsWith(
+      'https://example.test/directions/driving/' +
+        '98.9853,18.7883;98.4406,19.3583;97.9654,19.3011;99.4908,18.2888?'
+    ),
+    url
+  );
+});
+
+test('no stops builds exactly the URL it always built', () => {
+  const from = { lat: 1, lng: 2 };
+  const to = { lat: 3, lng: 4 };
+
+  assert.equal(
+    buildDirectionsUrl({ apiKey: 'k', from, to, url: 'https://example.test/d' }),
+    buildDirectionsUrl({ apiKey: 'k', from, to, waypoints: [], url: 'https://example.test/d' })
+  );
+});
+
+test('waypoints are read as a semicolon-separated list, in order', () => {
+  assert.deepEqual(parseWaypoints('19.3583,98.4406;18.2888,99.4908').value, [
+    { lat: 19.3583, lng: 98.4406 },
+    { lat: 18.2888, lng: 99.4908 },
+  ]);
+  // Express hands over an array for a repeated ?waypoints=, so that shape
+  // answers with the route it asked for rather than a confusing 400.
+  assert.deepEqual(parseWaypoints(['1,2', '3,4']).value, [
+    { lat: 1, lng: 2 },
+    { lat: 3, lng: 4 },
+  ]);
+});
+
+test('no stops is the ordinary case, not an error', () => {
+  for (const raw of [undefined, null, '']) {
+    assert.deepEqual(parseWaypoints(raw), { value: [] });
+  }
+});
+
+test('a stop that does not parse is refused, never skipped', () => {
+  // Skipping would give a route that misses one stop and looks entirely
+  // correct, which is worse than either a 400 or a crash.
+  assert.ok(parseWaypoints('1,2;nope').error);
+  assert.ok(parseWaypoints('1,2;91,0').error);
+  assert.ok(parseWaypoints('1,2;3').error);
+});
+
+test('more stops than the upstream takes is refused rather than truncated', () => {
+  const many = Array.from({ length: MAX_WAYPOINTS + 1 }, (_, i) => `1,${i / 100}`).join(';');
+
+  assert.ok(parseWaypoints(many).error);
+  // One under the cap still routes.
+  const most = Array.from({ length: MAX_WAYPOINTS }, (_, i) => `1,${i / 100}`).join(';');
+  assert.equal(parseWaypoints(most).value.length, MAX_WAYPOINTS);
+});
+
+test('GET /directions passes the stops through to the upstream in order', async () => {
+  const calls = [];
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async (from, to, waypoints) => {
+      calls.push({ from, to, waypoints });
+      return { points: [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], distance_km: 9, duration_min: 15 };
+    },
+  });
+  const rider = addUser('poom');
+
+  const res = await supertest(app)
+    .get('/directions?from=1,1&to=2,2&waypoints=1.5,1.5;1.8,1.9')
+    .set('Authorization', `Bearer ${tokenFor(rider)}`);
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls, [
+    {
+      from: { lat: 1, lng: 1 },
+      to: { lat: 2, lng: 2 },
+      waypoints: [{ lat: 1.5, lng: 1.5 }, { lat: 1.8, lng: 1.9 }],
+    },
+  ]);
+  // Echoed back, so a person poking the endpoint can see what it routed.
+  assert.deepEqual(res.body.waypoints, [{ lat: 1.5, lng: 1.5 }, { lat: 1.8, lng: 1.9 }]);
+});
+
+test('the same two ends with different stops are different cache entries', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async () => {
+      called += 1;
+      return { points: [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], distance_km: 5, duration_min: 9 };
+    },
+  });
+  const rider = addUser('poom');
+  const auth = { Authorization: `Bearer ${tokenFor(rider)}` };
+
+  // Two trips: one straight up the road, one round a viewpoint. Keyed on the
+  // ends alone, the second would be served the first's line — for six hours,
+  // with nothing on screen to say it was somebody else's route.
+  await supertest(app).get('/directions?from=18.7883,98.9853&to=19.3583,98.4406').set(auth);
+  const viaOne = await supertest(app)
+    .get('/directions?from=18.7883,98.9853&to=19.3583,98.4406&waypoints=18.2888,99.4908')
+    .set(auth);
+
+  assert.equal(viaOne.body.cached, false);
+  assert.equal(called, 2);
+});
+
+test('the order of the stops is part of the cache key', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async () => {
+      called += 1;
+      return { points: [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], distance_km: 5, duration_min: 9 };
+    },
+  });
+  const rider = addUser('poom');
+  const auth = { Authorization: `Bearer ${tokenFor(rider)}` };
+
+  await supertest(app).get('/directions?from=1,1&to=4,4&waypoints=2,2;3,3').set(auth);
+  await supertest(app).get('/directions?from=1,1&to=4,4&waypoints=3,3;2,2').set(auth);
+
+  // The same three towns taken the other way round is a different road.
+  assert.equal(called, 2);
+});
+
+test('the same route asked for twice is still one upstream request', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async () => {
+      called += 1;
+      return { points: [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], distance_km: 5, duration_min: 9 };
+    },
+  });
+  const first = addUser('poom');
+  const second = addUser('nut');
+
+  const path = '/directions?from=18.7883,98.9853&to=19.3583,98.4406&waypoints=18.2888,99.4908';
+  await supertest(app).get(path).set('Authorization', `Bearer ${tokenFor(first)}`);
+  const res = await supertest(app).get(path).set('Authorization', `Bearer ${tokenFor(second)}`);
+
+  // Everything the cache was already worth, kept: eight riders on one trip
+  // still cost one request, stops and all.
+  assert.equal(res.body.cached, true);
+  assert.equal(called, 1);
+});
+
+test('a stop moved by GPS noise is still the same cache entry', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async () => {
+      called += 1;
+      return { points: [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], distance_km: 5, duration_min: 9 };
+    },
+  });
+  const rider = addUser('poom');
+  const auth = { Authorization: `Bearer ${tokenFor(rider)}` };
+
+  // The stops are rounded to the same four places the two ends are, or a
+  // fifth-decimal wobble on a stop would buy a whole new route.
+  await supertest(app).get('/directions?from=1,1&to=2,2&waypoints=18.28881,99.49081').set(auth);
+  await supertest(app).get('/directions?from=1,1&to=2,2&waypoints=18.28884,99.49084').set(auth);
+
+  assert.equal(called, 1);
+});
+
+test('a malformed stop is a 400 and never reaches the upstream', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    routeBetween: async () => {
+      called += 1;
+      return null;
+    },
+  });
+  const rider = addUser('poom');
+
+  const res = await supertest(app)
+    .get('/directions?from=1,1&to=2,2&waypoints=1,1;not-a-point')
+    .set('Authorization', `Bearer ${tokenFor(rider)}`);
+
+  assert.equal(res.status, 400);
+  // Never a 404: the app reads a 404 on this route as "this backend is older
+  // than this app" and nothing else.
+  assert.notEqual(res.status, 404);
+  assert.equal(called, 0);
 });

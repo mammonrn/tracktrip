@@ -3,6 +3,8 @@ package app.ptrip.tracktrip.ui
 import app.ptrip.tracktrip.data.TripEndpoint
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.LatLng
+import app.ptrip.tracktrip.map.RoutePlan
+import app.ptrip.tracktrip.map.RoutePlans
 
 /**
  * Which part of the route a rider is choosing a point for.
@@ -139,36 +141,57 @@ object RouteSetupRules {
     }
 
     /**
-     * The two ends as a routing request, or null when one of them is missing.
+     * The whole route a draft describes, in the order confirming would write it.
      *
-     * The pair is what [app.ptrip.tracktrip.map.RouteRequests] is keyed on, so
-     * a preview costs one request per pair of ends a rider actually settles
-     * on — not one per keystroke, and not one per poll.
+     * Its two ends, threading the stops the trip already has and *then* the
+     * ones only the draft holds — which is exactly the order
+     * [nextOrderIndex] gives them, so the road quoted in the summary sheet is
+     * the road the confirm button is about to save.
+     *
+     * [saved] is the trip's waypoints; only the planned ones end up on the
+     * route. See [RoutePlans.via].
      */
-    fun ends(draft: RouteDraft): Pair<LatLng, LatLng>? {
+    fun plan(draft: RouteDraft, saved: List<Waypoint>): RoutePlan? {
         val from = draft.from?.point ?: return null
         val to = draft.to?.point ?: return null
-        return from to to
+        return RoutePlan(
+            from = from,
+            via = RoutePlans.via(saved) + draft.stops.map { it.point },
+            to = to,
+        )
     }
 
     /**
-     * Whether the draft's two ends are the ones the trip already carries.
+     * Whether the draft is simply the route the trip already has.
      *
      * The single line that keeps this feature off the LocationIQ bill. When it
      * is true the trip's own route has already been fetched — by `loadRoute`,
-     * once, for exactly this pair — and the summary reads that instead of
+     * once, for exactly this plan — and the summary reads that instead of
      * spending a second request on the same answer. Which is the common case:
      * a rider opening the card to change one end sees the current route first.
+     *
+     * Compares the whole route, not just the ends. A draft with a new stop on
+     * it is a different road even between the same two towns, and answering it
+     * with the trip's line was the bug: the sheet would quote a distance that
+     * skipped every stop the rider had just added.
      *
      * Coordinates are compared, labels are not. Renaming the finish does not
      * move it, and re-routing because somebody typed a nicer name would be a
      * request bought with nothing.
      */
-    fun endsMatch(draft: RouteDraft, origin: TripEndpoint?, destination: TripEndpoint?): Boolean {
-        val ends = ends(draft) ?: return false
-        if (origin == null || destination == null) return false
-        return ends.first == LatLng(origin.lat, origin.lng) &&
-            ends.second == LatLng(destination.lat, destination.lng)
+    fun matchesTrip(
+        draft: RouteDraft,
+        saved: List<Waypoint>,
+        origin: TripEndpoint?,
+        destination: TripEndpoint?,
+    ): Boolean {
+        val wanted = plan(draft, saved) ?: return false
+        val trip = RoutePlans.of(
+            from = origin?.let { LatLng(it.lat, it.lng) },
+            to = destination?.let { LatLng(it.lat, it.lng) },
+            waypoints = saved,
+        ) ?: return false
+        return wanted == trip
     }
 
     /**

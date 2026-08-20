@@ -19,6 +19,9 @@ import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.Breadcrumbs
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RideOrder
+import app.ptrip.tracktrip.map.DirectProgress
+import app.ptrip.tracktrip.map.RoutePlan
+import app.ptrip.tracktrip.map.RoutePlans
 import app.ptrip.tracktrip.map.RouteRequests
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -121,7 +124,31 @@ data class TripMapUiState(
      */
     private val hasOwnDraft: Boolean
         get() = routeDraft.isComplete &&
-            !RouteSetupRules.endsMatch(routeDraft, trip?.origin, trip?.destination)
+            !RouteSetupRules.matchesTrip(routeDraft, waypoints.all, trip?.origin, trip?.destination)
+
+    /**
+     * The route the trip currently describes: its two ends and its planned
+     * stops, in order. Null until both ends are set.
+     *
+     * What the progress bar measures against when there is no road route to
+     * measure against — see [DirectProgress] — and what `loadRoute` asks the
+     * server for.
+     */
+    val tripPlan: RoutePlan?
+        get() = RoutePlans.of(
+            from = trip?.origin?.let { LatLng(it.lat, it.lng) },
+            to = trip?.destination?.let { LatLng(it.lat, it.lng) },
+            waypoints = waypoints.all,
+        )
+
+    /** The route the open card describes, including stops it has not saved yet. */
+    val draftPlan: RoutePlan? get() = RouteSetupRules.plan(routeDraft, waypoints.all)
+
+    /**
+     * The route the summary sheet measures: the draft's when there is one, and
+     * the trip's the rest of the time.
+     */
+    val summaryPlan: RoutePlan? get() = draftPlan ?: tripPlan
 
     /**
      * The route the summary sheet reads: the draft's when there is one, and
@@ -340,10 +367,17 @@ class TripMapViewModel(
 
                 loadLevels(members)
                 loadWaypoints()
-                // Not a fetch unless the trip's two ends have actually
-                // changed — see loadRoute for why that matters here more than
-                // anywhere else in the app.
+                // Not a fetch unless the route has actually changed — see
+                // loadRoute for why that matters here more than anywhere else
+                // in the app.
                 loadRoute(trip)
+                // An open card's preview follows the trip as well as the
+                // rider: another member adding a planned stop changes the road
+                // the summary sheet is quoting, and the sheet sits directly
+                // above the button that saves it. Costs nothing when nothing
+                // moved — RouteRequests is the guard, the same one that keeps
+                // loadRoute off this beat.
+                if (!_uiState.value.routeDraft.isEmpty) refreshRoutePreview()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
@@ -409,7 +443,7 @@ class TripMapViewModel(
      * of times a ride. Keyed on the pair of endpoints rather than on a boolean
      * so that moving the finish re-fetches and moving nothing does not.
      */
-    private var routeFor: Pair<LatLng, LatLng>? = null
+    private var routeFor: RoutePlan? = null
 
     /**
      * When a failed routing attempt may be retried, or null when none has
@@ -441,27 +475,34 @@ class TripMapViewModel(
      * progress bar's caption already says which of the two it is showing.
      */
     private suspend fun loadRoute(trip: Trip?) {
-        val origin = trip?.origin?.let { LatLng(it.lat, it.lng) }
-        val destination = trip?.destination?.let { LatLng(it.lat, it.lng) }
+        // The trip's planned stops are part of the route, not decoration on
+        // top of it — see RoutePlans. Read from the state rather than passed
+        // in, because loadWaypoints has just written them there and they are
+        // what makes the line go the way the rider planned.
+        val plan = RoutePlans.of(
+            from = trip?.origin?.let { LatLng(it.lat, it.lng) },
+            to = trip?.destination?.let { LatLng(it.lat, it.lng) },
+            waypoints = _uiState.value.waypoints.all,
+        )
 
-        if (origin == null || destination == null) {
+        if (plan == null) {
             routeFor = null
             routeRetryAtMs = null
             if (_uiState.value.route != null) _uiState.update { it.copy(route = null) }
             return
         }
 
-        val pair = origin to destination
         // The rule that keeps this off the poll's beat, written down where it
-        // can be tested: see RouteRequests.
-        if (!RouteRequests.shouldFetch(pair, routeFor, routeRetryAtMs, now())) return
+        // can be tested: see RouteRequests. The whole plan is the key, so a
+        // stop added mid-ride re-fetches once and a poll never does.
+        if (!RouteRequests.shouldFetch(plan, routeFor, routeRetryAtMs, now())) return
 
-        routeFor = pair
+        routeFor = plan
         routeRetryAtMs = null
 
         val api = routeApi ?: return
         val line = try {
-            api.route(origin, destination)
+            api.route(plan.from, plan.to, plan.via)
         } catch (e: SessionExpiredException) {
             onSessionExpired()
             return
@@ -474,7 +515,7 @@ class TripMapViewModel(
     }
 
     /** What [TripMapUiState.routePreview] was fetched for. See [routeFor]. */
-    private var previewFor: Pair<LatLng, LatLng>? = null
+    private var previewFor: RoutePlan? = null
 
     /** When a failed preview may be tried again. See [routeRetryAtMs]. */
     private var previewRetryAtMs: Long? = null
@@ -518,15 +559,19 @@ class TripMapViewModel(
      */
     fun pickRoutePoint(field: RouteField, picked: RoutePoint) {
         _uiState.update { it.copy(routeDraft = RouteSetupRules.with(it.routeDraft, field, picked)) }
-        // Only the ends change the road. A stop is drawn as a pin and does not
-        // re-route: the app has no multi-leg routing and inventing one out of
-        // extra requests is not what this change is.
-        if (field != RouteField.STOP) refreshRoutePreview()
+        // Every kind of point changes the road, stops included: the route is
+        // one line through all of them. Adding a stop that did not re-route
+        // was the bug — a sheet quoting the distance of a road the rider was
+        // no longer going to take, right above the button that saves it.
+        refreshRoutePreview()
     }
 
     /** Takes a stop back off the draft. Nothing was ever sent, so nothing is deleted. */
     fun removeRouteStop(index: Int) {
         _uiState.update { it.copy(routeDraft = RouteSetupRules.withoutStop(it.routeDraft, index)) }
+        // A route with one fewer stop is a different road, so the sheet's
+        // figures have to stop describing the old one.
+        refreshRoutePreview()
     }
 
     /**
@@ -629,12 +674,17 @@ class TripMapViewModel(
     private fun refreshRoutePreview() {
         val state = _uiState.value
         val draft = state.routeDraft
-        val ends = RouteSetupRules.ends(draft)
+        val plan = RouteSetupRules.plan(draft, state.waypoints.all)
 
-        val alreadyTheTrips = ends != null &&
-            RouteSetupRules.endsMatch(draft, state.trip?.origin, state.trip?.destination)
+        val alreadyTheTrips = plan != null &&
+            RouteSetupRules.matchesTrip(
+                draft,
+                state.waypoints.all,
+                state.trip?.origin,
+                state.trip?.destination,
+            )
 
-        if (ends == null || alreadyTheTrips) {
+        if (plan == null || alreadyTheTrips) {
             previewFor = null
             previewRetryAtMs = null
             if (state.routePreview != null || state.routePreviewLoading) {
@@ -643,19 +693,19 @@ class TripMapViewModel(
             return
         }
 
-        if (!RouteRequests.shouldFetch(ends, previewFor, previewRetryAtMs, now())) return
+        if (!RouteRequests.shouldFetch(plan, previewFor, previewRetryAtMs, now())) return
 
         // Null behaves exactly like a server with no key: no road figures, and
         // the sheet falls back to the straight-line measure it labels "direct".
         val api = routeApi ?: return
 
-        previewFor = ends
+        previewFor = plan
         previewRetryAtMs = null
         _uiState.update { it.copy(routePreview = null, routePreviewLoading = true) }
 
         viewModelScope.launch {
             val line = try {
-                api.route(ends.first, ends.second)
+                api.route(plan.from, plan.to, plan.via)
             } catch (e: SessionExpiredException) {
                 // The spinner is stopped as well as the session ended: the
                 // sign-out takes the rider off this screen, but a state left
@@ -670,10 +720,11 @@ class TripMapViewModel(
                 return@launch
             }
             _uiState.update {
-                // Guarded: the rider may have moved an end while this was in
-                // flight, and a road drawn between the ends they just replaced
-                // is the search-as-you-type bug wearing a different hat.
-                if (RouteSetupRules.ends(it.routeDraft) != ends) it
+                // Guarded: the rider may have moved an end or added a stop
+                // while this was in flight, and a road drawn through points
+                // they just replaced is the search-as-you-type bug wearing a
+                // different hat.
+                if (RouteSetupRules.plan(it.routeDraft, it.waypoints.all) != plan) it
                 else it.copy(routePreview = line, routePreviewLoading = false)
             }
         }

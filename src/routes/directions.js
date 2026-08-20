@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import { GeocodeError } from '../geocode/locationiq.js';
-import { parseCoordinate } from '../geocode/directions.js';
+import { MAX_WAYPOINTS, parseCoordinate } from '../geocode/directions.js';
 import { SearchCache } from '../geocode/cache.js';
 
 /**
@@ -38,9 +38,61 @@ export const ROUTE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
  */
 const CACHE_PRECISION = 4;
 
-function cacheKeyFor(from, to) {
-  const round = (value) => value.toFixed(CACHE_PRECISION);
-  return `${round(from.lat)},${round(from.lng)}>${round(to.lat)},${round(to.lng)}`;
+/**
+ * The stops a route threads through, in order, or an error saying why not.
+ *
+ * Accepted as `waypoints=lat,lng;lat,lng` — semicolons between points, the
+ * same separator the upstream uses in its own path. An array is accepted too,
+ * because Express hands one over on its own for a repeated `?waypoints=`, and
+ * a client that does it that way deserves the route it asked for rather than a
+ * confusing 400 about a string.
+ *
+ * Absent is not an error: it is the ordinary shape of a trip with no stops,
+ * and every route before this parameter existed was one.
+ */
+export function parseWaypoints(raw) {
+  if (raw === undefined || raw === null || raw === '') return { value: [] };
+
+  const parts = (Array.isArray(raw) ? raw : [raw])
+    .flatMap((entry) => (typeof entry === 'string' ? entry.split(';') : [entry]))
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : entry))
+    .filter((entry) => entry !== '');
+
+  if (parts.length > MAX_WAYPOINTS) {
+    return { error: `waypoints must be ${MAX_WAYPOINTS} or fewer` };
+  }
+
+  const points = [];
+  for (const part of parts) {
+    const point = parseCoordinate(part);
+    // Refused rather than skipped. A stop dropped because its coordinate did
+    // not parse would give a route that misses it and looks entirely correct,
+    // which is the worst of the three possible outcomes.
+    if (!point) return { error: 'each waypoint must be "lat,lng"' };
+    points.push(point);
+  }
+  return { value: points };
+}
+
+/**
+ * The key one route is cached under.
+ *
+ * ## Why every stop is in it
+ *
+ * Two trips can share a start and a finish and be completely different rides —
+ * one straight up the highway, one round three viewpoints. Keyed on the two
+ * ends alone, the second one asked would be served the first one's line, and
+ * it would be served it for six hours: a route drawn through none of the stops
+ * the rider set, with nothing on screen to say it was a stale answer.
+ *
+ * So the key is every coordinate the route has to touch, in order, at the same
+ * rounding. Order is part of it because it is part of the route: the same
+ * three stops taken the other way round is a different road.
+ */
+function cacheKeyFor(from, to, waypoints = []) {
+  const round = (point) =>
+    `${point.lat.toFixed(CACHE_PRECISION)},${point.lng.toFixed(CACHE_PRECISION)}`;
+  return [from, ...waypoints, to].map(round).join('>');
 }
 
 /**
@@ -56,8 +108,13 @@ function logRoute(log, outcome, key, detail) {
 /**
  * Road routing, proxied.
  *
- * `GET /directions?from=lat,lng&to=lat,lng` answers with the line to draw
- * between two points, how long it is by road, and roughly how long it takes.
+ * `GET /directions?from=lat,lng&to=lat,lng[&waypoints=lat,lng;lat,lng]` answers
+ * with the line to draw, how long it is by road, and roughly how long it takes.
+ *
+ * `waypoints` is one request, not several joined here: the upstream takes a
+ * list of coordinates and returns a single geometry through all of them, which
+ * is one call against the quota, one distance that is really the distance, and
+ * one line with no seams at the stops.
  *
  * [route] is injected rather than built here so the tests answer without a
  * network and without a key. Null is the ordinary state of a server whose
@@ -98,11 +155,17 @@ export function createDirectionsRouter({
       return res.status(400).json({ error: 'from and to must each be "lat,lng"' });
     }
 
-    const key = cacheKeyFor(from, to);
+    const stops = parseWaypoints(req.query.waypoints);
+    if (stops.error) {
+      return res.status(400).json({ error: stops.error });
+    }
+    const waypoints = stops.value;
+
+    const key = cacheKeyFor(from, to, waypoints);
     const cached = cache.get(key);
     if (cached !== undefined) {
       logRoute(logger.log, 'cache', key, cached ? `${cached.points.length} point(s)` : 'no route');
-      return res.json({ from, to, route: cached, cached: true });
+      return res.json({ from, to, waypoints, route: cached, cached: true });
     }
 
     if (!route) {
@@ -112,7 +175,7 @@ export function createDirectionsRouter({
 
     let found;
     try {
-      found = await route(from, to);
+      found = await route(from, to, waypoints);
     } catch (e) {
       if (e instanceof GeocodeError) {
         logRoute(logger.warn, 'failed', key, `${e.status} ${e.message}`);
@@ -130,7 +193,7 @@ export function createDirectionsRouter({
     // rider's map. Stored as null, which is why the read above tests for
     // `undefined` rather than for falsiness.
     cache.set(key, found ?? null);
-    res.json({ from, to, route: found ?? null, cached: false });
+    res.json({ from, to, waypoints, route: found ?? null, cached: false });
   });
 
   return router;

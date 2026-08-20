@@ -1,5 +1,6 @@
 /**
- * Road routing — two coordinates in, the line a bike would actually ride out.
+ * Road routing — a start, a finish, whatever it goes via, and the line a bike
+ * would actually ride out.
  *
  * ## Why this is here and not in the app
  *
@@ -24,6 +25,10 @@
  * answers with one line to draw and how long it is. Everything else a routing
  * API can do is a later phase.
  *
+ * It is also not a stop *optimiser*. The coordinates go upstream in the order
+ * they arrive, so the line threads the trip's stops the way the rider ordered
+ * them — which is what `order_index` on a planned waypoint means.
+ *
  * https://docs.locationiq.com/docs/directions-directions-service
  */
 
@@ -34,6 +39,20 @@ export const LOCATIONIQ_DIRECTIONS_URL = 'https://us1.locationiq.com/v1/directio
 
 /** How long a routing call may take before we stop waiting on it. */
 export const REQUEST_TIMEOUT_MS = 10000;
+
+/**
+ * How many stops one route may be asked to thread through.
+ *
+ * The upstream takes a list of coordinates and charges for the whole call, and
+ * OSRM-family services cap a routing request at 25 coordinates. Twenty-three
+ * stops plus the two ends is that cap, spent on the thing a rider actually
+ * asked for.
+ *
+ * A trip with more stops than this is refused with a 400 rather than silently
+ * truncated: a route drawn through the first twenty-three of thirty stops is a
+ * route to somewhere the trip is not going, and it would look right.
+ */
+export const MAX_WAYPOINTS = 23;
 
 /**
  * The most points one route comes back with.
@@ -205,7 +224,13 @@ export function capPoints(points, max = MAX_ROUTE_POINTS) {
  * and the coordinate order, which is **lng,lat** in the path. Latitude first
  * would ask for a route through the sea off Somalia for most of Thailand.
  */
-export function buildDirectionsUrl({ apiKey, from, to, url = LOCATIONIQ_DIRECTIONS_URL }) {
+export function buildDirectionsUrl({
+  apiKey,
+  from,
+  to,
+  waypoints = [],
+  url = LOCATIONIQ_DIRECTIONS_URL,
+}) {
   const params = new URLSearchParams({
     key: apiKey,
     // The line, as coordinates rather than as an encoded polyline.
@@ -235,7 +260,15 @@ export function buildDirectionsUrl({ apiKey, from, to, url = LOCATIONIQ_DIRECTIO
     steps: 'false',
     alternatives: 'false',
   });
-  const path = `${from.lng},${from.lat};${to.lng},${to.lat}`;
+  // Every coordinate the route has to touch, in order, semicolon-separated —
+  // the format this API inherits from OSRM, and the reason a trip's stops need
+  // no second request and no joining of segments here: one call returns one
+  // line that already goes the way round the rider asked for.
+  //
+  // The order is the caller's and is never re-sorted. A rider who put the fuel
+  // stop after the viewpoint meant it; "optimise my stops" is a different
+  // feature and a different upstream parameter.
+  const path = [from, ...waypoints, to].map((p) => `${p.lng},${p.lat}`).join(';');
   return `${url}/${path}?${params.toString()}`;
 }
 
@@ -315,7 +348,7 @@ export function createLocationIqDirections({
   url = LOCATIONIQ_DIRECTIONS_URL,
   timeoutMs = REQUEST_TIMEOUT_MS,
 }) {
-  return async function route(from, to) {
+  return async function route(from, to, waypoints = []) {
     if (!apiKey) {
       // Not thrown at construction, for the same reason search isn't: a server
       // with no key still serves every other route, and this one says so.
@@ -327,7 +360,7 @@ export function createLocationIqDirections({
 
     let response;
     try {
-      response = await fetchImpl(buildDirectionsUrl({ apiKey, from, to, url }), {
+      response = await fetchImpl(buildDirectionsUrl({ apiKey, from, to, waypoints, url }), {
         signal: controller.signal,
         headers: { accept: 'application/json' },
       });

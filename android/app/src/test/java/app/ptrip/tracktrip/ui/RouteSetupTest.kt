@@ -27,6 +27,17 @@ class RouteSetupTest {
     private fun endpoint(point: LatLng, label: String? = null) =
         TripEndpoint(point.lat, point.lng, label)
 
+    private val nan = LatLng(18.7756, 100.7730)
+
+    private fun planned(id: Long, order: Int?, at: LatLng) = Waypoint(
+        id = id,
+        name = "Stop $id",
+        lat = at.lat,
+        lng = at.lng,
+        type = Waypoint.TYPE_PLANNED,
+        orderIndex = order,
+    )
+
     private fun stop(id: Long, order: Int?) = Waypoint(
         id = id,
         name = "Stop $id",
@@ -48,7 +59,10 @@ class RouteSetupTest {
 
         draft = RouteSetupRules.with(draft, RouteField.TO, RoutePoint(pai, "Pai"))
         assertTrue(draft.isComplete)
-        assertEquals(chiangMai to pai, RouteSetupRules.ends(draft))
+        assertEquals(
+            listOf(chiangMai, pai),
+            RouteSetupRules.plan(draft, emptyList())?.points,
+        )
     }
 
     @Test
@@ -98,17 +112,44 @@ class RouteSetupTest {
         val draft = RouteSetupRules.fromTrip(null, null)
 
         assertTrue(draft.isEmpty)
-        assertNull(RouteSetupRules.ends(draft))
+        assertNull(RouteSetupRules.plan(draft, emptyList()))
     }
 
     @Test
-    fun `an unchanged pair of ends is not worth a routing request`() {
+    fun `an unchanged route is not worth a routing request`() {
         val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
 
         // The line that keeps the card off the LocationIQ bill: the trip's own
-        // route was fetched for exactly this pair, so the summary reads that
+        // route was fetched for exactly this plan, so the summary reads that
         // rather than buying the same answer twice.
-        assertTrue(RouteSetupRules.endsMatch(draft, endpoint(chiangMai), endpoint(pai)))
+        assertTrue(
+            RouteSetupRules.matchesTrip(draft, emptyList(), endpoint(chiangMai), endpoint(pai))
+        )
+    }
+
+    @Test
+    fun `a trip's own stops are on both sides, so they change nothing`() {
+        val saved = listOf(planned(1, order = 0, at = lampang))
+        val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
+
+        // The stop is already on the trip and already on its fetched route.
+        // Opening the card to look at it must not re-ask for the same road.
+        assertTrue(
+            RouteSetupRules.matchesTrip(draft, saved, endpoint(chiangMai), endpoint(pai))
+        )
+    }
+
+    @Test
+    fun `a stop the draft added is a different road`() {
+        val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
+            .let { RouteSetupRules.with(it, RouteField.STOP, RoutePoint(lampang, "Lampang")) }
+
+        // The bug this whole change is about, at the level it can be tested:
+        // same two ends, entirely different ride, and answering it with the
+        // trip's line would quote a distance that skips the stop.
+        assertFalse(
+            RouteSetupRules.matchesTrip(draft, emptyList(), endpoint(chiangMai), endpoint(pai))
+        )
     }
 
     @Test
@@ -118,7 +159,14 @@ class RouteSetupTest {
 
         // Coordinates decide, labels do not. Re-routing because somebody typed
         // a nicer name would be a request bought with nothing.
-        assertTrue(RouteSetupRules.endsMatch(renamed, endpoint(chiangMai, "Home"), endpoint(pai, "Pai")))
+        assertTrue(
+            RouteSetupRules.matchesTrip(
+                renamed,
+                emptyList(),
+                endpoint(chiangMai, "Home"),
+                endpoint(pai, "Pai"),
+            )
+        )
     }
 
     @Test
@@ -126,16 +174,47 @@ class RouteSetupTest {
         val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
         val moved = draft.copy(to = RoutePoint(lampang))
 
-        assertFalse(RouteSetupRules.endsMatch(moved, endpoint(chiangMai), endpoint(pai)))
+        assertFalse(
+            RouteSetupRules.matchesTrip(moved, emptyList(), endpoint(chiangMai), endpoint(pai))
+        )
     }
 
     @Test
     fun `a half-set draft matches nothing`() {
         val draft = RouteDraft(from = RoutePoint(chiangMai))
 
-        // There is no pair to compare, so there is nothing to fetch either.
-        assertFalse(RouteSetupRules.endsMatch(draft, endpoint(chiangMai), endpoint(pai)))
-        assertFalse(RouteSetupRules.endsMatch(draft, null, null))
+        // There is no route to compare, so there is nothing to fetch either.
+        assertFalse(
+            RouteSetupRules.matchesTrip(draft, emptyList(), endpoint(chiangMai), endpoint(pai))
+        )
+        assertFalse(RouteSetupRules.matchesTrip(draft, emptyList(), null, null))
+    }
+
+    @Test
+    fun `the draft's plan is the order confirming will write`() {
+        // The trip already has two stops; the rider adds a third on the card.
+        // The preview has to thread all three in that order, because that is
+        // what nextOrderIndex is about to save.
+        val saved = listOf(
+            planned(1, order = 0, at = lampang),
+            planned(2, order = 1, at = pai),
+        )
+        val draft = RouteSetupRules
+            .fromTrip(endpoint(chiangMai), endpoint(pai))
+            .let { RouteSetupRules.with(it, RouteField.STOP, RoutePoint(nan, "Nan")) }
+
+        val plan = RouteSetupRules.plan(draft, saved)
+
+        assertEquals(chiangMai, plan?.from)
+        assertEquals(listOf(lampang, pai, nan), plan?.via)
+        assertEquals(pai, plan?.to)
+        assertEquals(listOf(chiangMai, lampang, pai, nan, pai), plan?.points)
+    }
+
+    @Test
+    fun `a half-set draft has no plan to ask for`() {
+        assertNull(RouteSetupRules.plan(RouteDraft(from = RoutePoint(chiangMai)), emptyList()))
+        assertNull(RouteSetupRules.plan(RouteDraft(), emptyList()))
     }
 
     @Test

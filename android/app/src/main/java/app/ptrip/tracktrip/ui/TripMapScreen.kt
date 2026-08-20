@@ -72,7 +72,9 @@ import app.ptrip.tracktrip.map.CameraTarget
 import app.ptrip.tracktrip.map.FOLLOW_ZOOM
 import app.ptrip.tracktrip.map.MapCamera
 import app.ptrip.tracktrip.map.ProgressBarLayout
+import app.ptrip.tracktrip.map.DirectProgress
 import app.ptrip.tracktrip.map.RouteGeometry
+import app.ptrip.tracktrip.map.RoutePlan
 import app.ptrip.tracktrip.map.RouteProgress
 import app.ptrip.tracktrip.map.boundsAround
 import app.ptrip.tracktrip.map.centre
@@ -286,8 +288,6 @@ fun TripMapScreen(
     }
     var overview by remember { mutableStateOf<MapOverview?>(null) }
     var overviewSequence by remember { mutableIntStateOf(0) }
-
-    val destination = state.trip?.destination?.let { LatLng(it.lat, it.lng) }
 
     // What "the whole journey" means: this rider, and the two ends of the trip
     // if they have been set. Not the other riders — the overview answers "how
@@ -525,16 +525,18 @@ fun TripMapScreen(
                 // 76dp inset is what put the label plate underneath the
                 // header on a long trip name, a wrapped subtitle, an error
                 // row, or a raised font scale.
+                // The fallback, when there is no road route to project onto.
+                // Measured along the trip's own legs — start, stops, finish —
+                // so a ride planned round a viewpoint is measured as that ride
+                // rather than as the gap to the far end of it. On a trip with
+                // no stops this is the gap-closing measure, unchanged.
+                val direct = DirectProgress.of(state.tripPlan, myLocation)
+
                 if (ProgressBarLayout.fits(mapHeightDp, headerHeightDp)) {
                     RouteProgressBar(
-                        fraction = alongRoute?.fraction ?: RouteProgress.fraction(
-                            origin = state.trip?.origin?.let { LatLng(it.lat, it.lng) },
-                            destination = destination,
-                            current = myLocation,
-                        ),
+                        fraction = alongRoute?.fraction ?: direct?.fraction,
                         remaining = RouteProgress.format(
-                            alongRoute?.remainingKm
-                                ?: RouteProgress.remainingKm(destination, myLocation)
+                            alongRoute?.remainingKm ?: direct?.remainingKm
                         ),
                         byRoad = alongRoute != null,
                         modifier = Modifier
@@ -799,6 +801,7 @@ fun TripMapScreen(
         if (routeSetupOpen && canSetUpRoute && picking == null && state.routeDraft.isComplete) {
             RouteSummarySheet(
                 draft = state.routeDraft,
+                plan = state.summaryPlan,
                 route = state.draftRoute,
                 loading = state.routePreviewLoading,
                 canAddStops = RouteSetupRules.canAddStops(state.trip?.isActive == true),
@@ -1023,6 +1026,11 @@ private fun routePointLabel(picked: RoutePoint): String =
 @Composable
 private fun RouteSummarySheet(
     draft: RouteDraft,
+    /**
+     * Every coordinate the route touches, in order — what the straight-line
+     * fallback measures when there is no road figure to show.
+     */
+    plan: RoutePlan?,
     route: RouteLine?,
     loading: Boolean,
     canAddStops: Boolean,
@@ -1095,7 +1103,7 @@ private fun RouteSummarySheet(
             } else {
                 Column {
                     Text(
-                        text = routeDistanceText(draft, route),
+                        text = routeDistanceText(plan, route),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = AppText,
@@ -1179,12 +1187,19 @@ private fun RouteSummarySheet(
     }
 }
 
-/** The distance to show: the road's when there is one, the straight line's otherwise. */
+/**
+ * The distance to show: the road's when there is one, the straight line's
+ * otherwise.
+ *
+ * The fallback is the length of every leg — start to first stop, stop to stop,
+ * last stop to finish — rather than the gap between the two ends. Quoting the
+ * end-to-end gap on a route with three stops on it would understate the ride
+ * by however far out of the way the stops are, directly above the button that
+ * saves it.
+ */
 @Composable
-private fun routeDistanceText(draft: RouteDraft, route: RouteLine?): String {
-    val km = route?.distanceKm ?: RouteSetupRules.ends(draft)?.let { (from, to) ->
-        RouteProgress.distanceKm(from, to)
-    }
+private fun routeDistanceText(plan: RoutePlan?, route: RouteLine?): String {
+    val km = route?.distanceKm ?: plan?.let { RouteGeometry.lengthKm(it.points) }
     return RouteProgress.format(km) ?: stringResource(R.string.map_speed_unknown)
 }
 

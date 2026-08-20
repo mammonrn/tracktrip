@@ -777,16 +777,17 @@ app: put it in `.env` on the VPS and `npm run pm2:restart`.
 
 ## Road routing
 
-`GET /directions?from=<lat,lng>&to=<lat,lng>` answers with the road between two
-points: the line to draw on the map, how long it is, and roughly how long it
-takes. It is what turns the map's progress bar from "how much of the crow-flies
-gap have I closed" into "how much of the road is left", which on a mountain
-road are very different numbers.
+`GET /directions?from=<lat,lng>&to=<lat,lng>[&waypoints=<lat,lng>;<lat,lng>]`
+answers with the road a trip actually takes: the line to draw on the map, how
+long it is, and roughly how long it takes. It is what turns the map's progress
+bar from "how much of the crow-flies gap have I closed" into "how much of the
+road is left", which on a mountain road are very different numbers.
 
 ```
-GET /directions?from=18.78830,98.98530&to=19.35830,98.44060
+GET /directions?from=18.78830,98.98530&to=19.35830,98.44060&waypoints=18.28880,99.49080
 → { "from": { "lat": 18.7883, "lng": 98.9853 },
     "to":   { "lat": 19.3583, "lng": 98.4406 },
+    "waypoints": [ { "lat": 18.2888, "lng": 99.4908 } ],
     "cached": false,
     "route": {
       "points": [ { "lat": 18.7883, "lng": 98.9853 }, ... ],
@@ -795,13 +796,36 @@ GET /directions?from=18.78830,98.98530&to=19.35830,98.44060
     } }
 ```
 
+**`waypoints` is one request, not several joined together.** The upstream takes
+a list of coordinates and returns a single geometry through all of them, so a
+trip with three stops costs one call against the quota, one distance that is
+really the distance, and one line with no seams where the stops are. Joining
+per-leg routes here would have cost four calls and produced a length that was
+the sum of four roads rather than the road.
+
+The order is the caller's and is never re-sorted — that is what `order_index`
+on a planned waypoint means. "Optimise my stops" is a different feature and a
+different upstream parameter.
+
+At most `MAX_WAYPOINTS` (23) stops, which with the two ends is the 25
+coordinates an OSRM-family routing call takes. More than that is a 400 rather
+than a silent truncation: a route drawn through the first twenty-three of
+thirty stops goes somewhere the trip does not, and it would look right.
+
+**Every stop is in the cache key**, at the same four-decimal rounding the two
+ends use. Two trips can share a start and a finish and be completely different
+rides — one straight up the highway, one round three viewpoints — and keyed on
+the ends alone the second would be served the first's line for six hours, with
+nothing on screen to say so. Order is part of the key too, because the same
+three stops taken the other way round is a different road.
+
 Same key, same reasoning, same defences as place search — with the numbers
 turned up, because the traffic pattern is different:
 
-- **The app asks once per pair of endpoints**, not once per poll. The map polls
-  positions every twenty seconds; a route is a function of two coordinates the
-  trip owner set by hand, so it is re-fetched when either of them moves and at
-  no other time. A failed attempt waits five minutes before another is tried,
+- **The app asks once per route**, not once per poll. The map polls positions
+  every twenty seconds; a route is a function of the coordinates the trip owner
+  set by hand — its two ends and its planned stops — so it is re-fetched when
+  one of them moves or a stop is added, and at no other time. A failed attempt waits five minutes before another is tried,
   so a server with no key does not get three requests a minute for ever.
   (`android/.../map/RouteRequests.kt`, and the test beside it.)
 - **The server caches a route for six hours**, against place search's ten
