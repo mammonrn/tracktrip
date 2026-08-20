@@ -511,15 +511,21 @@ the socket is a shortcut.
   **Each accepted fix also credits distance** towards the rider's lifetime
   `users.total_km` — see [Lifetime distance](#lifetime-distance) below.
 
-  Capped at **10 reports per minute per rider** (`POSITION_RATE_LIMIT` in
+  Capped at **30 reports per minute per rider** (`POSITION_RATE_LIMIT` in
   `src/routes/positions.js`), answering `429 {"error": "too many position
-  updates"}` above that. The app reports every **45 seconds** while a rider
-  is sharing — 1.33 a minute — so this is a safety net against a client stuck
-  in a retry loop, not a quota: no real rider will reach it. It is keyed on
+  updates"}` above that. The app reports every **10 seconds** while a rider
+  is sharing — 6 a minute — so this is a safety net against a client stuck
+  in a retry loop, not a quota: no real rider will reach it. (It was 10/min
+  against a 45-second cadence. The cadence came down to 10 seconds and the
+  ceiling went up with it: at 6 a minute against 10, the headroom would have
+  been 1.67x and the first thing the limiter caught would have been a real
+  report. `ReportCadenceTest` on the Android side and the pair of tests in
+  `test/positions.test.js` are what keep the two numbers in step.) It is keyed on
   the **rider**, not the IP, because a group riding together is usually
   behind one carrier NAT and would otherwise throttle each other. `GET` is
   not capped: the limit is derived from how often a rider reports, and the
-  map screen refreshes on its own cadence (every 20 seconds).
+  map screen refreshes on its own cadence (every 20 seconds — see
+  `LiveCadence` for why that did **not** move with the reporting cadence).
 
 - `GET /trips/:id/positions/history` — **the trail**: one point per fix the
   trip has accepted, oldest first, as `{ trip_id, truncated, points: [{ id,
@@ -805,10 +811,32 @@ turned up, because the traffic pattern is different:
 - **Rate-limited to 6 a minute per rider**, tighter than search's twelve,
   because nobody types a route.
 
-`overview=simplified` is what gets asked for, and the geometry is thinned to at
-most 600 points before it leaves this server: the line is drawn on a phone, not
-navigated. The distance is the routing service's own figure and is never
-re-measured from the thinned points — that would be quietly short.
+**`overview=full` is what gets asked for**, and the geometry is then simplified
+here, to at most 600 points, before it leaves the server.
+
+That was `overview=simplified` first, on the reasoning that a line being drawn
+does not need a navigator's vertex count. The reasoning was right and the
+parameter was wrong: `simplified` is an *overview*-grade geometry. Measured
+against a real router on Chiang Mai → Pai, 130 km of mountain road:
+
+| `overview` | points | drawn length ÷ straight-line length |
+|---|---|---|
+| `simplified` | 45 | 1.297 |
+| `full` | 3,705 | 1.517 |
+| `full`, then simplified here | 397 | **1.478** |
+
+Forty-five points over 130 km is a three-kilometre straight chord per segment.
+On a phone that is not a road — it is very nearly the straight line the feature
+exists to replace, which is exactly what it looked like on a real ride.
+
+The thinning is Douglas–Peucker with an adaptive tolerance: it starts at about
+two metres and doubles until the line fits the cap, so a ride across town keeps
+every vertex the router gave it and only a long route is thinned at all. Even
+sampling (`capPoints`) is kept underneath as a backstop for a pathological
+geometry, because it cuts a hairpin as readily as a straight.
+
+The distance is the routing service's own figure and is never re-measured from
+the thinned points — that would be quietly short.
 
 **"No road between these two points"** — a finish on an island, a coordinate in
 the sea — is `200` with `"route": null`, not an error, and is cached like any

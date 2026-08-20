@@ -1,7 +1,12 @@
 package app.ptrip.tracktrip.map
 
+import app.ptrip.tracktrip.data.Trail
 import app.ptrip.tracktrip.data.TrailPoint
+import app.ptrip.tracktrip.data.toTrail
+import app.ptrip.tracktrip.location.ReportCadence
 import java.time.Instant
+import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -87,7 +92,7 @@ class BreadcrumbsTest {
 
     @Test
     fun `a trail is drawn oldest first, which is the order a line is drawn in`() {
-        val jumbled = listOf(point(3, minutesAgo = 1), point(1, minutesAgo = 20), point(2, minutesAgo = 10))
+        val jumbled = listOf(point(3, minutesAgo = 1), point(1, minutesAgo = 12), point(2, minutesAgo = 6))
 
         assertEquals(listOf(1L, 2L, 3L), Breadcrumbs.trim(jumbled, now).map { it.id })
     }
@@ -107,18 +112,74 @@ class BreadcrumbsTest {
 
     @Test
     fun `an ordinary ride is never trimmed by the cap`() {
-        // The whole window filled at the app's forty-five-second reporting
-        // cadence: sixty points. The cap is double that on purpose, so a
-        // rider on a normal ride never loses the far end of their own line.
-        val cadenceSeconds = 45L
-        val perWindow = (Breadcrumbs.WINDOW_MS / 1000L / cadenceSeconds).toInt()
+        // The whole window filled at the app's own reporting cadence. Derived
+        // from ReportCadence rather than written down, because the two are the
+        // thing that came apart: this file was sized against a 45-second
+        // cadence, and at 10 seconds the same window is 4.5 times the points.
+        val perWindow = Breadcrumbs.expectedPointsPerRider
         val ride = (0 until perWindow).map {
-            point(it.toLong(), secondsAgo = it * cadenceSeconds)
+            point(it.toLong(), secondsAgo = it * (ReportCadence.INTERVAL_MS / 1000L))
         }
 
-        assertEquals(60, perWindow)
+        assertEquals(90, perWindow)
         assertEquals(perWindow, Breadcrumbs.trim(ride, now).size)
-        assertTrue(perWindow < Breadcrumbs.MAX_POINTS_PER_RIDER)
+        assertTrue(
+            "a normal ride must never lose the far end of its own line",
+            perWindow < Breadcrumbs.MAX_POINTS_PER_RIDER,
+        )
+    }
+
+    // --- the window against the endpoint's ceiling --------------------------
+
+    @Test
+    fun `a full group's window fits in one request`() {
+        // The bug this pins down: the history endpoint answers oldest-first
+        // with a LIMIT, so a window that overflows its ceiling comes back as
+        // the *start* of the window — a line that stops in the middle of a
+        // road. At 45 seconds a 45-minute window was 480 points for eight
+        // riders and fitted; at 10 seconds the same window is 2,160 and does
+        // not. Fifteen minutes is what fits.
+        assertTrue(
+            "a group of ${Breadcrumbs.GROUP_SIZE_BUDGET} needs " +
+                "${Breadcrumbs.expectedPointsPerGroup} points, server gives " +
+                "${Breadcrumbs.SERVER_MAX_POINTS}",
+            Breadcrumbs.expectedPointsPerGroup <= Breadcrumbs.SERVER_MAX_POINTS,
+        )
+    }
+
+    @Test
+    fun `the window the old cadence was sized for would no longer fit`() {
+        // Kept as a worked example of why this file had to change with the
+        // cadence, so a future change to either is measured rather than
+        // assumed.
+        val oldWindowMs = 45 * 60 * 1000L
+        val atNewCadence =
+            (oldWindowMs / ReportCadence.INTERVAL_MS).toInt() * Breadcrumbs.GROUP_SIZE_BUDGET
+
+        assertTrue(atNewCadence > Breadcrumbs.SERVER_MAX_POINTS)
+    }
+
+    @Test
+    fun `the fetch asks for everything the server will give`() {
+        // Asking for less than the ceiling would be choosing to be truncated.
+        assertEquals(Breadcrumbs.SERVER_MAX_POINTS, Breadcrumbs.FETCH_LIMIT)
+    }
+
+    @Test
+    fun `the cap leaves room for a backlog without clipping a normal ride`() {
+        val expected = Breadcrumbs.expectedPointsPerRider
+        assertTrue(Breadcrumbs.MAX_POINTS_PER_RIDER > expected)
+        assertTrue(
+            "the cap should be roughly double the window, not marginally above it",
+            Breadcrumbs.MAX_POINTS_PER_RIDER >= expected * 2,
+        )
+    }
+
+    @Test
+    fun `a top-up brings a handful of points, not a window`() {
+        // What the 30-second refresh actually costs at the reporting cadence.
+        val perTopUp = Breadcrumbs.REFRESH_MS / ReportCadence.INTERVAL_MS
+        assertEquals(3L, perTopUp)
     }
 
     @Test
@@ -133,11 +194,19 @@ class BreadcrumbsTest {
 
     @Test
     fun `when the cap bites it is the newest points that are kept`() {
-        val many = (0 until 200).map { point(it.toLong(), minutesAgo = (200 - it).toLong() / 10) }
+        // Three hundred points spread across the window — more than the cap,
+        // all of them fresh enough to keep. The oldest are the ones to lose:
+        // the near end of the line is the half a rider is looking at.
+        val count = 300
+        val spanSeconds = Breadcrumbs.WINDOW_MS / 1000L - 60L
+        val many = (0 until count).map {
+            point(it.toLong(), secondsAgo = spanSeconds - it * spanSeconds / count)
+        }
         val trimmed = Breadcrumbs.trim(many, now)
 
-        assertEquals(199L, trimmed.last().id)
         assertEquals(Breadcrumbs.MAX_POINTS_PER_RIDER, trimmed.size)
+        assertEquals((count - 1).toLong(), trimmed.last().id)
+        assertEquals((count - Breadcrumbs.MAX_POINTS_PER_RIDER).toLong(), trimmed.first().id)
     }
 
     // --- one line per rider ------------------------------------------------
@@ -216,6 +285,124 @@ class BreadcrumbsTest {
         // The busy rider is capped; the quiet one is not swept away with them.
         assertEquals(Breadcrumbs.MAX_POINTS_PER_RIDER, merged.count { it.userId == 1L })
         assertEquals(2, merged.count { it.userId == 2L })
+    }
+
+    // --- chasing a truncated answer -----------------------------------------
+
+    /** A stub endpoint that records what it was asked for. */
+    private class FakeHistory(private val pages: List<Trail>) {
+        val asked = mutableListOf<Pair<String, Int>>()
+        suspend fun fetch(sinceIso: String, limit: Int): Trail {
+            asked += sinceIso to limit
+            return pages.getOrElse(asked.size - 1) { Trail(emptyList(), truncated = false) }
+        }
+    }
+
+    @Test
+    fun `an untruncated answer is one request`() = runTest {
+        val history = FakeHistory(
+            listOf(Trail(listOf(point(1, minutesAgo = 5), point(2, minutesAgo = 4)), truncated = false))
+        )
+
+        val collected = Breadcrumbs.collect(emptyList(), now, history::fetch)
+
+        assertEquals(2, collected.size)
+        assertEquals(1, history.asked.size)
+        assertEquals(Breadcrumbs.sinceIso(now), history.asked[0].first)
+        assertEquals(Breadcrumbs.FETCH_LIMIT, history.asked[0].second)
+    }
+
+    @Test
+    fun `a truncated answer is chased from its newest point, not re-asked`() = runTest {
+        // The bug this exists for: the endpoint answers oldest-first with a
+        // LIMIT, so a truncated page is the *start* of the window. Accepting
+        // it draws a line that stops in the middle of a road.
+        val first = Trail(listOf(point(1, minutesAgo = 12), point(2, minutesAgo = 10)), truncated = true)
+        val second = Trail(listOf(point(3, minutesAgo = 8), point(4, minutesAgo = 6)), truncated = true)
+        val third = Trail(listOf(point(5, minutesAgo = 2)), truncated = false)
+        val history = FakeHistory(listOf(first, second, third))
+
+        val collected = Breadcrumbs.collect(emptyList(), now, history::fetch)
+
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), collected.map { it.id })
+        assertEquals(3, history.asked.size)
+        // Each round walks forward from the newest point the last one gave.
+        assertEquals(point(2, minutesAgo = 10).recordedAt, history.asked[1].first)
+        assertEquals(point(4, minutesAgo = 6).recordedAt, history.asked[2].first)
+    }
+
+    @Test
+    fun `the chase is bounded rather than following a server that always truncates`() = runTest {
+        val alwaysTruncated = (1..10).map {
+            Trail(listOf(point(it.toLong(), minutesAgo = (12 - it).toLong())), truncated = true)
+        }
+        val history = FakeHistory(alwaysTruncated)
+
+        Breadcrumbs.collect(emptyList(), now, history::fetch)
+
+        assertEquals(Breadcrumbs.MAX_CATCH_UP_ROUNDS, history.asked.size)
+    }
+
+    @Test
+    fun `a truncated page with no readable timestamp stops rather than looping`() = runTest {
+        val unreadable = Trail(
+            listOf(TrailPoint(id = 1, userId = 1, lat = 18.0, lng = 98.0, recordedAt = null)),
+            truncated = true,
+        )
+        val history = FakeHistory(listOf(unreadable, unreadable, unreadable))
+
+        Breadcrumbs.collect(emptyList(), now, history::fetch)
+
+        // Asking again from the same place would be a loop with nothing to
+        // walk to, so it takes what arrived and stops.
+        assertEquals(1, history.asked.size)
+    }
+
+    @Test
+    fun `a top-up starts from what is already held, not from the window`() = runTest {
+        val held = listOf(point(1, minutesAgo = 10), point(2, minutesAgo = 5))
+        val history = FakeHistory(listOf(Trail(listOf(point(3, minutesAgo = 1)), truncated = false)))
+
+        val collected = Breadcrumbs.collect(held, now, history::fetch)
+
+        assertEquals(listOf(1L, 2L, 3L), collected.map { it.id })
+        assertEquals(point(2, minutesAgo = 5).recordedAt, history.asked[0].first)
+    }
+
+    @Test
+    fun `whatever the fetch throws comes straight back out`() = runTest {
+        var thrown: IllegalStateException? = null
+        try {
+            Breadcrumbs.collect(emptyList(), now) { _, _ -> throw IllegalStateException("offline") }
+        } catch (e: IllegalStateException) {
+            thrown = e
+        }
+        assertEquals("offline", thrown?.message)
+    }
+
+    // --- the whole path, from a response the server actually produces --------
+
+    @Test
+    fun `a real history response becomes a line`() {
+        // The end-to-end check that the trail's data path works: the exact
+        // JSON shape `GET /trips/:id/positions/history` returns, through the
+        // parser, the merge and the grouping, to coordinates a map can draw.
+        // Written after a real-device report that the trail never appeared —
+        // this is the half of the chain that was proven sound.
+        val cadenceMs = ReportCadence.INTERVAL_MS
+        val rows = (0 until 10).joinToString(",") { i ->
+            val at = Instant.ofEpochMilli(now - (9 - i) * cadenceMs).toString()
+            """{"id":${i + 1},"user_id":7,"lat":${18.0 + i * 0.001},"lng":98.0,"recorded_at":"$at"}"""
+        }
+        val body = """{"trip_id":1,"truncated":false,"points":[$rows]}"""
+
+        val trail = JSONObject(body).toTrail()
+        assertEquals(10, trail.points.size)
+
+        val lines = Breadcrumbs.byRider(Breadcrumbs.merge(emptyList(), trail.points, now), now)
+        assertEquals(setOf(7L), lines.keys)
+        assertEquals(10, lines.getValue(7).size)
+        assertEquals(LatLng(18.0, 98.0), lines.getValue(7).first())
     }
 
     @Test

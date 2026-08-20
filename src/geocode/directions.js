@@ -38,13 +38,24 @@ export const REQUEST_TIMEOUT_MS = 10000;
 /**
  * The most points one route comes back with.
  *
- * `overview=simplified` already gives a line meant for drawing rather than for
- * navigating, but a thousand-kilometre route still arrives with thousands of
- * vertices, and a phone drawing an overlay on every frame pays for each one.
- * Past this the line is thinned evenly — see [capPoints] for why that is safe
- * for something being drawn and would not be for something being measured.
+ * A phone drawing an overlay on every frame pays for each vertex, and a
+ * long route arrives with thousands. Six hundred is plenty for a line on a
+ * phone screen — see [simplifyLine] for how it gets there without losing the
+ * road, and [capPoints] for the backstop underneath it.
  */
 export const MAX_ROUTE_POINTS = 600;
+
+/**
+ * The tightest simplification tolerance, in degrees. About two metres.
+ *
+ * [simplifyLine] starts here and loosens until the line fits the cap, so a
+ * short route keeps essentially every vertex the router gave it and only a
+ * long one is thinned at all.
+ */
+export const MIN_SIMPLIFY_TOLERANCE_DEG = 0.00002;
+
+/** How many times the tolerance may double before the backstop takes over. */
+export const SIMPLIFY_MAX_PASSES = 20;
 
 /**
  * A `lat,lng` pair as the query string carries it, or null when it is not one.
@@ -68,13 +79,106 @@ export function parseCoordinate(raw) {
 }
 
 /**
- * Thins a line to at most [max] points, keeping the first and the last.
+ * Perpendicular distance from a point to the segment a-b, in degrees.
  *
- * Even sampling rather than Douglas-Peucker: this is a line being *drawn*, and
- * at the zoom levels a phone map uses, dropping every other vertex of an
- * already-simplified geometry is invisible. It would not be safe for the
- * distance — which is why the distance comes from the upstream's own figure
- * and is never re-measured from these points.
+ * Degrees rather than metres, and no cosine correction for latitude: this
+ * decides which vertices of a drawn line to keep, and at Thailand's latitude
+ * the longitude scale is off by about 5% — which moves the tolerance from
+ * "two metres" to "two point one metres" and changes no decision anybody can
+ * see. Doing it properly would mean a trig call per point per pass.
+ */
+function perpendicularDistance(point, a, b) {
+  const dx = b.lng - a.lng;
+  const dy = b.lat - a.lat;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    return Math.hypot(point.lng - a.lng, point.lat - a.lat);
+  }
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.lng - a.lng) * dx + (point.lat - a.lat) * dy) / lengthSquared)
+  );
+  return Math.hypot(point.lng - (a.lng + t * dx), point.lat - (a.lat + t * dy));
+}
+
+/**
+ * Douglas-Peucker: drop every vertex that is within [tolerance] of the line
+ * its neighbours already describe.
+ *
+ * Iterative rather than recursive on purpose. The textbook version recurses
+ * once per kept vertex, and a route is attacker-adjacent input — a pathological
+ * geometry would blow the stack on a server rather than return a bad line.
+ */
+export function douglasPeucker(points, tolerance) {
+  if (!Array.isArray(points) || points.length < 3) return Array.isArray(points) ? points : [];
+
+  const keep = new Array(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+
+  const stack = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [first, last] = stack.pop();
+    if (last <= first + 1) continue;
+
+    let furthest = -1;
+    let furthestDistance = tolerance;
+    for (let i = first + 1; i < last; i += 1) {
+      const distance = perpendicularDistance(points[i], points[first], points[last]);
+      if (distance > furthestDistance) {
+        furthestDistance = distance;
+        furthest = i;
+      }
+    }
+
+    // Nothing in this span strays far enough from the chord to be worth a
+    // vertex, so the chord replaces all of it.
+    if (furthest < 0) continue;
+
+    keep[furthest] = true;
+    stack.push([first, furthest]);
+    stack.push([furthest, last]);
+  }
+
+  return points.filter((_, i) => keep[i]);
+}
+
+/**
+ * Thins a line until it fits [max] points, keeping the shape of the road.
+ *
+ * The tolerance starts at [MIN_SIMPLIFY_TOLERANCE_DEG] — about two metres —
+ * and doubles until the line fits. That is what makes this adaptive in the way
+ * that matters: a five-kilometre ride across town keeps essentially every
+ * vertex the router gave it, and only a route long enough to blow the cap is
+ * thinned at all, at the loosest tolerance that fits and no looser.
+ *
+ * [capPoints] is the backstop for a geometry so pathological that twenty
+ * doublings do not get it under the cap. Even sampling loses shape, which is
+ * why it is last rather than first.
+ */
+export function simplifyLine(points, max = MAX_ROUTE_POINTS) {
+  if (!Array.isArray(points)) return [];
+  if (points.length <= max) return points;
+
+  let tolerance = MIN_SIMPLIFY_TOLERANCE_DEG;
+  let simplified = points;
+  for (let pass = 0; pass < SIMPLIFY_MAX_PASSES; pass += 1) {
+    simplified = douglasPeucker(points, tolerance);
+    if (simplified.length <= max) return simplified;
+    tolerance *= 2;
+  }
+  return capPoints(simplified, max);
+}
+
+/**
+ * Thins a line to at most [max] points by even sampling, keeping the first and
+ * the last.
+ *
+ * The backstop under [simplifyLine], not the first choice: even sampling
+ * ignores where the bends are, so it cuts a hairpin as readily as a straight.
+ * It would not be safe for the distance either — which is why the distance
+ * comes from the upstream's own figure and is never re-measured from these
+ * points.
  */
 export function capPoints(points, max = MAX_ROUTE_POINTS) {
   if (!Array.isArray(points)) return [];
@@ -106,8 +210,27 @@ export function buildDirectionsUrl({ apiKey, from, to, url = LOCATIONIQ_DIRECTIO
     key: apiKey,
     // The line, as coordinates rather than as an encoded polyline.
     geometries: 'geojson',
-    // Enough shape to draw, without the vertex count a navigator would need.
-    overview: 'simplified',
+    // ## Why `full` and not `simplified`
+    //
+    // This asked for `simplified` first, on the reasoning that a line being
+    // drawn does not need a navigator's vertex count. That reasoning was
+    // right and the parameter was wrong: `simplified` is an *overview* grade
+    // geometry, not a drawing grade one. Measured against a real router on
+    // Chiang Mai → Pai, 130 km of mountain road:
+    //
+    //   overview=simplified    45 points   drawn length / straight = 1.297
+    //   overview=full        3705 points   drawn length / straight = 1.517
+    //
+    // Forty-five points over 130 km is a three-kilometre straight chord per
+    // segment. On screen that is not a road, it is very nearly the straight
+    // line the feature exists to replace — which is exactly what it looked
+    // like on a real ride.
+    //
+    // So the full geometry is fetched and thinned here instead, where the
+    // tolerance can be chosen to preserve the bends. Douglas-Peucker at 571
+    // points keeps 1.494 of the 1.517 — the same payload as before, and the
+    // road back. See [simplifyLine].
+    overview: 'full',
     // No turn list: this phase draws a line and nothing reads the steps.
     steps: 'false',
     alternatives: 'false',
@@ -153,7 +276,7 @@ export function parseRoute(payload) {
   const seconds = Number(route.duration);
 
   return {
-    points: capPoints(points),
+    points: simplifyLine(points),
     distance_km: Number.isFinite(metres) && metres >= 0 ? metres / 1000 : null,
     duration_min:
       Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds / 60) : null,

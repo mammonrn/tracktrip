@@ -5,7 +5,11 @@ import supertest from 'supertest';
 import { createApp } from '../src/app.js';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
-import { validatePositionInput, POSITION_RATE_LIMIT } from '../src/routes/positions.js';
+import {
+  validatePositionInput,
+  POSITION_RATE_LIMIT,
+  CLIENT_REPORT_INTERVAL_SECONDS,
+} from '../src/routes/positions.js';
 
 const JWT_SECRET = 'test-secret';
 
@@ -559,6 +563,43 @@ test('the cap is per rider, so riders behind one carrier NAT do not throttle eac
       `the owner's report ${i} must not be charged to the member`
     );
   }
+});
+
+test("the ceiling stays a safety net, not a ceiling the app's own cadence brushes", () => {
+  // The other half of ReportCadenceTest on the Android side. That one holds
+  // the app to this number; this one holds this number to the app. Both have
+  // to exist because a constant in a Node file cannot be imported into Kotlin,
+  // and the failure mode when they part company is a wall of 429s on real
+  // riders' real reports.
+  const postsPerMinute = 60 / CLIENT_REPORT_INTERVAL_SECONDS;
+
+  assert.equal(postsPerMinute, 6);
+  assert.ok(
+    POSITION_RATE_LIMIT.max / postsPerMinute >= 3,
+    `want at least 3x headroom, have ${POSITION_RATE_LIMIT.max / postsPerMinute}`
+  );
+});
+
+test('a perfectly periodic reporter never fills a fixed window, at any phase', () => {
+  // express-rate-limit counts hits in a fixed window, not a sliding one, so
+  // what matters is the worst phase rather than the average — a signal whose
+  // period does not divide the window can land an extra post in one of them.
+  // Ten seconds into sixty divides exactly, so every phase gives six; the
+  // sweep is here so that a future cadence which does *not* divide cleanly is
+  // measured rather than assumed.
+  const periodMs = CLIENT_REPORT_INTERVAL_SECONDS * 1000;
+  let worst = 0;
+  for (let phaseMs = 0; phaseMs < periodMs; phaseMs += 250) {
+    let inWindow = 0;
+    for (let t = phaseMs; t < POSITION_RATE_LIMIT.windowMs; t += periodMs) inWindow += 1;
+    worst = Math.max(worst, inWindow);
+  }
+
+  assert.equal(worst, 6);
+  assert.ok(
+    worst < POSITION_RATE_LIMIT.max,
+    `${worst} posts in a window against a cap of ${POSITION_RATE_LIMIT.max}`
+  );
 });
 
 test('a rider at their reporting cap can still read, and use the rest of the API', async () => {

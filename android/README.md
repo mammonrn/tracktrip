@@ -8,7 +8,7 @@ project.
 an invitation, and open a trip to invite riders by email, QR code or a shared
 link, see who's on it, and (as owner) end it. **Location sharing works**: a
 rider picks how long to share for and a foreground service reports their
-position every 45 seconds until it lapses, they stop it, or the trip ends.
+position every 10 seconds until it lapses, they stop it, or the trip ends.
 On the map, pressing and holding places a point: the owner sets where the
 trip starts and where it is going, and anyone on it can drop a stop. There is
 a settings screen for the profile, language, sharing defaults, per-trip
@@ -96,10 +96,39 @@ than in each screen that offers it:
 Stopping runs the other way — service down first, then the server — so a
 failed network call still leaves the phone silent.
 
-The service reports every 45 seconds via `LocationManager` (not Play
+The service reports every 10 seconds via `LocationManager` (not Play
 Services' fused provider: at that cadence the accuracy is not worth another
 dependency, and this keeps working on a phone whose Play Services are
-unhealthy, which is the phone that ends up on a mountain road). It stops
+unhealthy, which is the phone that ends up on a mountain road).
+
+That was 45 seconds. Two things made 10 the right number now, and one of them
+is new. At 80 km/h, 45 seconds is about a kilometre between reports and 10 is
+about 220 metres — the difference between a friend's pin being a village
+behind them and a street behind them. And the old objection ("every report is
+a GPS acquisition") no longer applies while anybody is looking: since the live
+speed feed landed, the map screen holds a continuous 1 Hz location
+subscription for as long as it is composed, so a report on the map screen
+costs one HTTP POST and **zero** extra acquisitions. The cost that is real is
+screen-off — a phone in a tank bag now wakes the receiver 4.5× as often, less
+than 4.5× in practice because ten-second cycles keep the GNSS engine warm and
+a warm fix is far cheaper than the cold search a 45-second gap can fall into,
+but a long day in a pocket will show it.
+
+The backend's per-rider ceiling went from 10 to 30 reports a minute in the
+same change, so 6 a minute keeps the 5× headroom the old cadence had rather
+than brushing a limit whose whole job is to catch a runaway client.
+[`location/ReportCadence.kt`](
+app/src/main/java/app/ptrip/tracktrip/location/ReportCadence.kt) holds a copy
+of that ceiling and `ReportCadenceTest` fails when the two part company —
+which is the only thing connecting a Kotlin constant to a Node one.
+
+The **viewer's** poll deliberately did not move: `LiveCadence.POLL_MS` is
+still 20 seconds. The socket delivers every stored fix the moment it is
+stored, so a rider with a connection already gets the whole benefit; the poll
+is the fallback for a dropped socket, and on that path worst-case staleness
+just improved from about a minute to twenty seconds for free. Halving it
+would double every viewer's read traffic permanently to save at most ten
+seconds on a path that is already better than it was. It stops
 itself when the session lapses, when the rider stops it from the notification,
 and when a report comes back saying the trip has ended.
 
@@ -153,7 +182,15 @@ restarts. Panning follows an explicit tap, never the poll: re-centring every
 With a road route fetched (`GET /directions` — see the backend README), the
 map draws it between the trip's start and finish: a wide white casing with the
 orange fill on top, the same trick a road atlas uses and the same one the
-progress bar down the edge of the map uses. A single coloured line over a
+progress bar down the edge of the map uses.
+
+**The first version of this drew a nearly straight line, and the drawing code
+was not why.** The server asked LocationIQ for `overview=simplified`, which is
+an overview-grade geometry — 45 vertices for 130 km of mountain road, a
+three-kilometre chord per segment. The map drew exactly what it was given. The
+fix is on the server (`overview=full`, then Douglas–Peucker down to the cap);
+nothing on this side changed, which is worth remembering the next time a line
+looks wrong: this code draws the points it is handed and adds nothing. A single coloured line over a
 daylight OSM tile disappears the moment it crosses a motorway drawn in a
 similar colour; with a casing the fill only has to contrast with its own
 outline.
@@ -172,21 +209,42 @@ straight-line measure and the caption reads "direct", exactly as before.
 
 Each rider's recent breadcrumbs are drawn behind them in their own colour,
 from `GET /trips/:id/positions/history`. The rules are in [`map/Breadcrumbs.kt`](
-app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt): the last **45
-minutes**, at most **120 points per rider**, topped up every 30 seconds by
+app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt): the last **15
+minutes**, at most **200 points per rider**, topped up every 30 seconds by
 asking only for what is newer than the newest point already held.
 
-Forty-five minutes is a judgement, not a limit imposed by anything: the trail
+Fifteen minutes is a judgement, not a limit imposed by anything: the trail
 answers "which way did they come, and did they take the turn?", which is a
 question about the last few minutes, and a whole day drawn behind eight riders
 is a ball of wool rather than a map. The per-rider cap exists for the case the
 cadence does not describe — a phone that lost signal in the hills and flushes a
 backlog of fixes in one second.
 
+It was 45 minutes and 120 points, sized against the 45-second reporting
+cadence. At 10 seconds the same window is 4.5× the points — 270 per rider,
+over two thousand for a group of eight — and both ceilings would have been hit
+at once: the per-rider cap would have quietly clipped every trail to its last
+twenty minutes, and the endpoint would have truncated. Fifteen minutes at ten
+seconds is ninety points where forty-five minutes at forty-five seconds was
+sixty, so the line is denser and more road-shaped than it was, and still around
+fifteen kilometres of riding. The constants are derived from
+`ReportCadence.INTERVAL_MS` now rather than written down, so the two cannot
+drift apart again silently.
+
 The window is also why the fetch passes `since`: the history endpoint is
 `ORDER BY recorded_at ASC ... LIMIT`, so a request without one returns the
 *oldest* points of the ride, which is the opposite of what a trail behind a
-moving pin needs.
+moving pin needs. For the same reason a **truncated** answer is chased rather
+than accepted — it is the *start* of the window, so taking it would draw a line
+that stops in the middle of a road. `Breadcrumbs.collect` asks again from the
+newest point it received, bounded to three rounds; the window is sized so a
+realistic group never needs a second one.
+
+**If the trail is on and nothing is drawn, the map says so.** Nothing is
+recorded until somebody actually shares their position, and a rider testing the
+map usually has not — which made the toggle indistinguishable from a broken
+button on its first real outing. The row under the map now tells the two
+states apart.
 
 There is a toggle for it on the map, and the answer is remembered in
 `AppSettings`. On by default — a feature switched off by default is a feature
@@ -305,7 +363,7 @@ along, and there is only one now.
 
 The foreground service is what lets the app read location with the phone in a
 pocket, and it is not enough on its own: Doze and app-standby still throttle a
-backgrounded app, and a 45-second reporting loop quietly becomes a several-
+backgrounded app, and a 10-second reporting loop quietly becomes a several-
 minute one. The app asks for Android's standard battery-optimisation exemption
 once, at the moment sharing first starts, and leaves a row in settings for
 anyone who said no or wants to check. On top of that, Settings shows the

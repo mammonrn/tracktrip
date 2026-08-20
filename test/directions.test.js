@@ -12,9 +12,53 @@ import {
   buildDirectionsUrl,
   capPoints,
   createLocationIqDirections,
+  douglasPeucker,
   parseCoordinate,
   parseRoute,
+  simplifyLine,
 } from '../src/geocode/directions.js';
+
+/**
+ * A synthetic mountain road: a line that wanders either side of its own
+ * straight chord, the way a road through hills does.
+ *
+ * `windiness` below — drawn length over straight-line length — is the number
+ * this file cares about most. It is what a rider actually sees: a line whose
+ * windiness has collapsed towards 1 is a straight line on the map, whatever
+ * its vertex count says.
+ */
+function windingRoad(points) {
+  return Array.from({ length: points }, (_, i) => {
+    const t = i / (points - 1);
+    return {
+      lat: 18 + t * 1.2,
+      // Bends at three scales, because a road has them at three scales: the
+      // sweep round a range, the switchbacks up one hillside, and the kinks
+      // between two of them. A single sine would be a road that any sampling
+      // rate captures or misses cleanly, which is not the shape that made
+      // this bug invisible in review and obvious on a motorcycle.
+      lng:
+        98 +
+        t * 0.6 +
+        Math.sin(t * 7) * 0.08 +
+        Math.sin(t * 53) * 0.02 +
+        Math.sin(t * 211) * 0.006,
+    };
+  });
+}
+
+function windiness(points) {
+  let drawn = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    drawn += Math.hypot(
+      points[i + 1].lng - points[i].lng,
+      points[i + 1].lat - points[i].lat
+    );
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  return drawn / Math.hypot(last.lng - first.lng, last.lat - first.lat);
+}
 
 const JWT_SECRET = 'test-secret';
 
@@ -132,7 +176,11 @@ test('the directions URL carries the key and asks for a drawable geometry', () =
   // Without this the geometry arrives as an encoded polyline string, which
   // nothing downstream of here can read.
   assert.equal(url.searchParams.get('geometries'), 'geojson');
-  assert.equal(url.searchParams.get('overview'), 'simplified');
+  // `full`, not `simplified` — see the comment in buildDirectionsUrl, and the
+  // regression test below. `simplified` is an overview-grade geometry: 45
+  // points for 130 km of mountain road, which draws as very nearly the
+  // straight line this feature exists to replace.
+  assert.equal(url.searchParams.get('overview'), 'full');
   // Phase one draws a line. Nothing reads a turn list, so nothing asks for one.
   assert.equal(url.searchParams.get('steps'), 'false');
   assert.equal(url.searchParams.get('alternatives'), 'false');
@@ -216,11 +264,106 @@ test('a long line is thinned but still starts and ends where the route does', ()
   assert.deepEqual(capped[capped.length - 1], points[points.length - 1]);
 });
 
-test('a parsed route is thinned to the cap', () => {
-  const coordinates = Array.from({ length: 4000 }, (_, i) => [98 + i / 10000, 18 + i / 10000]);
+test('a parsed route is thinned to something a phone can draw', () => {
+  const road = windingRoad(4000);
+  const coordinates = road.map((p) => [p.lng, p.lat]);
   const parsed = parseRoute({ routes: [{ distance: 1, duration: 1, geometry: { coordinates } }] });
 
-  assert.equal(parsed.points.length, MAX_ROUTE_POINTS);
+  assert.ok(parsed.points.length <= MAX_ROUTE_POINTS);
+  // And it is still a road, not a chord across one.
+  assert.ok(windiness(parsed.points) > windiness(road) * 0.95);
+});
+
+test('a straight road is thinned to the two points that describe it', () => {
+  // The old even-sampling kept 600 vertices on a dead-straight motorway.
+  // Douglas-Peucker spends vertices where the bends are and nowhere else.
+  const straight = Array.from({ length: 4000 }, (_, i) => ({ lat: 18 + i / 10000, lng: 98 + i / 10000 }));
+
+  assert.equal(simplifyLine(straight).length, 2);
+});
+
+// --- keeping the bends ------------------------------------------------------
+
+test('the bug: an overview-grade geometry is not a road', () => {
+  // This is the shape of what shipped and what a rider saw. Forty-five points
+  // across a road with forty bends in it cuts every one of them, and the
+  // windiness collapses towards 1 — a straight line between the two ends.
+  const road = windingRoad(4000);
+  const overviewGrade = capPoints(road, 45);
+
+  assert.ok(
+    windiness(overviewGrade) < windiness(road) * 0.93,
+    `an overview-grade line should have lost its bends, got ${windiness(overviewGrade)} of ${windiness(road)}`
+  );
+});
+
+test('simplification keeps the road while the cap keeps the payload', () => {
+  const road = windingRoad(4000);
+  const simplified = simplifyLine(road);
+
+  assert.ok(simplified.length <= MAX_ROUTE_POINTS, `${simplified.length} points`);
+  // The number that matters: what is drawn still bends like the road does.
+  assert.ok(
+    windiness(simplified) > windiness(road) * 0.95,
+    `kept ${windiness(simplified)} of ${windiness(road)}`
+  );
+});
+
+test('simplification beats even sampling, on fewer points', () => {
+  // At a budget tight enough for the difference to show: Douglas-Peucker
+  // keeps more of the road *and* spends fewer vertices doing it, because it
+  // puts them where the bends are instead of spreading them evenly over
+  // straights. This is why capPoints is only the backstop.
+  const road = windingRoad(4000);
+  const simplified = simplifyLine(road, 60);
+  const evenlySampled = capPoints(road, 60);
+
+  assert.ok(simplified.length <= evenlySampled.length);
+  assert.ok(
+    windiness(simplified) > windiness(evenlySampled),
+    `simplified ${windiness(simplified)} vs even ${windiness(evenlySampled)}`
+  );
+});
+
+test('a short route is not thinned at all', () => {
+  // A ride across town keeps every vertex the router gave it: the tolerance
+  // starts tight and only loosens when the line does not fit.
+  const short = windingRoad(120);
+
+  assert.deepEqual(simplifyLine(short), short);
+});
+
+test('simplification always keeps both ends where the route put them', () => {
+  const road = windingRoad(4000);
+  const simplified = simplifyLine(road);
+
+  assert.deepEqual(simplified[0], road[0]);
+  assert.deepEqual(simplified[simplified.length - 1], road[road.length - 1]);
+});
+
+test('a looser tolerance never keeps more points than a tighter one', () => {
+  const road = windingRoad(2000);
+  let previous = Infinity;
+  for (const tolerance of [0.00002, 0.00005, 0.0001, 0.0002, 0.001]) {
+    const kept = douglasPeucker(road, tolerance).length;
+    assert.ok(kept <= previous, `tolerance ${tolerance} kept ${kept}, previous kept ${previous}`);
+    previous = kept;
+  }
+});
+
+test('a line too short to simplify comes back untouched', () => {
+  assert.deepEqual(douglasPeucker([], 0.001), []);
+  assert.deepEqual(douglasPeucker([{ lat: 1, lng: 1 }], 0.001), [{ lat: 1, lng: 1 }]);
+  const two = [{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }];
+  assert.deepEqual(douglasPeucker(two, 0.001), two);
+});
+
+test('a geometry with thousands of identical points cannot blow the stack', () => {
+  // Iterative rather than recursive: a pathological upstream geometry must
+  // return a bad line, not take the server down.
+  const degenerate = Array.from({ length: 20000 }, () => ({ lat: 18, lng: 98 }));
+
+  assert.ok(simplifyLine(degenerate).length <= MAX_ROUTE_POINTS);
 });
 
 // --- the upstream call ------------------------------------------------------
