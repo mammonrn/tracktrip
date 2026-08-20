@@ -23,6 +23,7 @@ import app.ptrip.tracktrip.map.DirectProgress
 import app.ptrip.tracktrip.map.RoutePlan
 import app.ptrip.tracktrip.map.RoutePlans
 import app.ptrip.tracktrip.map.RouteRequests
+import app.ptrip.tracktrip.map.TrailStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,17 +60,20 @@ data class TripMapUiState(
     /** Whether the rider wants trails drawn. Remembered between rides. */
     val trailsVisible: Boolean = true,
     /**
-     * Whether the trail has been asked for and come back with nothing.
+     * What the trail is doing, so the screen can say so.
      *
-     * Its own flag rather than `trails.isEmpty()`, because those are two
-     * different states with the same shape and only one of them is worth
-     * saying out loud: "not fetched yet" is a moment, and "fetched, and this
-     * trip has no history in the window" is a fact a rider needs, because it
-     * is the state where switching the trail on looks exactly like a broken
-     * button. Nothing is recorded until somebody actually shares their
-     * position, and a rider testing the map has usually not.
+     * Every state, not just "fetched and empty" — see [TrailStatus]. The state
+     * that was missing is the one that made the toggle look broken: a fetch
+     * that failed used to set nothing at all, leaving no lines and no reason.
      */
-    val trailsEmpty: Boolean = false,
+    val trailStatus: TrailStatus = TrailStatus.OFF,
+    /**
+     * What the server said about a failed trail fetch, when it said anything.
+     *
+     * Kept because the reason is the useful half: "can't reach the server" and
+     * "your session expired" are two different things for the rider to do.
+     */
+    val trailError: String? = null,
     /**
      * Whether [members] is ordered leader-first rather than by how recently
      * each rider reported.
@@ -753,6 +757,16 @@ class TripMapViewModel(
      */
     fun refreshTrail() {
         if (!_uiState.value.trailsVisible) return
+
+        // Said out loud before the request goes out, but only when there is
+        // nothing on screen yet: a rider who has just pressed the button gets
+        // an answer immediately instead of a control that appears to do
+        // nothing, and a top-up behind a trail already drawn stays silent
+        // rather than flickering a message every thirty seconds.
+        if (_uiState.value.trails.isEmpty()) {
+            _uiState.update { it.copy(trailStatus = TrailStatus.LOADING, trailError = null) }
+        }
+
         viewModelScope.launch {
             val nowMs = now()
             // The loop that chases a truncated answer lives in Breadcrumbs so
@@ -762,9 +776,22 @@ class TripMapViewModel(
                     tripApi.trail(tripId, sinceIso = since, limit = limit)
                 }
             } catch (e: SessionExpiredException) {
+                // Still recorded: the sign-out takes the rider off this screen,
+                // but a state left saying "loading" would greet them on the
+                // way back in.
+                _uiState.update {
+                    it.copy(trailStatus = TrailStatus.FAILED, trailError = e.message)
+                }
                 onSessionExpired()
                 return@launch
             } catch (e: ApiException) {
+                // The line that this whole value exists for. This used to
+                // return having set nothing, so the map drew no trail and gave
+                // no reason — which is indistinguishable from a dead button,
+                // and is what one was reported as.
+                _uiState.update {
+                    it.copy(trailStatus = TrailStatus.FAILED, trailError = e.message)
+                }
                 return@launch
             }
 
@@ -772,7 +799,13 @@ class TripMapViewModel(
             // one, so the tail of every line ages out whether or not the head
             // grew.
             val lines = Breadcrumbs.byRider(trailPoints, nowMs)
-            _uiState.update { it.copy(trails = lines, trailsEmpty = lines.isEmpty()) }
+            _uiState.update {
+                it.copy(
+                    trails = lines,
+                    trailStatus = if (lines.isEmpty()) TrailStatus.EMPTY else TrailStatus.DRAWN,
+                    trailError = null,
+                )
+            }
         }
     }
 
@@ -791,9 +824,11 @@ class TripMapViewModel(
             it.copy(
                 trailsVisible = visible,
                 trails = if (visible) it.trails else emptyMap(),
-                // Switching on says nothing yet — the fetch has not run. Only
-                // the fetch coming back empty earns the message.
-                trailsEmpty = false,
+                // Switching on says "working on it" rather than nothing: the
+                // fetch has not run, and a press that changes no pixel is the
+                // thing that reads as a broken button.
+                trailStatus = if (visible) TrailStatus.LOADING else TrailStatus.OFF,
+                trailError = null,
             )
         }
         onTrailsVisibleChanged(visible)

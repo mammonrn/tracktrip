@@ -620,6 +620,12 @@ private fun SignedInNavigation(
                 onDenied = mapViewModel::onNoLocation,
             )
 
+            // Where the rider is, handed to the search so a place name is
+            // ranked against the region they are riding in rather than against
+            // the planet. An effect rather than a line in the composition
+            // because it is a side effect on an object the view model owns.
+            LaunchedEffect(myLocation) { mapViewModel.placeSearch.near = myLocation }
+
             TripMapScreen(
                 state = mapState,
                 currentUserId = profile?.id,

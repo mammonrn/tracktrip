@@ -9,8 +9,10 @@ import {
   GeocodeError,
   LOCATIONIQ_SEARCH_URL,
   MAX_LIMIT,
+  biasViewbox,
   buildSearchUrl,
   createLocationIqSearch,
+  normalizeBias,
   normalizeLimit,
   normalizeQuery,
   parsePlace,
@@ -620,4 +622,173 @@ test('the search route never answers 404, so a 404 can only mean it is absent', 
     const res = await supertest(app).get(url).set('Authorization', auth);
     assert.notEqual(res.status, 404, `${url} must not answer 404`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Biasing results towards where the rider is
+ *
+ * A place name typed in Thai used to compete with the whole planet on string
+ * relevance alone, so a well-known local landmark could lose to a better match
+ * six thousand kilometres away. The rider's own position is a hint the app has
+ * had all along and never sent.
+ * ------------------------------------------------------------------ */
+
+test('a bias point is rounded to about eleven kilometres', () => {
+  // Rounded for the cache, not for the geocoder: unrounded, every rider would
+  // get their own entry and one upstream request per search would become eight.
+  assert.deepEqual(normalizeBias('18.78831,98.98531'), { lat: 18.8, lng: 99.0 });
+  assert.deepEqual(normalizeBias(' 13.7563 , 100.5018 '), { lat: 13.8, lng: 100.5 });
+});
+
+test('no bias, or an unusable one, searches the way it always did', () => {
+  for (const raw of [undefined, null, '', 'nope', '1', '91,0', '0,181', '1,2,3']) {
+    assert.equal(normalizeBias(raw), null, String(raw));
+  }
+});
+
+test('the viewbox is a box around the rider, lng first', () => {
+  const box = biasViewbox({ lat: 0, lng: 0 }, 111.195);
+  const [minLng, minLat, maxLng, maxLat] = box.split(',').map(Number);
+
+  // lon,lat,lon,lat — the order inherited from Nominatim, and the single most
+  // likely thing to be silently wrong here.
+  assert.ok(minLng < 0 && maxLng > 0 && minLat < 0 && maxLat > 0);
+  assert.ok(Math.abs(minLat + 1) < 0.01, `minLat ${minLat}`);
+  assert.ok(Math.abs(maxLat - 1) < 0.01, `maxLat ${maxLat}`);
+});
+
+test('the box is square on the ground, not square in degrees', () => {
+  // At Thailand's latitude a degree of longitude is about 5% shorter than a
+  // degree of latitude, so a box built without the cosine would be narrower on
+  // the ground than it looks.
+  const box = biasViewbox({ lat: 18.8, lng: 99.0 });
+  const [minLng, minLat, maxLng, maxLat] = box.split(',').map(Number);
+
+  assert.ok(maxLng - minLng > maxLat - minLat, 'longitude span must be the wider one');
+});
+
+test('a box near the pole stays on the planet', () => {
+  const box = biasViewbox({ lat: 89.9, lng: 179.9 });
+  const [minLng, minLat, maxLng, maxLat] = box.split(',').map(Number);
+
+  assert.ok(minLat >= -90 && maxLat <= 90, box);
+  assert.ok(minLng >= -180 && maxLng <= 180, box);
+});
+
+test('the search URL carries the box as a preference, never a fence', () => {
+  const url = new URL(
+    buildSearchUrl({ apiKey: 'k', query: 'วัดร่องขุ่น', limit: 8, bias: { lat: 18.8, lng: 99.0 } })
+  );
+
+  assert.ok(url.searchParams.get('viewbox'));
+  // bounded=0 is the whole difference between a bias and a filter: somewhere
+  // across the country must still be findable, just ranked lower.
+  assert.equal(url.searchParams.get('bounded'), '0');
+  // And the query itself is untouched — Thai reaches the upstream as typed.
+  assert.equal(url.searchParams.get('q'), 'วัดร่องขุ่น');
+});
+
+test('no bias adds no viewbox at all', () => {
+  const url = new URL(buildSearchUrl({ apiKey: 'k', query: 'Pai', limit: 8 }));
+
+  assert.equal(url.searchParams.get('viewbox'), null);
+  assert.equal(url.searchParams.get('bounded'), null);
+});
+
+test('GET /geocode/search passes the rider position through as a bias', async () => {
+  const calls = [];
+  const { app, addUser, tokenFor } = setup({
+    searchPlaces: async (query, options) => {
+      calls.push({ query, options });
+      return [];
+    },
+  });
+  const rider = addUser('poom');
+
+  await supertest(app)
+    .get('/geocode/search?q=' + encodeURIComponent('วัดร่องขุ่น') + '&near=19.82,99.76')
+    .set('Authorization', `Bearer ${tokenFor(rider)}`);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].query, 'วัดร่องขุ่น');
+  assert.deepEqual(calls[0].options.bias, { lat: 19.8, lng: 99.8 });
+});
+
+test('riders in different provinces do not share a cached ordering', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    searchPlaces: async () => {
+      called += 1;
+      return [];
+    },
+  });
+  const rider = addUser('poom');
+  const auth = { Authorization: `Bearer ${tokenFor(rider)}` };
+
+  await supertest(app).get('/geocode/search?q=market&near=18.79,98.99').set(auth);
+  await supertest(app).get('/geocode/search?q=market&near=13.75,100.50').set(auth);
+
+  // The bias is part of the answer, so serving one rider the other's ordering
+  // would be the wrong answer served fast.
+  assert.equal(called, 2);
+});
+
+test('a group riding together still shares one entry and one request', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    searchPlaces: async () => {
+      called += 1;
+      return [];
+    },
+  });
+  const first = addUser('poom');
+  const second = addUser('nut');
+
+  // A few kilometres apart, which the rounding folds into one bias point.
+  await supertest(app)
+    .get('/geocode/search?q=market&near=18.7883,98.9853')
+    .set('Authorization', `Bearer ${tokenFor(first)}`);
+  const res = await supertest(app)
+    .get('/geocode/search?q=market&near=18.8102,99.0041')
+    .set('Authorization', `Bearer ${tokenFor(second)}`);
+
+  assert.equal(res.body.cached, true);
+  assert.equal(called, 1);
+});
+
+test('an unbiased search and a biased one are different questions', async () => {
+  let called = 0;
+  const { app, addUser, tokenFor } = setup({
+    searchPlaces: async () => {
+      called += 1;
+      return [];
+    },
+  });
+  const rider = addUser('poom');
+  const auth = { Authorization: `Bearer ${tokenFor(rider)}` };
+
+  await supertest(app).get('/geocode/search?q=market').set(auth);
+  await supertest(app).get('/geocode/search?q=market&near=18.79,98.99').set(auth);
+
+  assert.equal(called, 2);
+});
+
+test('a rider with no fix searches unbiased rather than failing', async () => {
+  const calls = [];
+  const { app, addUser, tokenFor } = setup({
+    searchPlaces: async (query, options) => {
+      calls.push(options);
+      return [];
+    },
+  });
+  const rider = addUser('poom');
+
+  const res = await supertest(app)
+    .get('/geocode/search?q=Pai&near=not-a-coordinate')
+    .set('Authorization', `Bearer ${tokenFor(rider)}`);
+
+  // A phone with no fix, or a garbled one, must not turn a working search into
+  // a 400 — the bias is a hint, and a missing hint is not an error.
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].bias, null);
 });

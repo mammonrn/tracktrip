@@ -7,6 +7,7 @@ import app.ptrip.tracktrip.data.PlaceSearchException
 import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.data.placeSearchProblem
 import app.ptrip.tracktrip.data.SessionExpiredException
+import app.ptrip.tracktrip.map.LatLng
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -127,6 +128,17 @@ class PlaceSearchController(
     private var pending: Job? = null
 
     /**
+     * Where this phone is, for biasing results towards the region the rider is
+     * actually in. Kept as a plain property because it changes on the location
+     * feed's beat, not on the search's, and a search reads whatever is current
+     * when it goes out.
+     *
+     * Null — no fix, no permission, a preview — searches unbiased, which is
+     * what every search did before this existed.
+     */
+    var near: LatLng? = null
+
+    /**
      * A keystroke.
      *
      * The field's text is updated at once — a field that lags behind the
@@ -176,7 +188,7 @@ class PlaceSearchController(
         }
 
         try {
-            val results = search.search(query)
+            val results = search.search(query, near = near)
             _state.update {
                 // Guarded: the field may have moved on while this was in
                 // flight, and painting a stale answer under a newer query is

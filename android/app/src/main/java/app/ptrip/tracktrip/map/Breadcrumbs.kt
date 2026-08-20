@@ -256,3 +256,48 @@ object Breadcrumbs {
         null
     }
 }
+
+/**
+ * What the trail has to say for itself.
+ *
+ * ## Why a value and not a boolean
+ *
+ * There was a boolean — `trailsEmpty` — and it covered one of the four things
+ * the trail can be doing. That left a real hole: a fetch that *failed* set
+ * nothing at all, so the map drew no lines and said nothing about why, which
+ * from the rider's side is a toggle that does not work. It is the exact
+ * complaint the "no trail yet" message was added to answer, arriving through
+ * the one door that message did not cover.
+ *
+ * So every state says something now, and the two that look identical on screen
+ * — nothing recorded yet, and could not ask — are told apart, because they
+ * have completely different fixes: one is "somebody has to ride", the other is
+ * "the server did not answer".
+ */
+enum class TrailStatus {
+    /** Switched off. The grey icon is the whole message. */
+    OFF,
+
+    /**
+     * On, and the first answer has not arrived.
+     *
+     * Only ever entered when there is nothing drawn yet, so a top-up on a
+     * trail already on screen does not flicker a message every thirty seconds.
+     */
+    LOADING,
+
+    /** On, fetched, and there are lines. The lines are the message. */
+    DRAWN,
+
+    /**
+     * On, fetched, and this trip has no history in the window.
+     *
+     * Nothing is written until somebody actually shares their position, so
+     * this is where a rider testing the map lands — and it looks exactly like
+     * a broken control unless the screen says so.
+     */
+    EMPTY,
+
+    /** On, and the last fetch did not answer. Says so rather than nothing. */
+    FAILED,
+}

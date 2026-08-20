@@ -88,6 +88,7 @@ import app.ptrip.tracktrip.map.MarkerMotion
 import app.ptrip.tracktrip.map.RiderMarker
 import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
+import app.ptrip.tracktrip.map.TrailStatus
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
@@ -104,6 +105,7 @@ import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.AppDanger
 import app.ptrip.tracktrip.ui.theme.RankIcon
 import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
@@ -653,6 +655,11 @@ fun TripMapScreen(
 
             HudDivider()
 
+            // Resolved out here rather than inside the list: a LazyColumn's
+            // item scope is not a composable one, so a string it has to look
+            // up has to be looked up before it.
+            val trailNote = trailMessage(state.trailStatus, state.trailError)
+
             if (state.loading && state.members.isEmpty()) {
                 HudLoading()
             } else {
@@ -684,17 +691,18 @@ fun TripMapScreen(
 
                     // A trail switched on with nothing to draw looks exactly
                     // like a broken button, and that is what it looked like on
-                    // a real device: the control works, the fetch works, and
-                    // the trip simply had no history — nothing is recorded
-                    // until somebody shares their position. So the row says so
-                    // rather than leaving the rider to guess which of the two
-                    // it was.
-                    if (state.trailsVisible && state.trailsEmpty) {
+                    // a real device — twice, for two different reasons. The
+                    // first time the trip simply had no history; the second
+                    // time the fetch failed and said nothing. Every state the
+                    // trail can be in now puts a row here, so the control can
+                    // never again be indistinguishable from a dead one.
+                    trailNote?.let { message ->
                         item {
                             Text(
-                                text = stringResource(R.string.map_trails_none_yet),
+                                text = message,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = AppTextMuted,
+                                color = if (state.trailStatus == TrailStatus.FAILED) AppDanger
+                                        else AppTextMuted,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
@@ -1608,6 +1616,27 @@ private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/**
+ * What the row under the map says about the trail, or null when it says
+ * nothing.
+ *
+ * Silent in the two states that speak for themselves: switched off, where the
+ * grey icon is the message, and drawn, where the lines are. Everything else
+ * gets a sentence — including the failure, which used to get nothing at all
+ * and is the reason this is a function rather than an `if`.
+ */
+@Composable
+private fun trailMessage(status: TrailStatus, error: String?): String? = when (status) {
+    TrailStatus.OFF, TrailStatus.DRAWN -> null
+    TrailStatus.LOADING -> stringResource(R.string.map_trails_loading)
+    TrailStatus.EMPTY -> stringResource(R.string.map_trails_none_yet)
+    // The server's own sentence when it gave one — "can't reach the server"
+    // and "your session expired" are different things for a rider to do about.
+    TrailStatus.FAILED ->
+        error?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.map_trails_failed_reason, it) }
+            ?: stringResource(R.string.map_trails_failed)
 }
 
 /**

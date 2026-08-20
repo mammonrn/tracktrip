@@ -309,6 +309,23 @@ towns is not a road, and drawing one would make a claim the app cannot back.
 
 ### Trails
 
+**Every state the trail can be in says something.** The toggle was reported as
+doing nothing twice, for two different reasons, and only the first was covered:
+the trip genuinely had no history, which the "no trail yet" row answers. The
+second time the *fetch* failed — and a swallowed `ApiException` set no state at
+all, so the map drew no lines and gave no reason, which from the rider's side
+is a dead button. [`map/Breadcrumbs.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt)'s `TrailStatus` is
+the fix: `OFF`, `LOADING`, `DRAWN`, `EMPTY`, `FAILED`, and only the two that
+speak for themselves — off, where the grey icon is the message, and drawn,
+where the lines are — are allowed to be silent. `TrailStatusTest` holds that as
+a sweep over the enum, so a state added later without a message fails on a
+laptop rather than on a phone.
+
+`LOADING` is only entered when nothing is drawn yet, so a top-up behind a trail
+already on screen does not flicker a message every thirty seconds.
+
+
 Each rider's recent breadcrumbs are drawn behind them in their own colour,
 from `GET /trips/:id/positions/history`. The rules are in [`map/Breadcrumbs.kt`](
 app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt): the last **15

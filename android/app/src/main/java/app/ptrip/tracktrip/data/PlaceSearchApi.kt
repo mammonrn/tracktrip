@@ -1,6 +1,7 @@
 package app.ptrip.tracktrip.data
 
 import org.json.JSONObject
+import app.ptrip.tracktrip.map.LatLng
 import java.net.URLEncoder
 
 /**
@@ -107,7 +108,18 @@ fun placeSearchProblem(status: Int?): PlaceSearchProblem = when (status) {
  * out would answer a different question.
  */
 interface PlaceLookup {
-    suspend fun search(query: String, limit: Int = PlaceSearchApi.DEFAULT_LIMIT): List<Place>
+    /**
+     * Places matching [query], preferring ones near [near] when there is one.
+     *
+     * [near] is a bias and never a filter: somewhere on the other side of the
+     * country is still found, just ranked below somewhere down the road. Null
+     * — no fix yet, a preview, a test — searches the way this always did.
+     */
+    suspend fun search(
+        query: String,
+        limit: Int = PlaceSearchApi.DEFAULT_LIMIT,
+        near: LatLng? = null,
+    ): List<Place>
 }
 
 /**
@@ -131,10 +143,19 @@ class PlaceSearchApi(private val client: ApiClient) : PlaceLookup {
      * with no key configured answers 503 and says so, which is a different
      * thing from "nothing is called that" and reads differently to a rider.
      */
-    override suspend fun search(query: String, limit: Int): List<Place> {
+    override suspend fun search(query: String, limit: Int, near: LatLng?): List<Place> {
         val encoded = URLEncoder.encode(query, "UTF-8")
+        val bias = near?.let {
+            "&near=" + URLEncoder.encode(
+                // Locale-fixed, for the same reason the directions call is: a
+                // Thai phone writing 18,7883 would send a four-part coordinate
+                // and the bias would be dropped, silently and only in Thai.
+                String.format(java.util.Locale.US, "%.5f,%.5f", it.lat, it.lng),
+                "UTF-8",
+            )
+        }.orEmpty()
         val body = try {
-            client.get("/geocode/search?q=$encoded&limit=$limit")
+            client.get("/geocode/search?q=$encoded&limit=$limit$bias")
         } catch (e: SessionExpiredException) {
             // Signing out is about to happen and is not this screen's to
             // report. Passed through untouched.

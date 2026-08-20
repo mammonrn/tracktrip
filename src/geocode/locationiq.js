@@ -31,6 +31,80 @@ export const MIN_QUERY_LENGTH = 2;
 /** Longest query accepted. Past this it is not a place name, it is a paste. */
 export const MAX_QUERY_LENGTH = 120;
 
+/**
+ * How far around a rider's own position results are preferred, in kilometres.
+ *
+ * A *bias*, never a fence — `bounded=0` below — so somewhere on the other side
+ * of the country is still found, just ranked below somewhere down the road.
+ *
+ * Two hundred is chosen against what this app is: a day's ride. A tighter box
+ * would push the far end of a route out of the bias it was meant to help, and
+ * a much looser one stops meaning anything on a country the size of Thailand.
+ */
+export const SEARCH_BIAS_KM = 200;
+
+/** Kilometres per degree of latitude. Close enough at any latitude. */
+const KM_PER_DEGREE = 111.195;
+
+/**
+ * The rounding applied to a rider's position before it biases a search.
+ *
+ * One decimal place, about eleven kilometres. It is there for the *cache*, not
+ * for the geocoder: the bias is part of the answer, so it has to be part of
+ * the cache key, and an unrounded coordinate would give every rider their own
+ * entry and turn one upstream request per search into eight. Rounded, a group
+ * riding together shares one entry — and eleven kilometres inside a
+ * two-hundred-kilometre box changes no ranking anybody can see.
+ */
+export const BIAS_PRECISION = 1;
+
+/**
+ * A rider's position as it will be used: rounded, or null when there is none.
+ *
+ * Null is the ordinary case and not a failure — a phone with no fix yet, or a
+ * caller that did not send one. The search then runs unbiased, exactly as it
+ * did before this existed.
+ */
+export function normalizeBias(raw) {
+  if (typeof raw !== 'string') return null;
+  const parts = raw.split(',');
+  if (parts.length !== 2) return null;
+  const lat = Number(parts[0].trim());
+  const lng = Number(parts[1].trim());
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) return null;
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) return null;
+  return {
+    lat: Number(lat.toFixed(BIAS_PRECISION)),
+    lng: Number(lng.toFixed(BIAS_PRECISION)),
+  };
+}
+
+/**
+ * The `viewbox` a bias point produces: a box [SEARCH_BIAS_KM] to each side.
+ *
+ * `lon,lat,lon,lat` — the order this API inherits from Nominatim, and the
+ * thing most likely to be silently wrong here. Longitude degrees are narrowed
+ * by the latitude so the box is roughly square on the ground rather than
+ * roughly square in degrees; at Thailand's latitude that is a 5% difference,
+ * which matters more here than it does for a drawn line because this box is
+ * the whole point.
+ *
+ * Clamped to the planet: a box that ran off the top of the world would be
+ * refused upstream, and a rider near a pole is still a rider.
+ */
+export function biasViewbox(bias, km = SEARCH_BIAS_KM) {
+  if (!bias) return null;
+  const dLat = km / KM_PER_DEGREE;
+  const scale = Math.max(Math.cos((bias.lat * Math.PI) / 180), 0.01);
+  const dLng = km / (KM_PER_DEGREE * scale);
+
+  const minLat = Math.max(bias.lat - dLat, -90);
+  const maxLat = Math.min(bias.lat + dLat, 90);
+  const minLng = Math.max(bias.lng - dLng, -180);
+  const maxLng = Math.min(bias.lng + dLng, 180);
+  return `${minLng},${minLat},${maxLng},${maxLat}`;
+}
+
 /** How many results a caller may ask for, and what they get without asking. */
 export const DEFAULT_LIMIT = 8;
 export const MAX_LIMIT = 10;
@@ -134,7 +208,14 @@ export function parseResults(payload) {
  * matters more than usual here: `format=json` missing means an XML body, and
  * a missing `key` means a 401 that reads as "the search is broken".
  */
-export function buildSearchUrl({ apiKey, query, limit, url = LOCATIONIQ_SEARCH_URL, countryCodes }) {
+export function buildSearchUrl({
+  apiKey,
+  query,
+  limit,
+  url = LOCATIONIQ_SEARCH_URL,
+  countryCodes,
+  bias,
+}) {
   const params = new URLSearchParams({
     key: apiKey,
     q: query,
@@ -148,6 +229,20 @@ export function buildSearchUrl({ apiKey, query, limit, url = LOCATIONIQ_SEARCH_U
     normalizecity: '1',
   });
   if (countryCodes) params.set('countrycodes', countryCodes);
+
+  // Where the rider is, as a box to prefer rather than a fence to obey.
+  //
+  // Without it a place name typed in Thai competes with the whole planet on
+  // relevance alone, and a well-known local landmark can lose to a better
+  // string match six thousand kilometres away. `bounded=0` is what keeps it a
+  // preference: somewhere across the country is still returned, below the
+  // things down the road.
+  const viewbox = biasViewbox(bias);
+  if (viewbox) {
+    params.set('viewbox', viewbox);
+    params.set('bounded', '0');
+  }
+
   return `${url}?${params.toString()}`;
 }
 
@@ -184,7 +279,7 @@ export function createLocationIqSearch({
   countryCodes,
   timeoutMs = REQUEST_TIMEOUT_MS,
 }) {
-  return async function search(query, { limit = DEFAULT_LIMIT } = {}) {
+  return async function search(query, { limit = DEFAULT_LIMIT, bias = null } = {}) {
     if (!apiKey) {
       // Not thrown at construction: a server with no key still serves every
       // other route, and the one endpoint that needs it says so on use.
@@ -196,7 +291,7 @@ export function createLocationIqSearch({
 
     let response;
     try {
-      response = await fetchImpl(buildSearchUrl({ apiKey, query, limit, url, countryCodes }), {
+      response = await fetchImpl(buildSearchUrl({ apiKey, query, limit, url, countryCodes, bias }), {
         signal: controller.signal,
         headers: { accept: 'application/json' },
       });
