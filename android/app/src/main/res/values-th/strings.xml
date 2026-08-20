@@ -201,6 +201,20 @@
     <string name="map_route_stop_add">เพิ่มจุดแวะ</string>
 
     <!-- Location permission -->
+    <string name="map_search_shared_heading">คนในกลุ่มเพิ่มไว้</string>
+    <string name="map_search_shared_tag">คนในกลุ่มเพิ่ม</string>
+    <string name="map_search_shared_by">เพิ่มโดย %1$s</string>
+    <string name="map_search_shared_by_gone">เพิ่มโดยคนที่ออกจากระบบไปแล้ว</string>
+    <string name="map_search_add_named">เพิ่ม \"%1$s\" เป็นสถานที่ใหม่</string>
+    <string name="map_search_add_place">เพิ่มสถานที่ที่ไม่มีในแผนที่</string>
+    <string name="map_shared_place_drop">กดค้างบนแผนที่ตรงจุดที่ \"%1$s\" อยู่</string>
+    <string name="map_shared_place_drop_unnamed">กดค้างบนแผนที่ตรงจุดที่สถานที่นั้นอยู่</string>
+    <string name="map_shared_place_title">เพิ่มสถานที่</string>
+    <string name="map_shared_place_note">ทุกคนในระบบนี้จะค้นหาเจอ</string>
+    <string name="map_shared_place_save">บันทึกสถานที่</string>
+    <string name="map_shared_place_remove_title">ลบสถานที่นี้?</string>
+    <string name="map_shared_place_remove_message">\"%1$s\" จะหายไปจากการค้นหาของทุกคน</string>
+
     <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
     <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>

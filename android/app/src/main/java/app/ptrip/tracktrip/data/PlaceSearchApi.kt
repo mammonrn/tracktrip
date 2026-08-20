@@ -22,13 +22,49 @@ data class Place(
     /**
      * OpenStreetMap's id for it, when there is one.
      *
-     * Used as the list key so that two results with the same name — and there
-     * are a great many `7-Eleven`s — do not collide in a `LazyColumn`.
+     * Used as part of the list key so that two results with the same name —
+     * and there are a great many `7-Eleven`s — do not collide in a
+     * `LazyColumn`.
      */
     val osmId: String?,
+    /** Which of the two lists this came out of. See [PlaceSource]. */
+    val source: PlaceSource = PlaceSource.GEOCODER,
+    /** The row's id in `shared_places`, when it came from there. */
+    val sharedId: Long? = null,
+    /** Which rider typed it in, when it came from there. Null once they are gone. */
+    val createdBy: Long? = null,
 ) {
-    /** A stable key for a list row, falling back to the coordinate. */
-    val key: String get() = osmId ?: "$lat,$lng"
+    /**
+     * A stable key for a list row.
+     *
+     * The source is part of it because the two lists are merged into one and
+     * their ids mean different things: a shared place with id 3 and an OSM
+     * object with id 3 are unrelated, and a `LazyColumn` handed the same key
+     * twice drops a row.
+     */
+    val key: String get() = "$source:${sharedId ?: osmId ?: "$lat,$lng"}"
+
+    /** Whether this rider may take this place off the shared list. */
+    fun isRemovableBy(userId: Long?): Boolean =
+        source == PlaceSource.SHARED && createdBy != null && createdBy == userId
+}
+
+/**
+ * Where a search result came from.
+ *
+ * On screen because the two are not the same kind of claim. A [GEOCODER] row
+ * is a map company's record of somewhere that exists; a [SHARED] row is a
+ * rider on this server saying "this is here, I have been". Both are useful and
+ * the second is often the only one that answers the question — but a rider has
+ * to be able to tell which they are looking at before they plan a ride round
+ * it.
+ */
+enum class PlaceSource {
+    /** LocationIQ, over OpenStreetMap. */
+    GEOCODER,
+
+    /** `shared_places` — typed in by somebody on this server. */
+    SHARED,
 }
 
 /**

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.PlaceLookup
+import app.ptrip.tracktrip.data.SharedPlaceStore
 import app.ptrip.tracktrip.data.PositionSocket
 import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.RouteLine
@@ -194,6 +195,14 @@ class TripMapViewModel(
      */
     placeSearchApi: PlaceLookup? = null,
     /**
+     * The riders' own places, or null in a preview or a test.
+     *
+     * Separate from [placeSearchApi] because the two answer separately: this
+     * one is a table on this app's own server and needs no metered key, so it
+     * still answers on the day LocationIQ does not. See [SharedPlaceStore].
+     */
+    private val sharedPlacesApi: SharedPlaceStore? = null,
+    /**
      * Road routing, or null in a preview or a test. Null behaves exactly like
      * a server with no key: no route, and the straight line stays.
      */
@@ -212,6 +221,7 @@ class TripMapViewModel(
     val placeSearch = PlaceSearchController(
         scope = viewModelScope,
         api = placeSearchApi,
+        shared = sharedPlacesApi,
         onSessionExpired = onSessionExpired,
     )
 
@@ -654,6 +664,70 @@ class TripMapViewModel(
 
                 refreshTrip()
                 refresh()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Writes a place to the shared list, and hands it back for the slot that
+     * asked for it.
+     *
+     * ## Why this returns the point rather than doing something with it
+     *
+     * Adding a place and *using* one are two things that happen together but
+     * are not the same: a rider who could not find "ปตท สวนดอก" was in the
+     * middle of filling a From/To/stop row when they gave up and typed it in,
+     * and dropping them back at an empty row afterwards would make them search
+     * again for the thing they just created. So this saves it and returns it,
+     * and the screen puts it where the rider was already pointing.
+     *
+     * Null on failure, with the reason reported the way every other failure on
+     * this screen is — the line above the map. The two worth expecting are the
+     * daily allowance (429, and the server's own sentence says so) and a
+     * backend older than this app (404 on a route that is not there yet).
+     */
+    suspend fun addSharedPlace(name: String, point: LatLng): RoutePoint? {
+        val api = sharedPlacesApi ?: return null
+        val trimmed = name.trim()
+        // The same bound the server puts on it, so a name that cannot be saved
+        // is refused here rather than by a failed round trip.
+        if (!RouteSetupRules.isStopNameValid(trimmed)) return null
+
+        return try {
+            val saved = api.add(trimmed, point)
+            _uiState.update { it.copy(error = null) }
+            RoutePoint(LatLng(saved.lat, saved.lng), saved.name)
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            null
+        } catch (e: ApiException) {
+            _uiState.update { it.copy(error = e.message) }
+            null
+        }
+    }
+
+    /**
+     * Takes a place back off the shared list.
+     *
+     * The server allows whoever added it, or a super user — and the screen
+     * only offers the cross to the first of those, so a refusal here means the
+     * rules moved under somebody rather than that they tried something they
+     * should not have.
+     *
+     * [onRemoved] runs only on success, so the row leaves the list because the
+     * server agreed it should and not because a tap was registered.
+     */
+    fun removeSharedPlace(id: Long, onRemoved: () -> Unit = {}) {
+        val api = sharedPlacesApi ?: return
+        viewModelScope.launch {
+            try {
+                api.remove(id)
+                _uiState.update { it.copy(error = null) }
+                onRemoved()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {

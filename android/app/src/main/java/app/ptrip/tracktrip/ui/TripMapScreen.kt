@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -114,6 +115,7 @@ import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppBackground
 import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceSearchProblem
+import app.ptrip.tracktrip.data.PlaceSource
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.AppDanger
@@ -135,6 +137,7 @@ import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -238,6 +241,16 @@ fun TripMapScreen(
     onMoveRoutePoint: (Int, Int) -> Unit = { _, _ -> },
     onConfirmRoute: () -> Unit = {},
     /**
+     * Writing a place to the shared list, and taking one off it.
+     *
+     * [onAddSharedPlace] answers with the saved point so the row the rider was
+     * filling when they gave up searching gets filled too — see
+     * TripMapViewModel.addSharedPlace for why the two happen together. Null
+     * back means it did not save, and the reason is already on screen.
+     */
+    onAddSharedPlace: suspend (String, LatLng) -> RoutePoint? = { _, _ -> null },
+    onRemoveSharedPlace: (Long, () -> Unit) -> Unit = { _, _ -> },
+    /**
      * Whether this app may read the phone's position at all.
      *
      * Passed in rather than checked here so the screen stays testable and so
@@ -294,6 +307,31 @@ fun TripMapScreen(
     // A stop chosen with no name on it, waiting for one. The server refuses an
     // unnamed waypoint, so this is the one thing a picker still has to ask.
     var namingStop by remember { mutableStateOf<RoutePoint?>(null) }
+
+    // A place the rider is adding to the shared list: the name they typed into
+    // the search, waiting for them to point at where it is.
+    //
+    // Non-null means the search screen steps aside and the map is armed. It is
+    // held rather than being a mode on the picker because the two halves of
+    // "add a place" arrive from opposite directions — the name by keyboard,
+    // the point by finger — and nothing is saved until both are in.
+    var droppingPlace by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // The dropped point, waiting for the name to be confirmed before it is
+    // written to the shared list.
+    var namingPlace by remember { mutableStateOf<PendingPlacement?>(null) }
+
+    // A shared place the rider has asked to remove. Confirmed first: it is
+    // shared, so it disappears from everybody's search and there is no undo.
+    var removingPlace by remember { mutableStateOf<Place?>(null) }
+
+    // Whether a save is in flight, and whether the last one failed. Both are
+    // about the dialog rather than about the trip, which is why they are here
+    // and not in the view model — nothing has been written yet.
+    var savingPlace by remember { mutableStateOf(false) }
+    var failedToSavePlace by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
 
     var removing by remember { mutableStateOf<Waypoint?>(null) }
 
@@ -438,8 +476,13 @@ fun TripMapScreen(
     // closed by finding the button that opened it is a trap on a phone whose
     // whole navigation is one gesture. Disabled when nothing is open, so the
     // back stack behaves exactly as it did.
-    BackHandler(enabled = routeSetupOpen) {
-        if (picking != null) {
+    BackHandler(enabled = routeSetupOpen || droppingPlace != null) {
+        if (droppingPlace != null) {
+            // Out of the armed map and back to the search that armed it, with
+            // what was typed still in the box. Pressing back here means "not
+            // like that", not "forget the name I just typed".
+            droppingPlace = null
+        } else if (picking != null) {
             picking = null
         } else {
             routeSetupOpen = false
@@ -478,6 +521,13 @@ fun TripMapScreen(
                     onLongPress = { point ->
                         val field = picking
                         when {
+                            // Armed from the search screen: the rider has
+                            // already said what this place is called and is
+                            // now saying where. Ahead of everything else,
+                            // because it is the gesture they were just asked
+                            // for and the banner over the map says so.
+                            droppingPlace != null ->
+                                namingPlace = PendingPlacement(point, droppingPlace.orEmpty())
                             // Pressing and holding while a field is waiting for
                             // a point fills that field. The third way in, and
                             // the only one that works with the server's search
@@ -787,7 +837,11 @@ fun TripMapScreen(
         // Last in the box on purpose: it is a screen, not a panel, and
         // anything drawn after it would be drawn on top of a search a rider is
         // typing into.
-        picking?.takeIf { routeSetupOpen && canSetUpRoute }?.let { field ->
+        // Hidden while the map is armed: the rider is being asked to point at
+        // something, and a full-screen search over the map would be covering
+        // the thing they have to point at. `picking` stays set throughout, so
+        // the place lands in the row they were filling when they gave up.
+        picking?.takeIf { routeSetupOpen && canSetUpRoute && droppingPlace == null }?.let { field ->
             PlaceSearchScreen(
                 state = searchState,
                 heading = stringResource(field.pickHeadingRes),
@@ -807,6 +861,21 @@ fun TripMapScreen(
                 // and it means nothing on the map an hour later. The two ends
                 // take no label at all; a stop still asks for one.
                 onUseCurrentLocation = { here -> takePicked(field, RoutePoint(here)) },
+                currentUserId = currentUserId,
+                onAddPlace = { typed -> droppingPlace = typed.trim() },
+                onRemoveSharedPlace = { place -> removingPlace = place },
+            )
+        }
+
+        // The map is armed and the rider has to be told what for. Over the
+        // map at the top, where the search screen they just left was — the
+        // instruction has to be somewhere they are already looking, and the
+        // gesture it asks for has nothing on the map to suggest it.
+        droppingPlace?.let { name ->
+            DropPlaceBanner(
+                name = name,
+                onCancel = { droppingPlace = null },
+                modifier = Modifier.align(Alignment.TopCenter),
             )
         }
     }
@@ -840,6 +909,72 @@ fun TripMapScreen(
         )
     }
 
+    namingPlace?.let { pending ->
+        SharedPlaceDialog(
+            point = pending.point,
+            suggestedName = pending.name,
+            saving = savingPlace,
+            // Whatever the last failed save said. The dialog is the only place
+            // this can be read: the line above the map, where every other
+            // failure on this screen goes, is behind a full-screen picker by
+            // the time a rider gets back to it.
+            error = state.error.takeIf { !savingPlace && failedToSavePlace },
+            onSave = { name ->
+                val point = pending.point
+                val field = picking
+                savingPlace = true
+                scope.launch {
+                    // Saved first, and only used if the save worked. A place
+                    // dropped into the route on the strength of a request that
+                    // failed would be a row nobody else can ever find.
+                    val saved = onAddSharedPlace(name, point)
+                    savingPlace = false
+                    if (saved == null) {
+                        // The dialog stays up with the reason on it. The two
+                        // worth expecting are the daily allowance and a
+                        // backend older than this app, and neither is fixed by
+                        // making the rider find their way back here.
+                        failedToSavePlace = true
+                        return@launch
+                    }
+                    failedToSavePlace = false
+                    namingPlace = null
+                    droppingPlace = null
+                    if (field != null) {
+                        takePicked(field, saved)
+                    } else {
+                        picking = null
+                        onSearchCleared()
+                    }
+                }
+            },
+            onDismiss = {
+                // Back to the armed map rather than out of the flow: the point
+                // was wrong, which is a reason to point again.
+                namingPlace = null
+                failedToSavePlace = false
+            },
+        )
+    }
+
+    removingPlace?.let { place ->
+        HudConfirmDialog(
+            title = stringResource(R.string.map_shared_place_remove_title),
+            message = stringResource(R.string.map_shared_place_remove_message, place.name),
+            confirmText = stringResource(R.string.map_remove_point),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                val id = place.sharedId
+                removingPlace = null
+                // Re-runs the search so the row leaves the list, and leaves it
+                // only because the server agreed rather than because a tap was
+                // registered.
+                if (id != null) onRemoveSharedPlace(id) { onSearchQueryChanged(searchState.query) }
+            },
+            onDismiss = { removingPlace = null },
+        )
+    }
+
     removing?.let { waypoint ->
         HudConfirmDialog(
             title = stringResource(R.string.map_remove_point_title),
@@ -853,6 +988,137 @@ fun TripMapScreen(
             onDismiss = { removing = null },
         )
     }
+}
+
+/**
+ * The map, armed, and what it is waiting for.
+ *
+ * ## Why the name is on it
+ *
+ * A rider arrives here having typed "ปตท สวนดอก" into a search that found
+ * nothing and tapped a row offering to add it. Between that tap and the long
+ * press there is a whole map to look at, and a banner that only said "press
+ * and hold" would leave them wondering which of the two things they were
+ * doing. It says the name back.
+ *
+ * The way out is on it too. The gesture it asks for is one the rider might not
+ * want to make after all, and an armed mode whose only exit is the system back
+ * gesture is a mode people get stuck in.
+ */
+@Composable
+private fun DropPlaceBanner(name: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(12.dp)
+            .background(AppSurface.copy(alpha = 0.96f), AppSearchPanelShape)
+            .border(1.dp, AppLine, AppSearchPanelShape)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = name.takeIf { it.isNotBlank() }
+                ?.let { stringResource(R.string.map_shared_place_drop, it) }
+                ?: stringResource(R.string.map_shared_place_drop_unnamed),
+            style = MaterialTheme.typography.bodySmall,
+            color = AppText,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = stringResource(R.string.cancel),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            color = AppPrimary,
+            modifier = Modifier
+                .clickable(onClick = onCancel)
+                .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+        )
+    }
+}
+
+/**
+ * The name a place goes onto the shared list under.
+ *
+ * Prefilled with whatever was typed into the search, because that is almost
+ * always the answer — the rider searched for "ปตท สวนดอก", did not find it,
+ * and is adding it under the name they already looked for. Which is the point:
+ * the next rider will search for the same words.
+ *
+ * The line about everybody finding it is not decoration. This list is shared
+ * across the server, and a rider who thought they were making a private note
+ * would be surprised by their own handwriting turning up in somebody else's
+ * search.
+ */
+@Composable
+private fun SharedPlaceDialog(
+    point: LatLng,
+    suggestedName: String,
+    /** Whether the save is in flight, so the button cannot be pressed twice. */
+    saving: Boolean,
+    /** Why the last save failed, or null. Shown here because nowhere else can. */
+    error: String?,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by rememberSaveable(point) { mutableStateOf(suggestedName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.map_shared_place_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(
+                        R.string.map_place_coordinates,
+                        formatCoordinate(point.lat),
+                        formatCoordinate(point.lng),
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = AppTextMuted,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { typed ->
+                        if (typed.length <= MapPlacementRules.NAME_MAX_LENGTH) name = typed
+                    },
+                    label = { Text(stringResource(R.string.map_place_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+                Text(
+                    text = stringResource(R.string.map_shared_place_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppTextMuted,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+                error?.takeIf { it.isNotBlank() }?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppDanger,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            HudPrimaryButton(
+                text = stringResource(R.string.map_shared_place_save),
+                onClick = { onSave(name.trim()) },
+                // The same bound the server puts on a name, checked here so a
+                // rider learns while they are still typing rather than by
+                // having the save come back 400. Off while a save is in
+                // flight, so a second press cannot write the place twice.
+                enabled = RouteSetupRules.isStopNameValid(name) && !saving,
+            )
+        },
+        dismissButton = {
+            HudSecondaryButton(text = stringResource(R.string.cancel), onClick = onDismiss)
+        },
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+    )
 }
 
 /** The heading over the picker: which field it is filling. */
@@ -1549,6 +1815,14 @@ private fun PlaceSearchScreen(
     myLocation: LatLng?,
     hasLocationPermission: Boolean,
     onUseCurrentLocation: (LatLng) -> Unit,
+    /** Whoever is signed in, so their own shared places can offer a cross. */
+    currentUserId: Long?,
+    /**
+     * "This is not on the map" — arms the map to be pointed at, carrying
+     * whatever has been typed so far as the name.
+     */
+    onAddPlace: (String) -> Unit,
+    onRemoveSharedPlace: (Place) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focus = remember { FocusRequester() }
@@ -1669,10 +1943,36 @@ private fun PlaceSearchScreen(
         // many results as the phone has room for rather than the three that
         // fitted under a 240dp cap.
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // A heading over the riders' own places, and only when there are
+            // any. They are first — see mergePlaceResults for why — and a
+            // group of rows that arrived by a different route with a different
+            // kind of authority is worth naming before a rider reads it.
+            if (state.hasShared) {
+                item {
+                    Text(
+                        text = stringResource(R.string.map_search_shared_heading),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppTextMuted,
+                        modifier = Modifier.padding(
+                            start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp,
+                        ),
+                    )
+                }
+            }
             items(state.results, key = { it.key }) { place ->
-                PlaceSearchRow(place = place, onClick = { onPick(place) })
+                PlaceSearchRow(
+                    place = place,
+                    onClick = { onPick(place) },
+                    currentUserId = currentUserId,
+                    onRemove = onRemoveSharedPlace,
+                )
                 HudDivider(modifier = Modifier.padding(start = 16.dp))
             }
+
+            // Under the results rather than above them: a rider reads what was
+            // found first, and only then decides that none of it is the place
+            // they meant.
+            item { AddSharedPlaceRow(query = state.query, onClick = { onAddPlace(state.query) }) }
         }
 
         // The third way in, and the only one that needs neither a name nor a
@@ -1761,34 +2061,140 @@ private fun CurrentLocationRow(
     }
 }
 
-/** One result: what it is called, and where that is. */
+/**
+ * One result: what it is called, where that is, and which list it came from.
+ *
+ * ## Why the two sources are told apart on the row
+ *
+ * A LocationIQ row is a map company's record of somewhere that exists. A
+ * shared row is a rider on this server saying "this is here, I have been" —
+ * which is very often the only answer there is, because the geocoder cannot
+ * find what OpenStreetMap does not contain. Both are worth having and they are
+ * not the same claim, so the row says which, and says who wrote it.
+ *
+ * The cross is offered only to whoever typed the place in. Everyone can see
+ * every row, so a cross on somebody else's would be an invitation to remove
+ * something the group is still using — see canDeleteSharedPlace in
+ * src/places/shared.js, which is the rule this mirrors.
+ */
 @Composable
-private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
-    Column(
+private fun PlaceSearchRow(
+    place: Place,
+    onClick: () -> Unit,
+    /** Whoever is signed in, so a rider's own places can offer a cross. */
+    currentUserId: Long?,
+    onRemove: (Place) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp, top = 10.dp, bottom = 10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = place.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = AppText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (place.source == PlaceSource.SHARED) {
+                    // Small, quiet, and next to the name rather than under it:
+                    // it qualifies what the name is, and a rider reading down
+                    // a list of names has to meet it at the same moment.
+                    Text(
+                        text = stringResource(R.string.map_search_shared_tag),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppPrimary,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .background(AppPrimarySoft, AppTagShape)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            Text(
+                // For a geocoder result, the full address — which is what
+                // tells two places with the same name apart, and there are a
+                // great many 7-Elevens. For a shared one there is no address
+                // to show, so it says who wrote it down instead.
+                text = when {
+                    place.source != PlaceSource.SHARED -> place.address
+                    place.address.isNotBlank() ->
+                        stringResource(R.string.map_search_shared_by, place.address)
+                    else -> stringResource(R.string.map_search_shared_by_gone)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (place.isRemovableBy(currentUserId)) {
+            Text(
+                text = stringResource(R.string.map_search_clear_symbol),
+                color = AppTextMuted,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .clickable { onRemove(place) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The row that turns "nothing found" into something a rider can do about it.
+ *
+ * Offered whatever the search came back with, not only when it found nothing.
+ * A rider looking at eight towns none of which is the petrol station they
+ * meant is in exactly the same position as one looking at an empty list, and
+ * making them clear the box first to be offered the way out would be a step
+ * that exists only because the code found it convenient.
+ *
+ * What it does *not* do is save anything. It arms the map: the name is known,
+ * the point is not, and a point is a thing you say by pointing at it. See the
+ * banner in TripMapScreen.
+ */
+@Composable
+private fun AddSharedPlaceRow(query: String, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(
-            text = place.name,
+            text = stringResource(R.string.map_route_add_symbol),
+            style = MaterialTheme.typography.titleMedium,
+            color = AppPrimary,
+        )
+        Text(
+            // The typed name in the row when there is one, so the tap reads as
+            // "add this" rather than as opening one more thing to fill in.
+            text = query.trim().takeIf { it.isNotEmpty() }
+                ?.let { stringResource(R.string.map_search_add_named, it) }
+                ?: stringResource(R.string.map_search_add_place),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
-            color = AppText,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        // The full address, which is what tells two places with the same name
-        // apart — and there are a great many 7-Elevens.
-        Text(
-            text = place.address,
-            style = MaterialTheme.typography.labelSmall,
-            color = AppTextMuted,
+            color = AppPrimary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp),
         )
     }
 }
+
+/** The pill behind the "rider-added" tag. */
+private val AppTagShape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
 
 /**
  * What to say when a search fails, in the rider's own language.

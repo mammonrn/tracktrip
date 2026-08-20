@@ -42,6 +42,16 @@ class AppContainer private constructor(context: Context) {
     val placeSearchApi: PlaceSearchApi by lazy { PlaceSearchApi(apiClient) }
 
     /**
+     * The places the riders on this server wrote down themselves.
+     *
+     * No metered key behind it and no upstream to be unreachable — it is a
+     * table on the same server that serves everything else here, which is why
+     * it is a separate object from [placeSearchApi] rather than something
+     * folded into it: this list still answers on the day LocationIQ does not.
+     */
+    val sharedPlacesApi: SharedPlacesApi by lazy { SharedPlacesApi(apiClient) }
+
+    /**
      * Road routing, proxied by this app's own backend, on the same metered key
      * as place search and for the same reasons — see [DirectionsApi]. The
      * object exists whether or not the server has a key: without one the

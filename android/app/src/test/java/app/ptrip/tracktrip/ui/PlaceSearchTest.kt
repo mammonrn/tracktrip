@@ -5,7 +5,10 @@ import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceLookup
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.data.PlaceSearchProblem
+import app.ptrip.tracktrip.data.PlaceSource
 import app.ptrip.tracktrip.data.SessionExpiredException
+import app.ptrip.tracktrip.data.SharedPlace
+import app.ptrip.tracktrip.data.SharedPlaceStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -47,6 +50,33 @@ class PlaceSearchTest {
             return answer(query)
         }
     }
+
+    /** A stub shared list, which fails or answers independently of the geocoder. */
+    private class Shelf(
+        private val answer: suspend (String) -> List<SharedPlace> = { emptyList() },
+    ) : SharedPlaceStore {
+        val queries = mutableListOf<String>()
+        val added = mutableListOf<Pair<String, LatLng>>()
+        val removed = mutableListOf<Long>()
+
+        override suspend fun search(query: String, limit: Int, near: LatLng?): List<SharedPlace> {
+            queries += query
+            return answer(query)
+        }
+
+        override suspend fun add(name: String, point: LatLng): SharedPlace {
+            added += name to point
+            return SharedPlace(1L, name, point.lat, point.lng, createdBy = 7L, createdByName = "anne")
+        }
+
+        override suspend fun remove(id: Long) {
+            removed += id
+        }
+    }
+
+    /** The petrol station that started all of this. OSM has no row for it. */
+    private val suanDok =
+        SharedPlace(1L, "ปตท สวนดอก", 18.789, 98.971, createdBy = 7L, createdByName = "anne")
 
     // --- the rules --------------------------------------------------------
 
@@ -423,6 +453,180 @@ class PlaceSearchTest {
         assertEquals("วัดร่องขุ่น", PlaceSearchRules.normalize("  วัดร่องขุ่น  "))
         // Two Thai characters is a searchable query, the same as two Latin ones.
         assertTrue(PlaceSearchRules.isSearchable("วัด"))
+    }
+
+    // --- two sources, one list --------------------------------------------
+
+    @Test
+    fun `the riders own places come first and are marked as theirs`() = runTest {
+        val api = Recorder { listOf(pai) }
+        val shelf = Shelf { listOf(suanDok) }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("ปตท สวนดอก")
+        advanceUntilIdle()
+
+        val results = controller.state.value.results
+        // First, because they are the answer the geocoder could not give. A
+        // row somebody wrote down because searching found nothing must not sit
+        // below eight towns whose names merely resemble it.
+        assertEquals(listOf("ปตท สวนดอก", "Pai"), results.map { it.name })
+        assertEquals(PlaceSource.SHARED, results[0].source)
+        assertEquals(PlaceSource.GEOCODER, results[1].source)
+        assertEquals(1L, results[0].sharedId)
+        assertTrue(controller.state.value.hasShared)
+    }
+
+    @Test
+    fun `both lists are asked at once, and both get the query`() = runTest {
+        val api = Recorder { listOf(pai) }
+        val shelf = Shelf { listOf(suanDok) }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("ปตท สวนดอก")
+        advanceUntilIdle()
+
+        assertEquals(listOf("ปตท สวนดอก"), api.queries)
+        assertEquals(listOf("ปตท สวนดอก"), shelf.queries)
+    }
+
+    @Test
+    fun `a geocoder that is down does not hide the riders own places`() = runTest {
+        // The whole reason this list is not folded into /geocode/search. That
+        // route answers 503 on a server with no API key, 429 when the day's
+        // quota is gone and 502 when LocationIQ is unreachable — and on every
+        // one of those days the place somebody wrote down is still here.
+        val api = Recorder { throw ApiException("nope", 503) }
+        val shelf = Shelf { listOf(suanDok) }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("ปตท สวนดอก")
+        advanceUntilIdle()
+
+        val state = controller.state.value
+        assertEquals(listOf("ปตท สวนดอก"), state.results.map { it.name })
+        // And no error over the top of it: a failure with the answer behind it
+        // would send somebody looking for a fault while the row they wanted is
+        // on screen.
+        assertNull(state.problem)
+        assertFalse(state.isEmpty)
+    }
+
+    @Test
+    fun `a geocoder failure with nothing behind it is still reported`() = runTest {
+        val api = Recorder { throw ApiException("nope", 503) }
+        val shelf = Shelf { emptyList() }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        // Nothing found anywhere, so the reason matters again — and 503 means
+        // the server has no key, which is somebody's to fix rather than the
+        // rider's to retry.
+        assertEquals(PlaceSearchProblem.NOT_CONFIGURED, controller.state.value.problem)
+        assertTrue(controller.state.value.results.isEmpty())
+    }
+
+    @Test
+    fun `a shared list that is down does not break the search`() = runTest {
+        // The mirror case, and the one a backend older than this app produces:
+        // /places is not there yet, so it 404s. That must not read as a broken
+        // search when the geocoder is answering perfectly well.
+        val api = Recorder { listOf(pai) }
+        val shelf = Shelf { throw ApiException("no such route", 404) }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        val state = controller.state.value
+        assertEquals(listOf("Pai"), state.results.map { it.name })
+        assertFalse(state.hasShared)
+        assertNull(state.problem)
+    }
+
+    @Test
+    fun `a shared list that answers nonsense does not take the search down`() = runTest {
+        // Anything at all, not just ApiException: a malformed body throws a
+        // JSONException, and an async that throws would cancel the search
+        // around it rather than losing one of its two halves.
+        val api = Recorder { listOf(pai) }
+        val shelf = Shelf { throw IllegalStateException("garbage") }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        assertEquals(listOf("Pai"), controller.state.value.results.map { it.name })
+    }
+
+    @Test
+    fun `with no geocoder at all the riders own places still answer`() = runTest {
+        // A build or a preview with no search configured. Not a failure, and
+        // not reported as one.
+        val shelf = Shelf { listOf(suanDok) }
+        val controller = PlaceSearchController(this, api = null, shared = shelf)
+
+        controller.onQueryChanged("ปตท สวนดอก")
+        advanceUntilIdle()
+
+        val state = controller.state.value
+        assertEquals(listOf("ปตท สวนดอก"), state.results.map { it.name })
+        assertNull(state.problem)
+    }
+
+    @Test
+    fun `the debounce covers both lists, not just the geocoder`() = runTest {
+        // Otherwise typing nine letters would be one geocoder request and nine
+        // requests to this app's own server — which is cheaper but is still a
+        // rider's battery and a phone's radio.
+        val api = Recorder { listOf(pai) }
+        val shelf = Shelf { listOf(suanDok) }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        "Chiang Mai".forEachIndexed { index, _ ->
+            controller.onQueryChanged("Chiang Mai".take(index + 1))
+            advanceTimeBy(100)
+        }
+        advanceUntilIdle()
+
+        assertEquals(1, api.queries.size)
+        assertEquals(1, shelf.queries.size)
+    }
+
+    @Test
+    fun `a stale answer never paints over a newer query`() = runTest {
+        // The classic search-as-you-type bug, checked with two sources in
+        // flight rather than one: the guard has to compare against the field,
+        // not against whichever half came back last.
+        val api = Recorder { query -> if (query == "Pai") listOf(pai) else emptyList() }
+        val shelf = Shelf { emptyList() }
+        val controller = PlaceSearchController(this, api, shelf)
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+        controller.onQueryChanged("Nan")
+        advanceUntilIdle()
+
+        assertEquals("Nan", controller.state.value.query)
+        assertTrue(controller.state.value.results.isEmpty())
+    }
+
+    @Test
+    fun `merging keeps the riders own places ahead without dropping duplicates`() {
+        // A shared place and an OSM object at the same spot are two different
+        // claims about it, and collapsing them silently would hide whichever
+        // one a rider was looking for. They read differently on screen, which
+        // is enough.
+        val shared = suanDok.asPlace()
+        val same = Place("ปตท สวนดอก", "somewhere", 18.789, 98.971, kind = null, osmId = "5")
+
+        assertEquals(
+            listOf(PlaceSource.SHARED, PlaceSource.GEOCODER),
+            mergePlaceResults(listOf(shared), listOf(same)).map { it.source },
+        )
+        assertEquals(2, mergePlaceResults(listOf(shared), listOf(same)).size)
     }
 
 }

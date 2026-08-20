@@ -270,6 +270,34 @@
     <string name="map_route_stop_hint">Or press and hold the map to drop a stop where you are pointing.</string>
     <string name="map_route_stop_add">Add stop</string>
 
+    <!--
+      Places the riders write down themselves, shared across the server.
+
+      The geocoder cannot find what is not in OpenStreetMap, and the thing
+      that started this was exactly that: "ปตท สวนดอก" is a petrol station
+      every rider in Chiang Mai can name and OSM has no row for. So the riders
+      add it, and everybody finds it afterwards.
+
+      The wording keeps the two sources apart on purpose. A LocationIQ row is
+      a map company's record of somewhere; one of these is a rider saying "I
+      have been, it is here". Both are useful and a rider is entitled to know
+      which they are about to plan a ride round.
+    -->
+    <string name="map_search_shared_heading">Added by riders here</string>
+    <string name="map_search_shared_tag">Rider-added</string>
+    <string name="map_search_shared_by">Added by %1$s</string>
+    <string name="map_search_shared_by_gone">Added by a rider who has left</string>
+    <string name="map_search_add_named">Add \"%1$s\" as a new place</string>
+    <string name="map_search_add_place">Add a place that isn\'t on the map</string>
+    <!-- Armed from the search, answered by a long press on the map. -->
+    <string name="map_shared_place_drop">Press and hold the map where \"%1$s\" is.</string>
+    <string name="map_shared_place_drop_unnamed">Press and hold the map where the place is.</string>
+    <string name="map_shared_place_title">Add a place</string>
+    <string name="map_shared_place_note">Everyone on this server will be able to find it.</string>
+    <string name="map_shared_place_save">Save place</string>
+    <string name="map_shared_place_remove_title">Remove this place?</string>
+    <string name="map_shared_place_remove_message">\"%1$s\" disappears from everyone\'s search.</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
     <string name="location_permission_denied">Location access is off for PTrips. Turn it on in Android\'s app settings to share your position with your group.</string>

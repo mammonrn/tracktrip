@@ -1,6 +1,8 @@
 package app.ptrip.tracktrip.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -119,7 +121,48 @@ class PlaceSearchParsingTest {
         val withId = Place("A", "A", 1.0, 2.0, kind = null, osmId = "99")
         val without = Place("A", "A", 1.0, 2.0, kind = null, osmId = null)
 
-        assertEquals("99", withId.key)
-        assertEquals("1.0,2.0", without.key)
+        assertEquals("GEOCODER:99", withId.key)
+        assertEquals("GEOCODER:1.0,2.0", without.key)
+    }
+
+    @Test
+    fun `a shared place and an OSM object cannot collide on the same key`() {
+        // The two lists are merged into one and their ids mean different
+        // things — shared place 99 and OSM object 99 are unrelated. Without
+        // the source in the key a LazyColumn handed the same key twice drops a
+        // row, and the row it drops is the one a rider is reaching for.
+        val osm = Place("A", "A", 1.0, 2.0, kind = null, osmId = "99")
+        val shared = Place(
+            "A", "A", 1.0, 2.0,
+            kind = null,
+            osmId = null,
+            source = PlaceSource.SHARED,
+            sharedId = 99L,
+        )
+
+        assertNotEquals(osm.key, shared.key)
+    }
+
+    @Test
+    fun `only a rider's own shared place offers them a cross`() {
+        // Everyone can see every row, so a cross on somebody else's would
+        // invite removing something the group is still using. Mirrors
+        // canDeleteSharedPlace in src/places/shared.js.
+        val mine = Place(
+            "A", "anne", 1.0, 2.0,
+            kind = null, osmId = null,
+            source = PlaceSource.SHARED, sharedId = 1L, createdBy = 7L,
+        )
+        assertTrue(mine.isRemovableBy(7L))
+        assertFalse(mine.isRemovableBy(8L))
+        assertFalse(mine.isRemovableBy(null))
+
+        // An orphan — the account that typed it is gone — belongs to nobody.
+        val orphan = mine.copy(createdBy = null)
+        assertFalse(orphan.isRemovableBy(7L))
+
+        // And a geocoder row is not on any list this app can write to.
+        val osm = Place("A", "A", 1.0, 2.0, kind = null, osmId = "99")
+        assertFalse(osm.isRemovableBy(7L))
     }
 }

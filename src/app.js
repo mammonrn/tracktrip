@@ -8,6 +8,7 @@ import { createWaypointsRouter } from './routes/waypoints.js';
 import { createPositionsRouter } from './routes/positions.js';
 import { createSharingRouter } from './routes/sharing.js';
 import { createGeocodeRouter } from './routes/geocode.js';
+import { createPlacesRouter } from './routes/places.js';
 import { createDirectionsRouter } from './routes/directions.js';
 import { syncSuperuserRoles } from './auth/roles.js';
 import { noopHub } from './ws/hub.js';
@@ -60,6 +61,9 @@ export function createApp({
   app.use(createPositionsRouter({ db, config, hub }));
   app.use(createSharingRouter({ db, config }));
   app.use(createGeocodeRouter({ db, config, search: searchPlaces, logger: searchLogger }));
+  // The riders' own places, which need no API key and answer when the
+  // geocoder above cannot — see src/routes/places.js.
+  app.use(createPlacesRouter({ db, config }));
   app.use(createDirectionsRouter({ db, config, route: routeBetween, logger: searchLogger }));
   return app;
 }
