@@ -22,8 +22,12 @@
  *
  * ## What counts as being on a trip
  *
- * A row in `trip_members`, whatever its `role`. Owner and member both, because
- * both are *riding*: it is the same table and the same rows that
+ * A **live** row in `trip_members` — `left_at IS NULL` — whatever its `role`.
+ * Leaving is a soft delete, so the row of a rider who got off survives to be
+ * counted as history; counting it here would leave them locked out of ever
+ * starting another trip, which is the trap the leave button exists to open.
+ *
+ * Owner and member both, because both are *riding*: it is the same table and the same rows that
  * `GET /trips/:id/suggested-invitees` counts as having "ridden together", and
  * the same rows `GET /trips` turns into a rider's list. A rule that counted
  * only the trips you own would let one invitation put you on three rides at
@@ -70,6 +74,7 @@ export function activeTripFor(db, userId, { excludeTripId = null } = {}) {
          FROM trip_members
          JOIN trips ON trips.id = trip_members.trip_id
         WHERE trip_members.user_id = ?
+          AND trip_members.left_at IS NULL
           AND trips.status = 'active'
           AND (? IS NULL OR trips.id != ?)
         ORDER BY trips.created_at DESC, trips.id DESC

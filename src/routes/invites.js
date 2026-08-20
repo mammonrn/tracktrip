@@ -15,9 +15,15 @@ export function createInvitesRouter({ db, config }) {
   // Joining has to add the membership and close the invite together, or a
   // crash in between would leave an invite that can never be accepted again.
   const acceptInvite = db.transaction((inviteId, tripId, userId, nowIso) => {
+    // A rider who left this trip kept their row — leaving is a soft delete, so
+    // that the ride still counts towards "ridden with before" — and an invite
+    // back is that row's `left_at` going to NULL. `DO NOTHING` would have
+    // marked the invite accepted and put nobody on the trip.
     db.prepare(
       `INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'member')
-       ON CONFLICT (trip_id, user_id) DO NOTHING`
+       ON CONFLICT (trip_id, user_id) DO UPDATE
+         SET left_at = NULL, role = excluded.role
+       WHERE trip_members.left_at IS NOT NULL`
     ).run(tripId, userId);
     db.prepare(
       "UPDATE trip_invites SET status = 'accepted', accepted_at = ?, accepted_by = ? WHERE id = ?"

@@ -350,20 +350,19 @@ test('a rider who left can be invited back', async () => {
   );
 });
 
-test('leaving takes the trip out of what the two have ridden together', async () => {
+test('leaving keeps the ride in what the two have ridden together', async () => {
   const ctx = await setup();
   const { tripId } = await tripWithAFriendOnIt(ctx);
   await leave(ctx.app, ctx.friendToken, tripId);
 
-  // A consequence of the membership row being deleted rather than marked, and
-  // worth pinning down rather than discovering: "ridden with before" is built
-  // by joining trip_members to itself, so a trip somebody left is no longer a
-  // trip the two of them shared, and this was their only one.
+  // The whole reason leaving is a soft delete. "Ridden with before" joins
+  // trip_members to itself, and the row survives with `left_at` stamped — so
+  // the ride the two of them were on still counts, which it should: it
+  // happened. Somebody getting off afterwards does not unmake it.
   //
-  // The owner can still invite them by address — the invitation went back to
-  // `revoked`, which reopens — they are simply not offered as a shortcut.
-  // Keeping the shortcut would mean a soft delete and a `left_at` column for
-  // every query in the app to remember, which is a large price for a chip.
+  // And they are offered *again* rather than being excluded as somebody
+  // already here, because the exclusion asks the other question and takes
+  // `left_at IS NULL`.
   const suggestions = await authed(
     ctx.app,
     'get',
@@ -371,5 +370,156 @@ test('leaving takes the trip out of what the two have ridden together', async ()
     ctx.ownerToken
   );
   assert.equal(suggestions.status, 200);
-  assert.deepEqual(suggestions.body, []);
+  assert.deepEqual(
+    suggestions.body.map((s) => s.email),
+    ['friend@gmail.com']
+  );
+  assert.equal(suggestions.body[0].trips_together, 1);
+});
+
+// ─── Left, but not forgotten: history without access ────────────────────────
+
+test('a rider who left keeps no access to anything the trip holds', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await authed(ctx.app, 'post', `/trips/${tripId}/waypoints`, ctx.friendToken).send({
+    name: 'Coffee',
+    lat: 18.8,
+    lng: 98.9,
+    type: 'live',
+  });
+
+  await leave(ctx.app, ctx.friendToken, tripId);
+
+  // The row is still in trip_members — that is what keeps the ride in their
+  // shared history — and it must never be read as access. Every gate, because
+  // one of them getting it wrong is a departed rider still watching the group
+  // move.
+  for (const [method, path] of [
+    ['get', `/trips/${tripId}/positions`],
+    ['get', `/trips/${tripId}/waypoints`],
+    ['get', `/trips/${tripId}/positions/history`],
+    ['get', `/trips/${tripId}/member-levels`],
+    ['post', `/trips/${tripId}/positions`],
+    ['post', `/trips/${tripId}/share/start`],
+    ['post', `/trips/${tripId}/share/stop`],
+  ]) {
+    const res = await authed(ctx.app, method, path, ctx.friendToken).send(
+      method === 'post' ? { lat: 18.79, lng: 98.98 } : undefined
+    );
+    assert.equal(res.status, 403, `${method.toUpperCase()} ${path} should be refused`);
+  }
+});
+
+test('the trip drops out of the leaver\'s own list', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+
+  const before = await authed(ctx.app, 'get', '/trips', ctx.friendToken);
+  assert.deepEqual(before.body.map((t) => t.id), [tripId]);
+
+  await leave(ctx.app, ctx.friendToken, tripId);
+
+  // A row that survives is not a trip they are on. If this listed it, every
+  // screen in the app would offer a trip whose every read answers 403.
+  assert.deepEqual((await authed(ctx.app, 'get', '/trips', ctx.friendToken)).body, []);
+});
+
+test('the row is stamped rather than deleted', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await leave(ctx.app, ctx.friendToken, tripId);
+
+  const row = ctx.db
+    .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
+    .get(tripId, ctx.friendId);
+  assert.ok(row, 'the membership row survives, so the ride stays in their history');
+  assert.ok(row.left_at, 'stamped with when they got off');
+  assert.equal(row.role, 'member');
+});
+
+// ─── Coming back to a trip you left ─────────────────────────────────────────
+
+test('rejoining by invitation revives the row rather than failing silently', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await leave(ctx.app, ctx.friendToken, tripId);
+
+  const again = await authed(ctx.app, 'post', `/trips/${tripId}/invites`, ctx.ownerToken).send({
+    email: 'friend@gmail.com',
+  });
+  const accepted = await authed(
+    ctx.app,
+    'post',
+    `/invites/${again.body.id}/accept`,
+    ctx.friendToken
+  ).send();
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+
+  // The primary key is (trip_id, user_id), so the insert conflicts with their
+  // own dormant row. `DO NOTHING` would have marked the invite accepted and
+  // put nobody on the trip — a success that joined no one.
+  const row = ctx.db
+    .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
+    .get(tripId, ctx.friendId);
+  assert.equal(row.left_at, null);
+  assert.equal((await authed(ctx.app, 'get', `/trips/${tripId}/positions`, ctx.friendToken)).status, 200);
+});
+
+test('rejoining by join code revives the row too', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await leave(ctx.app, ctx.friendToken, tripId);
+
+  const code = await authed(ctx.app, 'post', `/trips/${tripId}/join-code`, ctx.ownerToken).send();
+  const join = await authed(ctx.app, 'post', '/trips/join', ctx.friendToken).send({
+    code: code.body.code,
+  });
+
+  assert.equal(join.status, 200, JSON.stringify(join.body));
+  // Not "already_member": they had left, so this is a join, not a no-op.
+  assert.equal(join.body.already_member, false);
+  assert.equal(
+    ctx.db
+      .prepare('SELECT left_at FROM trip_members WHERE trip_id = ? AND user_id = ?')
+      .get(tripId, ctx.friendId).left_at,
+    null
+  );
+});
+
+test('rejoining is refused while they are out on another trip', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await leave(ctx.app, ctx.friendToken, tripId);
+  await createTrip(ctx.app, ctx.friendToken, "Friend's own ride");
+
+  const again = await authed(ctx.app, 'post', `/trips/${tripId}/invites`, ctx.ownerToken).send({
+    email: 'friend@gmail.com',
+  });
+  const accepted = await authed(
+    ctx.app,
+    'post',
+    `/invites/${again.body.id}/accept`,
+    ctx.friendToken
+  ).send();
+  assert.equal(accepted.status, 409);
+  assert.equal(accepted.body.code, 'active_trip_exists');
+});
+
+test('the database refuses a revived membership even without a guard', async () => {
+  const ctx = await setup();
+  const { tripId } = await tripWithAFriendOnIt(ctx);
+  await leave(ctx.app, ctx.friendToken, tripId);
+  await createTrip(ctx.app, ctx.friendToken, "Friend's own ride");
+
+  // Coming back is an UPDATE, which the BEFORE INSERT trigger from 0013 never
+  // saw. Writing round the routes is what a lost race amounts to, and what a
+  // hand-written UPDATE on the server is.
+  assert.throws(
+    () =>
+      ctx.db
+        .prepare('UPDATE trip_members SET left_at = NULL WHERE trip_id = ? AND user_id = ?')
+        .run(tripId, ctx.friendId),
+    /one active trip per rider/
+  );
 });

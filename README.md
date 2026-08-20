@@ -47,6 +47,7 @@ src/
     sharing.js       # sharing-session durations, expiry, and the on/off predicate
     joinCodes.js     # QR join codes: generation, expiry, normalisation
     activeTrip.js    # one active trip per rider: the lookup and the 409 body
+    membership.js    # "on this trip now" vs "was ever on it" — the left_at rule
   users/
     levels.js        # the rider level table and progress towards the next one
     profile.js       # validation for the editable profile fields
@@ -387,8 +388,11 @@ without knowing their email address.
 
   One transaction, because half of it is not a state anybody should be in:
 
-  - the **membership**, which is what `GET /trips/:id/positions` is built from,
-    so this alone takes them off the roster and off everyone's map;
+  - the **membership**, stamped with `left_at` rather than deleted — see
+    [Leaving is a soft delete](#leaving-is-a-soft-delete). Every read that asks
+    "are they on this trip now?" takes `left_at IS NULL`, so this alone takes
+    them off the roster, off everyone's map, out of their own trip list and out
+    of every access check;
   - the **sharing session**, for the same reason `/end` clears everybody's — a
     session outliving the membership is a rider believing they are still being
     tracked. Deleted rather than marked spent: the "no row means sharing by
@@ -408,12 +412,44 @@ without knowing their email address.
   not grounds to rewrite where everybody went. Waypoints are untouched — a
   route belongs to the trip, not to whoever added a stop to it.
 
-  One consequence worth knowing: "ridden with before"
-  (`/suggested-invitees`) is built by joining `trip_members` to itself, so a
-  trip somebody left is no longer a trip the two of them shared, and they stop
-  being offered as a shortcut. The owner can still invite them by address.
-  Keeping the shortcut would mean a soft delete and a `left_at` column for
-  every query in the app to remember, which is a large price for a chip.
+#### Leaving is a soft delete
+
+`trip_members` used to answer "is this rider on this trip?" by existing, and
+every read of the table could take a row at face value. Leaving deleted the
+row — which took the ride out of the pair's history with it, because "ridden
+with before" is built by joining `trip_members` to itself. They *had* ridden
+together; that happened, and the app should go on offering them to each other.
+
+So `left_at` (migration `0014`) is stamped instead, and the one rule the whole
+codebase relied on splits into two questions that had been the same question:
+
+| | who asks | clause |
+|---|---|---|
+| **Are they on this trip now?** | access, rosters, the map, the trip list, the leaderboard, the one-active-trip rule | `left_at IS NULL`, strictly |
+| **Were they ever?** | `GET /trips/:id/suggested-invitees`, and nothing else | every row, `left_at` ignored |
+
+Getting the first one wrong is not a display bug: a rider who left and still
+passed the membership check would keep reading the group's live positions and
+its route, and could go on reporting their own — the exact access leaving
+exists to end. So the clause lives in
+[`src/trips/membership.js`](src/trips/membership.js), which both gates —
+`requireTripMembership` and the WebSocket's `readableTrip` — now call.
+
+The second question is asked in one query and says so out loud. Its
+*exclusion* — who is already on this trip and so not worth suggesting — is the
+first question again, and takes the clause: a rider who left is offered back.
+
+**Rejoining** is that row's `left_at` going back to NULL. The primary key is
+`(trip_id, user_id)`, so an invitation accepted or a code redeemed by somebody
+who left conflicts with their own dormant row; `ON CONFLICT … DO NOTHING`
+would have looked like success and joined nobody, so both are
+`DO UPDATE SET left_at = NULL … WHERE trip_members.left_at IS NOT NULL` — a
+no-op for somebody already on the trip, a return for somebody who was not.
+
+Migration `0014` rewrites 0013's triggers for the same reason: they counted
+rows, and a row is no longer a membership. It also adds a third, because
+membership is no longer only gained by INSERT — coming back is an UPDATE, which
+a `BEFORE INSERT` trigger never sees.
 
 Once a trip has ended it is **read-only**: members can still read it, but
 every write to it — positions and live waypoint drops included — returns

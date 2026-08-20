@@ -15,6 +15,7 @@ import {
   serializeJoinCode,
 } from '../trips/joinCodes.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
+import { currentMembership } from '../trips/membership.js';
 import {
   activeTripConflict,
   activeTripFor,
@@ -318,7 +319,9 @@ export function createTripsRouter({ db, config }) {
           `SELECT trips.*, trip_members.role AS role
            FROM trips
            LEFT JOIN trip_members
-             ON trip_members.trip_id = trips.id AND trip_members.user_id = ?
+             ON trip_members.trip_id = trips.id
+            AND trip_members.user_id = ?
+            AND trip_members.left_at IS NULL
            ORDER BY trips.created_at DESC, trips.id DESC`
         )
         .all(req.user.id);
@@ -337,6 +340,7 @@ export function createTripsRouter({ db, config }) {
          FROM trips
          JOIN trip_members ON trip_members.trip_id = trips.id
          WHERE trip_members.user_id = ?
+           AND trip_members.left_at IS NULL
          ORDER BY trips.created_at DESC, trips.id DESC`
       )
       .all(req.user.id);
@@ -359,7 +363,9 @@ export function createTripsRouter({ db, config }) {
       .prepare(
         `SELECT 1 FROM trip_members
          JOIN users ON users.id = trip_members.user_id
-         WHERE trip_members.trip_id = ? AND lower(users.email) = ?`
+         WHERE trip_members.trip_id = ?
+           AND trip_members.left_at IS NULL
+           AND lower(users.email) = ?`
       )
       .get(req.trip.id, email);
     if (alreadyMember) {
@@ -410,6 +416,20 @@ export function createTripsRouter({ db, config }) {
    * everyone on the same count. Unlimited: the list is bounded by how many
    * people this rider has actually ridden with, the client scrolls it, and a
    * cap of ten silently hid exactly the regulars a long-standing group has.
+   *
+   * ## The one query that reads a rider's whole history
+   *
+   * `mine`/`theirs` deliberately ignore `left_at`. Every other read of
+   * `trip_members` asks "are they on this trip now?" and takes
+   * `left_at IS NULL` — see src/trips/membership.js — but the question here is
+   * "have we ridden together?", and somebody getting off a trip afterwards
+   * does not unmake the ride they were on. They rode together; that happened.
+   *
+   * The exclusion below is the other question again, so it takes the clause:
+   * only riders **currently** on this trip are left out. A rider who was here
+   * and left is offered back, which is the point — their invitation went to
+   * `revoked` when they left, and `POST /trips/:id/invites` knows how to
+   * reopen that.
    */
   router.get(
     '/trips/:id/suggested-invitees',
@@ -435,7 +455,8 @@ export function createTripsRouter({ db, config }) {
              AND users.email IS NOT NULL
              AND users.email != ''
              AND theirs.user_id NOT IN (
-               SELECT user_id FROM trip_members WHERE trip_id = ?
+               SELECT user_id FROM trip_members
+                WHERE trip_id = ? AND left_at IS NULL
              )
            GROUP BY users.id
            ORDER BY trips_together DESC, last_ridden_together DESC, users.id DESC`
@@ -478,6 +499,7 @@ export function createTripsRouter({ db, config }) {
          FROM trip_members
          JOIN users ON users.id = trip_members.user_id
          WHERE trip_members.trip_id = ?
+           AND trip_members.left_at IS NULL
          ORDER BY users.id ASC`
       )
       .all(req.trip.id);
@@ -536,9 +558,19 @@ export function createTripsRouter({ db, config }) {
    * and those are the only two ways it stops working.
    */
   const joinByCode = db.transaction((tripId, userId) => {
+    // A rider who left this trip still has their row — leaving is a soft
+    // delete, so that the two of them go on counting as having ridden together
+    // — and coming back is that row's `left_at` going to NULL rather than a
+    // new one. `DO NOTHING` would have looked like success and joined nobody.
+    //
+    // The `WHERE` keeps the old no-op for somebody already on the trip: their
+    // `left_at` is already NULL, so there is nothing to undo and no reason to
+    // touch `role`.
     db.prepare(
       `INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'member')
-       ON CONFLICT (trip_id, user_id) DO NOTHING`
+       ON CONFLICT (trip_id, user_id) DO UPDATE
+         SET left_at = NULL, role = excluded.role
+       WHERE trip_members.left_at IS NOT NULL`
     ).run(tripId, userId);
   });
 
@@ -573,9 +605,7 @@ export function createTripsRouter({ db, config }) {
         return res.status(409).json({ error: 'trip has ended' });
       }
 
-      const existing = db
-        .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
-        .get(trip.id, req.user.id);
+      const existing = currentMembership(db, trip.id, req.user.id);
 
       // Already a member is a success, not a conflict: two riders scanning the
       // same QR twice should both end up looking at the trip. Which is also
@@ -598,9 +628,7 @@ export function createTripsRouter({ db, config }) {
         }
       }
 
-      const membership = db
-        .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
-        .get(trip.id, req.user.id);
+      const membership = currentMembership(db, trip.id, req.user.id);
 
       res.json({
         trip: serializeTrip(trip, { role: membership.role }),
@@ -653,9 +681,13 @@ export function createTripsRouter({ db, config }) {
    *
    * One transaction, because half of it is not a state anybody should be in:
    *
-   * - **The membership.** `GET /trips/:id/positions` is driven by
-   *   `trip_members`, so this alone takes the rider off the roster and off
-   *   everyone's map.
+   * - **The membership**, stamped with `left_at` rather than deleted. Every
+   *   read that asks "are they on this trip now?" takes `left_at IS NULL` —
+   *   see src/trips/membership.js — so this alone takes the rider off the
+   *   roster, off everyone's map, out of their own trip list and out of every
+   *   access check. The row itself survives for the one query that asks a
+   *   different question: `/suggested-invitees` counts trips two riders have
+   *   shared, and getting off a trip afterwards does not unmake the ride.
    * - **The sharing session**, for the same reason ending a trip clears
    *   everybody's: a session outliving the membership is a rider believing
    *   they are still being tracked. Deleted rather than marked spent — the
@@ -670,7 +702,8 @@ export function createTripsRouter({ db, config }) {
    *   `POST /trips/:id/invites` already knows how to reopen. Left `accepted`,
    *   `UNIQUE (trip_id, email)` would mean re-inviting them answers "that
    *   invite was already accepted" for ever, and a door out that cannot be
-   *   walked back through is half a door.
+   *   walked back through is half a door. Accepting it again clears `left_at`
+   *   on the row this leaves behind.
    *
    * `position_history` is deliberately kept. It is the record of a ride that
    * genuinely happened, `cleanup-history.js` already ages it out, and leaving
@@ -691,8 +724,11 @@ export function createTripsRouter({ db, config }) {
    * `requireTripParticipation` — managing a trip has never meant being on it,
    * and there is nothing for them to leave.
    */
-  const leaveTrip = db.transaction((tripId, userId) => {
-    db.prepare('DELETE FROM trip_members WHERE trip_id = ? AND user_id = ?').run(tripId, userId);
+  const leaveTrip = db.transaction((tripId, userId, leftAt) => {
+    db.prepare(
+      `UPDATE trip_members SET left_at = ?
+        WHERE trip_id = ? AND user_id = ? AND left_at IS NULL`
+    ).run(leftAt, tripId, userId);
     db.prepare('DELETE FROM sharing_sessions WHERE trip_id = ? AND user_id = ?').run(
       tripId,
       userId
@@ -721,7 +757,7 @@ export function createTripsRouter({ db, config }) {
         });
       }
 
-      leaveTrip(req.trip.id, req.user.id);
+      leaveTrip(req.trip.id, req.user.id, new Date().toISOString());
       res.status(204).end();
     }
   );

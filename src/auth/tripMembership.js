@@ -1,4 +1,5 @@
 import { isSuperuser } from './roles.js';
+import { currentMembership } from '../trips/membership.js';
 
 /**
  * Loads the trip named by :id and confirms the authenticated user belongs to
@@ -9,6 +10,12 @@ import { isSuperuser } from './roles.js';
  *
  * Responds 400 for a non-numeric :id, 404 when the trip doesn't exist, and
  * 403 when the caller isn't a member of it.
+ *
+ * "Isn't a member" includes somebody who left: `trip_members` keeps their row
+ * so the two riders still count as having ridden together, and
+ * `currentMembership` is what keeps that history from being read as access.
+ * Ending that access is the entire point of the leave button, so this is the
+ * gate it has to hold.
  *
  * A super user passes without a membership, and `req.membership` is then
  * null — deliberately, rather than a synthesised row. They are not a member
@@ -31,9 +38,7 @@ export function requireTripMembership(db) {
       return res.status(404).json({ error: 'trip not found' });
     }
 
-    const membership = db
-      .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
-      .get(tripId, req.user.id);
+    const membership = currentMembership(db, tripId, req.user.id);
     if (!membership && !isSuperuser(req.user)) {
       return res.status(403).json({ error: 'not a member of this trip' });
     }

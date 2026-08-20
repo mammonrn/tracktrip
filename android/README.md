@@ -209,6 +209,13 @@ The phone stops sharing the moment the server confirms, through the same
 next report would be answered 403 and the notification in the rider's pocket
 would be claiming something untrue.
 
+Nothing on this side had to change for the server making that a **soft
+delete** — `trip_members` keeps the row with `left_at` stamped, so the two
+riders go on counting as having ridden together — and one thing improved
+without being touched. A rider who left is no longer on the trip's roster but
+*is* still in "Ridden with before", so `InviteShortcuts` offers them again:
+the window drops whoever is in `state.members`, and they are not.
+
 ### Being refused for being mid-ride
 
 The client shows the server's own `error` string for any refusal, which keeps

@@ -1,4 +1,5 @@
 import { isSuperuser } from './roles.js';
+import { currentMembership } from '../trips/membership.js';
 
 /**
  * Whether this user may read this trip, and what they are to it.
@@ -15,6 +16,12 @@ import { isSuperuser } from './roles.js';
  * looking at a trip they do not belong to — the same distinction the
  * middleware draws, and for the same reason: reading a trip must never make
  * somebody a member of it.
+ *
+ * Somebody who has left the trip is not readable, exactly as if they had never
+ * joined. Their `trip_members` row survives so that "ridden with before" can
+ * still count the ride, and that history must never be mistaken for access —
+ * this is the gate a socket asks, so a mistake here is a departed rider still
+ * receiving the group's live positions.
  */
 export function readableTrip(db, user, tripId) {
   if (!Number.isInteger(tripId) || tripId <= 0) {
@@ -26,9 +33,7 @@ export function readableTrip(db, user, tripId) {
     return null;
   }
 
-  const membership = db
-    .prepare('SELECT * FROM trip_members WHERE trip_id = ? AND user_id = ?')
-    .get(tripId, user.id);
+  const membership = currentMembership(db, tripId, user.id);
 
   if (!membership && !isSuperuser(user)) {
     return null;
