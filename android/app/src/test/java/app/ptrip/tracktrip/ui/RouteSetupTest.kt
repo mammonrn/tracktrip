@@ -261,6 +261,41 @@ class RouteSetupTest {
     }
 
     @Test
+    fun `the next stop is numbered from what is already on the route`() {
+        // What the naming dialog prefills after a press and hold, so the whole
+        // gesture is: hold, confirm. Nothing to type.
+        assertEquals(1, RouteSetupRules.nextStopNumber(emptyList(), RouteDraft()))
+
+        val saved = listOf(planned(1, order = 0, at = lampang), planned(2, order = 1, at = pai))
+        assertEquals(3, RouteSetupRules.nextStopNumber(saved, RouteDraft()))
+
+        // The trip's stops and the draft's are one sequence on the route, so
+        // they are one sequence in the numbering too.
+        val withDraft = RouteDraft(stops = listOf(RoutePoint(nan, "Nan")))
+        assertEquals(4, RouteSetupRules.nextStopNumber(saved, withDraft))
+    }
+
+    @Test
+    fun `a live drop is not counted in the stop numbering`() {
+        // It is not on the route, so it is not a stop number. Counting it
+        // would leave a gap in the sequence a rider can see in the sheet.
+        val mixed = listOf(
+            planned(1, order = 0, at = lampang),
+            Waypoint(2, "Coffee", pai.lat, pai.lng, Waypoint.TYPE_LIVE, orderIndex = null),
+        )
+
+        assertEquals(2, RouteSetupRules.nextStopNumber(mixed, RouteDraft()))
+    }
+
+    @Test
+    fun `a prefilled number is a name the server will take`() {
+        // The whole point of prefilling: confirm without typing has to be a
+        // save that works, not a disabled button.
+        assertTrue(RouteSetupRules.isStopNameValid("Stop 3"))
+        assertTrue(RouteSetupRules.isStopNameValid("จุดแวะ 3"))
+    }
+
+    @Test
     fun `a stop has to be called something`() {
         assertFalse(RouteSetupRules.isStopNameValid(""))
         assertFalse(RouteSetupRules.isStopNameValid("   "))

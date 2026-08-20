@@ -208,6 +208,14 @@ the time from `GET /directions`, and three things to do with it:
   re-ordering: stops go in the order they were added. The sheet's distance and
   time re-route as each one lands, so the figures above the confirm button are
   the ride the button is about to save.
+
+  **While the sheet is up, pressing and holding the map is the short way in.**
+  The two ends are already set at that point, so the only point left to add is
+  a stop, and the gesture drops one where the finger is — straight to the
+  naming dialog, which prefills "Stop 3" so confirming takes no typing. That is
+  a hold and a tap, against opening a search panel nobody was going to use and
+  then holding: the sheet says so, because a gesture with nothing on screen to
+  suggest it is a gesture nobody finds.
 - **Close** — throws the draft away. Nothing in it was ever sent.
 
 **Nothing is written until Confirm.** That is the point of holding a draft

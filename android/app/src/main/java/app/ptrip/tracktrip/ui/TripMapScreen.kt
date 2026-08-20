@@ -394,6 +394,19 @@ fun TripMapScreen(
         isTripActive = state.trip?.isActive == true,
     )
 
+    // Whether a press and hold on the map means "drop a stop here" outright.
+    //
+    // The summary sheet is up, so the two ends are already set and the only
+    // point left to add is a stop — which is what the gesture almost always
+    // means at that moment. Without this a rider had to open the search panel
+    // they were not going to use, *then* press and hold: two screens and four
+    // taps for a spot their finger was already on.
+    val longPressDropsStop = routeSetupOpen &&
+        canSetUpRoute &&
+        picking == null &&
+        state.routeDraft.isComplete &&
+        RouteSetupRules.canAddStops(state.trip?.isActive == true)
+
     // Everything a picked point does, wherever it was picked from: move the
     // map to it so the rider can see what they chose, put it in the field that
     // asked for it, and close the picker.
@@ -472,11 +485,16 @@ fun TripMapScreen(
                             // has said where, and the field they tapped to open
                             // the picker already said what for.
                             field != null -> takePicked(field, RoutePoint(point))
-                            // With no field waiting, the gesture means what it
-                            // has always meant. Nothing to offer means nothing
-                            // to open: a member looking at a finished ride can
-                            // place neither end nor a stop, and a dialog with
-                            // no buttons is worse than no dialog.
+                            // Route set, sheet up: the gesture is a stop, and
+                            // it goes straight to the one question a stop
+                            // still has to answer.
+                            longPressDropsStop -> takePicked(RouteField.STOP, RoutePoint(point))
+                            // With no field waiting and no route being set up,
+                            // the gesture means what it has always meant.
+                            // Nothing to offer means nothing to open: a member
+                            // looking at a finished ride can place neither end
+                            // nor a stop, and a dialog with no buttons is
+                            // worse than no dialog.
                             placementsAllowed(state.trip).isNotEmpty() ->
                                 placing = PendingPlacement(point)
                         }
@@ -846,6 +864,10 @@ fun TripMapScreen(
     namingStop?.let { stop ->
         StopNameDialog(
             point = stop.point,
+            suggestedName = stringResource(
+                R.string.map_route_stop_default_name,
+                RouteSetupRules.nextStopNumber(state.waypoints.all, state.routeDraft),
+            ),
             onName = { name ->
                 onPickRoutePoint(RouteField.STOP, stop.copy(label = name.trim()))
                 namingStop = null
@@ -1169,6 +1191,18 @@ private fun RouteSummarySheet(
             }
         }
 
+        if (canAddStops) {
+            // The gesture has nothing on screen to suggest it, so the sheet
+            // says so — beside the button that does the same job the long way,
+            // for a rider who would rather search than point.
+            Text(
+                text = stringResource(R.string.map_route_stop_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+
         Row(modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
             if (canAddStops) {
                 HudSecondaryButton(
@@ -1237,10 +1271,20 @@ private fun routeDurationText(route: RouteLine?): String? {
 @Composable
 private fun StopNameDialog(
     point: LatLng,
+    /**
+     * What the field starts with, so confirming takes no typing at all.
+     *
+     * "Stop 3" rather than empty: the server refuses an unnamed waypoint, and
+     * a rider who pressed and held a spot on the map has already said the only
+     * thing they wanted to say. A number is a poor name and a fine label — it
+     * is ordinal, it tells two rows apart, and it is selected for overtyping
+     * by anybody who has something better.
+     */
+    suggestedName: String,
     onName: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var name by rememberSaveable(point) { mutableStateOf("") }
+    var name by rememberSaveable(point) { mutableStateOf(suggestedName) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

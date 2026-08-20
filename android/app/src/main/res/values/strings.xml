@@ -268,6 +268,14 @@
     <string name="map_route_stops">Stops</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">Name this stop</string>
+    <!--
+      Prefilled in the naming dialog so a stop dropped by pressing and
+      holding the map can be confirmed without typing. A number is a poor
+      name and a fine label: it tells two rows apart, and anybody with a
+      better one types over it.
+    -->
+    <string name="map_route_stop_default_name">Stop %1$d</string>
+    <string name="map_route_stop_hint">Or press and hold the map to drop a stop where you are pointing.</string>
     <string name="map_route_stop_add">Add stop</string>
 
     <!-- Location permission -->

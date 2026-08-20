@@ -202,6 +202,8 @@
     <string name="map_route_stops">จุดแวะ</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">ตั้งชื่อจุดแวะนี้</string>
+    <string name="map_route_stop_default_name">จุดแวะ %1$d</string>
+    <string name="map_route_stop_hint">หรือกดค้างบนแผนที่ตรงจุดที่ต้องการเพื่อหย่อนจุดแวะ</string>
     <string name="map_route_stop_add">เพิ่มจุดแวะ</string>
 
     <!-- Location permission -->

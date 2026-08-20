@@ -221,6 +221,17 @@ object RouteSetupRules {
         (planned.mapNotNull { it.orderIndex }.maxOrNull()?.plus(1) ?: 0).coerceAtLeast(0)
 
     /**
+     * Which stop this next one will be, counting from one.
+     *
+     * What the naming dialog prefills, so a rider dropping a stop on the map
+     * can confirm without typing anything and still get a row that is not
+     * identical to every other row. Counts the trip's saved stops and the
+     * draft's together, because on the route they are one sequence.
+     */
+    fun nextStopNumber(saved: List<Waypoint>, draft: RouteDraft): Int =
+        nextOrderIndex(saved.filter { it.isPlanned }) + draft.stops.size + 1
+
+    /**
      * Whether a stop can be saved under this name.
      *
      * The same bound the server puts on it, checked here so a rider learns
