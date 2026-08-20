@@ -94,11 +94,22 @@ private const val SECTION_SHARING = "sharing"
 @Composable
 fun SettingsScreen(
     state: SettingsUiState,
+    /**
+     * This rider's own places, and whether they are still being read.
+     *
+     * On this screen rather than under the map they belong to — see
+     * [MyPlacesSection] for why. It is passed in rather than read here so that
+     * the screen stays a screen: the places have a view model of their own,
+     * shared with Map & places, and one list read serves both.
+     */
+    places: PlacesUiState,
     displayName: String?,
     email: String?,
     photoUrl: String?,
     sharingTripId: Long?,
     onOpenProfile: () -> Unit,
+    onRemovePersonalPlace: (Long) -> Unit,
+    onRemoveSharedPlace: (Long) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onSharingDurationChange: (SharingDuration) -> Unit,
     onToggleSharing: (Trip, Boolean) -> Unit,
@@ -242,6 +253,20 @@ fun SettingsScreen(
                 sharingTripId = sharingTripId,
                 pendingTripId = state.pendingTripId,
                 onToggle = onToggleSharing,
+            )
+
+            HudDivider()
+
+            // The places this rider has written down. Here rather than under
+            // the map because the only controls on it are destructive, and a
+            // screen you have to go and open is the right price for those.
+            MyPlacesSection(
+                personal = places.personal,
+                shared = places.mine,
+                loading = places.loading,
+                onRemovePersonal = onRemovePersonalPlace,
+                onRemoveShared = onRemoveSharedPlace,
+                modifier = Modifier.padding(vertical = 8.dp),
             )
 
             HudDivider()
@@ -467,11 +492,14 @@ private fun SettingsPreview() {
                 loadingTrips = false,
                 activeTrips = listOf(Trip(1, "Chiang Mai loop", 1, "active", "owner")),
             ),
+            places = PlacesUiState(),
             displayName = "Poom",
             email = "rider@gmail.com",
             photoUrl = null,
             sharingTripId = 1,
             onOpenProfile = {},
+            onRemovePersonalPlace = {},
+            onRemoveSharedPlace = {},
             onLanguageChange = {},
             onSharingDurationChange = {},
             onToggleSharing = { _, _ -> },

@@ -304,6 +304,13 @@ private fun SignedInNavigation(
                 viewModel(factory = settingsViewModelFactory(container, onSignOut))
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
 
+            // The same instance Map & places uses — `viewModel()` is keyed by
+            // type on this activity's store — so the list a rider tidies here
+            // is the list of pins they see there, without a second read.
+            val placesViewModel: PlacesViewModel =
+                viewModel(factory = placesViewModelFactory(container, profile?.id, onSignOut))
+            val placesState by placesViewModel.uiState.collectAsStateWithLifecycle()
+
             // Applying the language is the screen's side of the setting: the
             // view model persists the choice, AppCompat enacts it (and, below
             // Android 13, recreates this activity to do so).
@@ -319,11 +326,14 @@ private fun SignedInNavigation(
 
             SettingsScreen(
                 state = settingsState,
+                places = placesState,
                 displayName = profile?.label ?: user.displayName,
                 email = profile?.email ?: user.email,
                 photoUrl = profile?.photoUrl ?: user.photoUrl,
                 sharingTripId = sharing?.tripId,
                 onOpenProfile = { backStack.push(Screen.Profile) },
+                onRemovePersonalPlace = placesViewModel::removePersonal,
+                onRemoveSharedPlace = placesViewModel::removeShared,
                 onLanguageChange = settingsViewModel::setLanguage,
                 onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
                 onToggleSharing = { trip, on ->
@@ -455,6 +465,7 @@ private fun SignedInNavigation(
                         requestLocation()
                     }
                 },
+                onOpenSettings = { backStack.push(Screen.Settings) },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )

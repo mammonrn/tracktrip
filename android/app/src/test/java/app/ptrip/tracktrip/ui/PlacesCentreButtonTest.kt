@@ -71,6 +71,7 @@ class PlacesCentreButtonTest {
                     onRemovePersonal = {},
                     onDismissError = {},
                     onCenterOnMe = onCenterOnMe,
+                    onOpenSettings = {},
                     onBack = {},
                 )
             }
@@ -134,6 +135,7 @@ class PlacesCentreButtonTest {
                     onRemovePersonal = {},
                     onDismissError = {},
                     onCenterOnMe = {},
+                    onOpenSettings = {},
                     onBack = {},
                 )
             }
@@ -223,6 +225,7 @@ class PlacesCentreButtonTest {
                     onRemovePersonal = {},
                     onDismissError = {},
                     onCenterOnMe = {},
+                    onOpenSettings = {},
                     onBack = {},
                 )
             }
