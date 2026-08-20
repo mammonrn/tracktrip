@@ -639,7 +639,11 @@ private fun SignedInNavigation(
                 onCloseRouteSetup = mapViewModel::closeRouteSetup,
                 onPickRoutePoint = mapViewModel::pickRoutePoint,
                 onRemoveRouteStop = mapViewModel::removeRouteStop,
+                onRemoveRouteRow = mapViewModel::removeRouteRow,
+                onMoveRoutePoint = mapViewModel::moveRoutePoint,
                 onConfirmRoute = mapViewModel::confirmRoute,
+                onAddSharedPlace = mapViewModel::addSharedPlace,
+                onRemoveSharedPlace = mapViewModel::removeSharedPlace,
                 hasLocationPermission = hasLocationPermission,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
@@ -752,6 +756,7 @@ private fun tripMapViewModelFactory(
             positionSocket = container.positionSocket,
             onSessionExpired = onSessionExpired,
             placeSearchApi = container.placeSearchApi,
+            sharedPlacesApi = container.sharedPlacesApi,
             routeApi = container.directionsApi,
         )
     }

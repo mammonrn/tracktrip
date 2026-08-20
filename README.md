@@ -808,6 +808,97 @@ shows that sentence under the search box. Nothing else on the server is
 affected. Filling the key in later needs no migration and no new build of the
 app: put it in `.env` on the VPS and `npm run pm2:restart`.
 
+## Shared places — the riders' own list
+
+`GET /geocode/search` cannot find what OpenStreetMap does not contain, and the
+gap is not a tuning problem. "ปตท สวนดอก" is a petrol station every rider in
+Chiang Mai can name; in OSM the stations around Suan Dok are tagged `PTT` with
+no mention of Suan Dok in their name or their address, and "สวนดอก" is not an
+administrative area there at all. Bounded to Chiang Mai, that query has **zero**
+candidates. Unbounded it matches สวนดอกไม้ in Saraburi, five hundred kilometres
+away. There is no query that finds it, because the row is not there.
+
+So the riders put it there. One name and one point, typed by whoever knows the
+place, found from then on by everybody on the server.
+
+```
+POST   /places           { "name": "ปตท สวนดอก", "lat": 18.789, "lng": 98.971 }
+GET    /places?q=&near=&limit=
+DELETE /places/:id
+```
+
+All three are behind `requireAuth`. A place comes back as:
+
+```json
+{ "id": 12, "name": "ปตท สวนดอก", "lat": 18.789, "lng": 98.971,
+  "created_by": 7, "created_by_name": "anne",
+  "created_at": "2026-08-20T07:49:12.345Z" }
+```
+
+**The list is shared, not per-rider.** This installation is a group of friends
+who ride together — tens of people, not thousands of strangers. A place worth
+naming is worth naming once: a per-rider table would have twenty people each
+typing the same petrol station and none of them finding the other nineteen. The
+trust that makes that safe is the same trust that already lets any member drop a
+waypoint on somebody else's trip. `created_by` is for attribution and for the
+delete rule, never for visibility.
+
+**Who may delete**: whoever added it, or a super user. Not "any member", even
+though any member can read every row — a waypoint belongs to one ride and
+disappears with it, and a shared place is something the whole group is still
+using. Somebody removing another rider's petrol station for fun is a small act
+with no undo. A refusal is `403` and not `404`: the row exists and the caller
+can already see it in their own search results, so pretending it is missing
+would be a lie they can immediately disprove.
+
+**A deleted account does not take its places with it.** `created_by` is
+`ON DELETE SET NULL`, so the rows stay and only the claim on them goes — the
+group is still using them and did not ask for them to go. An orphaned row is
+then nobody's, which the delete rule reads correctly: no ordinary rider matches
+`NULL`, and only a super user can clear it.
+
+**The matching is what the geocoder could not do.** `q` is split on whitespace
+and **every** word has to appear in the name, so "ปตท สวนดอก" matches both
+`ปตท สวนดอก` and `ปั๊ม ปตท. สาขาสวนดอก`, and does not match `ปตท ช้างเผือก`.
+No stemming and no word segmentation: Thai does not put spaces between words, so
+substring matching on an un-segmented language is exactly right — "สวนดอก" is
+inside "ปั๊มสวนดอก" whether or not anything knows where the word ended.
+
+Results are ranked in three bands — the name *is* the query, the name starts
+with it, every word is in it somewhere — and only then by distance from `near`,
+which is a preference and never a filter. `created_at` and then `id` break the
+last ties, so the order is total and a list cannot reshuffle between requests.
+
+The match runs in JavaScript over the whole table rather than as a SQL `LIKE`.
+Requiring every word separately is one `LIKE` per word with its own escaping,
+and the ranking above cannot be written as an `ORDER BY` at all. On a table this
+size — tens of rows per rider per year — the scan is free and the rule is
+readable and tested. If it ever stops being free the fix is FTS5 and the ranking
+above it does not change.
+
+**Two quotas, doing different jobs.** A rider may add **20 places per rolling
+24 hours**, counted from the rows themselves — an in-memory counter is emptied
+by every `pm2 restart` and cannot be trusted with a day. On top of that sits a
+10-a-minute `express-rate-limit`, keyed on the rider, which is the one a loop
+meets before it can make the server count rows. Exceeding the allowance is
+`429` and not `403`: it is a rate, not a permission, and the wording says so.
+
+A rolling window rather than a calendar day because a calendar day has to be a
+day somewhere — on UTC these riders' quota would reset at seven in the morning,
+part way through the ride they are planning — and because it cannot be doubled
+by adding twenty at one minute to midnight and twenty more at one minute past.
+
+**This is deliberately not folded into `/geocode/search`.** That route answers
+`503` with no API key, `429` when the day's LocationIQ quota is gone and `502`
+when LocationIQ is unreachable. This one is a local table that answers on every
+one of those days — and the shared list is at its most useful on exactly the day
+the geocoder is not working. Merging them server-side would put the local answer
+behind the remote one's failures. The app asks both at once and merges what
+comes back, keeping the two failure modes apart.
+
+**No API key is involved**, so this feature works on a server that has never had
+`LOCATIONIQ_API_KEY` set.
+
 ## Road routing
 
 `GET /directions?from=<lat,lng>&to=<lat,lng>[&waypoints=<lat,lng>;<lat,lng>]`

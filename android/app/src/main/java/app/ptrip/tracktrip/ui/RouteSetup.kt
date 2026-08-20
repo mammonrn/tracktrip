@@ -21,9 +21,10 @@ import app.ptrip.tracktrip.map.RoutePlans
  * "this one is the finish", so the picker that opens has nothing left to ask
  * and the point lands where the rider was already pointing.
  *
- * [STOP] is the one that is not a field on the card. It appends rather than
- * replaces, which is why it is here rather than being a nullable index: stops
- * go on in the order they were added and are never re-ordered.
+ * [STOP] is the one that is not a row a rider taps to change. It appends
+ * rather than replaces, which is why it is here rather than being a nullable
+ * index: a stop goes on the end of the ride, and is dragged from there to
+ * wherever in the ride it belongs.
  */
 enum class RouteField {
     /** Where the ride starts — the trip's origin. */
@@ -32,7 +33,14 @@ enum class RouteField {
     /** Where it is going — the trip's destination. */
     TO,
 
-    /** A stop, appended after the ones already on the draft. */
+    /**
+     * A stop, appended after the ones already on the draft.
+     *
+     * Appended and not placed: a rider adding a stop is saying "and this one
+     * too", not "and this one third". Where it ends up in the ride is a
+     * separate decision, made by dragging it in the route list — see
+     * [RouteSetupRules.moved].
+     */
     STOP,
 }
 
@@ -63,7 +71,16 @@ data class RoutePoint(val point: LatLng, val label: String = "")
 data class RouteDraft(
     val from: RoutePoint? = null,
     val to: RoutePoint? = null,
-    /** Stops, in the order they were added. Never re-ordered — see [RouteField.STOP]. */
+    /**
+     * Stops, in riding order.
+     *
+     * The order of this list *is* the `order_index` each stop will be saved
+     * with — see [RouteSetupRules.nextOrderIndex] and the commit in the view
+     * model, both of which count along it. So dragging a row in the route list
+     * re-orders this and nothing else has to be told: the road redraws, the
+     * numbers on the map renumber, and the confirm that follows writes the
+     * order the rider is looking at.
+     */
     val stops: List<RoutePoint> = emptyList(),
 ) {
     /** Whether there is a route to summarise: both ends chosen. */
@@ -131,6 +148,164 @@ object RouteSetupRules {
     fun withoutStop(draft: RouteDraft, index: Int): RouteDraft {
         if (index !in draft.stops.indices) return draft
         return draft.copy(stops = draft.stops.filterIndexed { at, _ -> at != index })
+    }
+
+    /**
+     * How many rows the route list has: the two ends, and a stop between them
+     * for every stop on the draft.
+     *
+     * Always at least two, and the two are always the first and the last —
+     * whether or not either has been chosen yet. An empty end is a row that
+     * says "Choose a starting point", not a row that is missing, because a
+     * list whose length changes with what is filled in cannot be dragged
+     * against: the row under a rider's finger would move as they picked.
+     */
+    fun rowCount(draft: RouteDraft): Int = draft.stops.size + 2
+
+    /** The row indices of a draft, first to last. */
+    fun rows(draft: RouteDraft): IntRange = 0 until rowCount(draft)
+
+    /** Which part of the route row [index] is, or null when it is off the end. */
+    fun fieldAtRow(draft: RouteDraft, index: Int): RouteField? = when (index) {
+        0 -> RouteField.FROM
+        rowCount(draft) - 1 -> RouteField.TO
+        in 1 until rowCount(draft) - 1 -> RouteField.STOP
+        else -> null
+    }
+
+    /** Which stop row [index] holds, or null when the row is one of the ends. */
+    fun stopIndexAtRow(draft: RouteDraft, index: Int): Int? =
+        if (fieldAtRow(draft, index) == RouteField.STOP) index - 1 else null
+
+    /** What is in row [index], or null when nothing has been chosen for it yet. */
+    fun pointAtRow(draft: RouteDraft, index: Int): RoutePoint? = when (fieldAtRow(draft, index)) {
+        RouteField.FROM -> draft.from
+        RouteField.TO -> draft.to
+        RouteField.STOP -> draft.stops.getOrNull(index - 1)
+        null -> null
+    }
+
+    /**
+     * The whole route as one ordered list, or null while an end is empty.
+     *
+     * This is the list the rider is actually looking at and dragging rows
+     * around in, and the reason a re-order can move a stop past an end at all:
+     * on the road there is no difference between the three, only an order.
+     */
+    fun ordered(draft: RouteDraft): List<RoutePoint>? {
+        val from = draft.from ?: return null
+        val to = draft.to ?: return null
+        return listOf(from) + draft.stops + to
+    }
+
+    /**
+     * A draft built back out of one ordered list: first is the start, last is
+     * the finish, everything between them is a stop.
+     *
+     * The inverse of [ordered], and the half that makes a drag across the
+     * whole list mean something. A stop dragged to the top becomes the start
+     * and the old start becomes the first stop — which is what a rider who
+     * dragged it there was asking for, and is why this rebuilds the draft from
+     * positions rather than trying to keep each point in the slot it began in.
+     */
+    fun fromOrdered(points: List<RoutePoint>): RouteDraft = when {
+        points.isEmpty() -> RouteDraft()
+        points.size == 1 -> RouteDraft(from = points.first())
+        else -> RouteDraft(
+            from = points.first(),
+            to = points.last(),
+            // Copied, not a view: the caller's list is very often the
+            // mutable one a re-order was just done in, and a draft holding a
+            // window onto it would change under the screen afterwards.
+            stops = points.subList(1, points.size - 1).toList(),
+        )
+    }
+
+    /**
+     * The draft with row [from] dragged to row [to].
+     *
+     * ## Why order is the only thing this writes
+     *
+     * A stop's `order_index` is its position in [RouteDraft.stops] and nothing
+     * else — the commit counts along the list, and [draftWaypoints] numbers
+     * the pins from it. So a re-order *is* the index update: there is no
+     * second field to keep in step and no way for the two to disagree. It
+     * lands on the draft, which is not the server, so nothing is written to
+     * the trip until the rider confirms.
+     *
+     * A move on an incomplete draft is refused rather than half-applied: with
+     * an end still empty there is no full list to re-order, and inventing one
+     * would silently promote a stop to a start the rider never chose.
+     */
+    fun moved(draft: RouteDraft, from: Int, to: Int): RouteDraft {
+        val points = ordered(draft) ?: return draft
+        if (from !in points.indices || to !in points.indices || from == to) return draft
+        val reordered = points.toMutableList()
+        reordered.add(to, reordered.removeAt(from))
+        return fromOrdered(reordered)
+    }
+
+    /**
+     * Which rows this rider may drag between.
+     *
+     * The ends are in it only for a rider who may set them: `PATCH /trips/:id`
+     * is owner-only, so letting anybody else drag a stop into the start would
+     * offer them a re-order whose save comes back 403 — which reads as a
+     * broken app rather than as a rule. A member who may only add stops can
+     * still order their own stops.
+     *
+     * Empty when there is nothing to drag, which a caller has to handle: one
+     * row cannot be re-ordered against itself, and a route with an end still
+     * empty has no order to change — [moved] refuses one, so a handle offered
+     * on it would be a handle that moved the row on screen and nothing in the
+     * draft.
+     */
+    fun movableRows(draft: RouteDraft, canEditEnds: Boolean): IntRange {
+        if (ordered(draft) == null) return IntRange.EMPTY
+        val last = rowCount(draft) - 1
+        val range = if (canEditEnds) 0..last else 1 until last
+        return if (range.first >= range.last) IntRange.EMPTY else range
+    }
+
+    /** Whether row [index] can be dragged at all. */
+    fun canMoveRow(draft: RouteDraft, index: Int, canEditEnds: Boolean): Boolean =
+        index in movableRows(draft, canEditEnds) && pointAtRow(draft, index) != null
+
+    /**
+     * The draft with row [index] taken off it.
+     *
+     * An end is emptied rather than removed — the list keeps its shape, the
+     * row goes back to asking to be filled, and the confirm button goes back
+     * to being unavailable. A stop really does come off: nothing was ever
+     * sent, so there is nothing to delete anywhere else.
+     */
+    fun withoutRow(draft: RouteDraft, index: Int): RouteDraft =
+        when (fieldAtRow(draft, index)) {
+            RouteField.FROM -> draft.copy(from = null)
+            RouteField.TO -> draft.copy(to = null)
+            RouteField.STOP -> withoutStop(draft, index - 1)
+            null -> draft
+        }
+
+    /**
+     * Whether row [index] may be cleared by this rider.
+     *
+     * The ends follow `PATCH /trips/:id`, the stops follow the waypoints
+     * route. A row that cannot be cleared shows no cross rather than a cross
+     * that does nothing.
+     */
+    fun canRemoveRow(
+        draft: RouteDraft,
+        index: Int,
+        canEditEnds: Boolean,
+        canAddStops: Boolean,
+    ): Boolean {
+        if (pointAtRow(draft, index) == null) return false
+        return when (fieldAtRow(draft, index)) {
+            RouteField.FROM, RouteField.TO -> canEditEnds
+            RouteField.STOP -> canAddStops
+            null -> false
+        }
     }
 
     /** What is already in a field, so re-picking it opens on what is there. */

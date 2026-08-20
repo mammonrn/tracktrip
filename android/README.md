@@ -179,50 +179,59 @@ restarts. Panning follows an explicit tap, never the poll: re-centring every
 
 ### Setting a route up
 
-Two fields, `From` and `To`, stacked under the top bar, the way every map app
-asks. [`ui/RouteSetup.kt`](
-app/src/main/java/app/ptrip/tracktrip/ui/RouteSetup.kt) holds the rules;
-`RouteSetupCard` and `RouteSummarySheet` in [`ui/TripMapScreen.kt`](
-app/src/main/java/app/ptrip/tracktrip/ui/TripMapScreen.kt) draw them.
+One list: `From`, every stop, `To`, in riding order, in a sheet off the bottom
+edge. [`ui/RouteSetup.kt`](app/src/main/java/app/ptrip/tracktrip/ui/RouteSetup.kt)
+holds the rules; `RouteListSheet` in [`ui/TripMapScreen.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/TripMapScreen.kt) draws it.
 
-What was here before was one search box, and it asked the question backwards.
-A rider found a place, and *then* a three-button dialog asked whether it was
-the start, the finish or a stop — an answer they had decided before they
-started typing. Every route went through that twice, and the second time it
-asked the same question again, having just been told.
+What was here before was two places. The two ends lived on a card at the top
+and the stops in a summary sheet at the bottom, so the ride was described twice
+and never in one place. And the only two things a rider could do to a stop were
+append one and delete one: the order stops went on in was the order they were
+thought of in, with no way to say "that one first". A route planned in the
+wrong order had to be deleted stop by stop and typed again.
 
-Tapping a field answers it in advance. The picker that opens is the same one
-as before — the same search, the same debounce, the same "use my current
-location" row, the same long press — and it has nothing left to ask, because
-the field the rider tapped already said what the point is for.
+Every point on the ride is now a row. Each row has a grip on the left and a
+cross on the right, tapping an end opens the picker for it, and the row after
+the last one adds another stop. The distance and the time from `GET /directions`
+are the line under the title — a figure that describes the whole list belongs
+over the whole list.
 
-Once both ends are set, a sheet rises off the bottom edge with the distance and
-the time from `GET /directions`, and three things to do with it:
+**Dragging a row re-orders the ride.** A stop's `order_index` is its position in
+`RouteDraft.stops` and nothing else — the commit counts along the list and
+`draftWaypoints` numbers the pins from it — so a drag *is* the index update,
+applied the moment the row crosses its neighbour. The pins renumber, the road
+re-measures, and the confirm that follows writes the order on screen. There is
+no second field that could fall out of step with it.
 
-- **Confirm route** — one `PATCH /trips/:id` per end that actually moved, and
-  one `POST /trips/:id/waypoints` per stop. Not "Start": this app has no
-  turn-by-turn navigation, and a button saying "Start" on a screen shaped like
-  this one is read by anyone who has used Google Maps as "begin guiding me".
-- **Add stops** — the same picker again, appending a `planned` waypoint per
-  pick, `order_index` counting on from the highest already on the trip. No
-  re-ordering: stops go in the order they were added. The sheet's distance and
-  time re-route as each one lands, so the figures above the confirm button are
-  the ride the button is about to save.
+The drag runs over the whole list rather than just the stops, so a stop dragged
+above the start becomes the start and the old start becomes the first stop —
+`RouteSetupRules.ordered`/`fromOrdered` are the two halves of that, and they are
+inverses. Two things are refused rather than half-applied: a re-order on a draft
+with an end still empty (there is no full list to order, so no grip is offered
+either), and a drag that would touch either end for a member who does not own
+the trip.
 
-  **While the sheet is up, pressing and holding the map is the short way in.**
-  The two ends are already set at that point, so the only point left to add is
-  a stop, and the gesture drops one where the finger is — straight to the
-  naming dialog, which prefills "Stop 3" so confirming takes no typing. That is
-  a hold and a tap, against opening a search panel nobody was going to use and
-  then holding: the sheet says so, because a gesture with nothing on screen to
-  suggest it is a gesture nobody finds.
-- **Close** — throws the draft away. Nothing in it was ever sent.
+The list caps at 320dp and scrolls past that; a row dragged towards an edge
+stops at it rather than scrolling the list after it, which is worth knowing
+before planning a ride with ten stops on one screen.
+
+**Confirm route** is one `PATCH /trips/:id` per end that actually moved and one
+`POST /trips/:id/waypoints` per stop. Not "Start": this app has no turn-by-turn
+navigation, and a button saying "Start" on a screen shaped like this one is read
+by anyone who has used Google Maps as "begin guiding me". It is off until both
+ends are set.
+
+**While the list is up, pressing and holding the map is the short way to a
+stop.** Both ends are set at that point, so the only point left to add is a
+stop, and the gesture drops one where the finger is — straight to the naming
+dialog, which prefills "Stop 3" so confirming takes no typing.
 
 **Nothing is written until Confirm.** That is the point of holding a draft
-rather than saving each end as it is picked, which is what the old flow did: a
-rider planning a route used to commit half of it to everybody else's map and
-then go looking for the other half, and a rider who changed their mind had
-already published the wrong start. While the card is open the map draws the
+rather than saving each end as it is picked, which is what the flow before last
+did: a rider planning a route used to commit half of it to everybody else's map
+and then go looking for the other half, and a rider who changed their mind had
+already published the wrong start. While the list is open the map draws the
 draft — its flags, its stops, its road — and closing it puts the trip back
 exactly as it was.
 
@@ -232,22 +241,91 @@ the same [`map/RouteRequests.kt`](
 app/src/main/java/app/ptrip/tracktrip/map/RouteRequests.kt) rule the trip's own
 route uses, with the same five-minute wait after a failure. A draft that is the
 route the trip already has is not fetched at all — that one has already been
-fetched — which is the common case of opening the card to look at what is set.
+fetched — which is the common case of opening the list to look at what is set.
 
-Adding a stop *is* a new route and does cost a request, which is the price of
-the sheet quoting the right distance. The server's limit of six routes a minute
-per rider is unchanged, so a rider adding stops faster than one every ten
-seconds will hit it; the sheet then falls back to the leg measure captioned
-"direct" until the five-minute wait is up.
+Adding or moving a stop *is* a new route and does cost a request, which is the
+price of the sheet quoting the right distance. A drag that ends where it started
+costs nothing: the view model compares the draft before and after and returns
+early when they are equal. The server's limit of six routes a minute per rider
+is unchanged, so a rider re-ordering faster than one move every ten seconds will
+hit it; the sheet then falls back to the leg measure captioned "direct" until
+the five-minute wait is up.
 
-**Editing after confirming is the same card.** It opens seeded from the trip,
-so changing one end is one tap. Removing a stop is still a tap on its pin.
+**Editing after confirming is the same list.** It opens seeded from the trip, so
+changing one end is one tap.
 
-**A member who does not own the trip** sees the two fields greyed with a line
-saying why: `PATCH /trips/:id` is owner-only, and offering them a field whose
-save comes back 403 would read as a broken app rather than as a rule. Adding
-stops, which the server does allow them, still works — from the sheet, and from
-the long press, which is unchanged.
+**What the list does not show** is stops already saved on the trip. A draft is
+seeded from the trip's two ends only, so re-opening on a trip that has stops
+shows a list without them and they cannot be re-ordered. Giving them rows would
+mean the confirm having to update and delete waypoints rather than only posting
+them, which is an API change and has not been made.
+
+**A member who does not own the trip** sees the two ends with neither grip nor
+cross, and a line saying why: `PATCH /trips/:id` is owner-only, and offering
+them a control whose save comes back 403 would read as a broken app rather than
+as a rule. Adding and ordering their own stops, which the server does allow,
+still works.
+
+### Finding a place
+
+The picker is a screen, not a panel — `PlaceSearchScreen` in
+[`ui/TripMapScreen.kt`](app/src/main/java/app/ptrip/tracktrip/ui/TripMapScreen.kt),
+opaque, over everything, opening focused with the keyboard up.
+
+It used to be a panel under the top bar with its results capped at 240dp so the
+map stayed visible behind it. With the keyboard up that left room for three
+results, and the answer was very often the fourth — a search that had worked
+looked like a search that had found nothing, and the fix was to scroll a list
+nothing said was scrollable.
+
+It searches **two lists at once**, and they fail separately.
+
+#### Shared places — the riders' own list
+
+`GET /geocode/search` is LocationIQ over OpenStreetMap, and OSM is thin in
+exactly the way that matters here. "ปตท สวนดอก" — a petrol station every rider
+in Chiang Mai can name — is not in it: the stations around Suan Dok are tagged
+`PTT` and nothing else, and "สวนดอก" is not an administrative area there. There
+is no query that finds it, because the row is not there.
+
+So the riders write it down. [`data/SharedPlacesApi.kt`](
+app/src/main/java/app/ptrip/tracktrip/data/SharedPlacesApi.kt) talks to
+`/places` on this app's own backend (see the backend README); everything a
+signed-in rider adds, every other rider on the server finds.
+
+- **Adding** is the row under the results — offered whatever the search came
+  back with, not only when it found nothing, because a rider looking at eight
+  towns none of which is the petrol station they meant is in the same position
+  as one looking at an empty list. Tapping it does not save anything: it arms
+  the map. The name is known and the point is not, and a point is a thing you
+  say by pointing at it, so the picker steps aside, a banner says the name back
+  and asks for a long press, and the press opens the naming dialog. Saving
+  writes the place **and** drops it into the row the rider was filling when they
+  gave up searching.
+- **The two sources are told apart on the row.** A LocationIQ row is a map
+  company's record of somewhere; a shared row is a rider saying "this is here, I
+  have been". Both are useful and they are not the same claim, so shared rows
+  carry a tag, sit under a heading of their own, and say who wrote them.
+- **Shared rows come first.** They are the answer the geocoder could not give,
+  and there are never many — the server sends at most five.
+- **Removing** is a cross, offered only to whoever typed the place in. Everyone
+  can see every row, so a cross on somebody else's would be an invitation to
+  remove something the group is still using. A super user can remove any of
+  them, from the server side.
+
+**The two failure modes are kept apart, and that is the whole reason this is a
+second call rather than something folded into `/geocode/search`.** That route
+answers 503 with no API key on the server, 429 when the day's quota is gone and
+502 when LocationIQ is unreachable — and on every one of those days the place
+somebody wrote down is still here. A geocoder failure with shared results behind
+it is not reported at all: saying "the search failed" over the row a rider was
+looking for would send them hunting a fault that is not theirs. The mirror case
+is a backend older than this app, where `/places` 404s and the geocoder answers
+perfectly well; that is swallowed for the same reason.
+
+Both lookups are children of the job the debounce cancels, so a search
+abandoned at the keyboard is abandoned at both servers, and one keystroke costs
+one request to each rather than one per letter.
 
 ### The route line
 

@@ -243,6 +243,62 @@ sudo journalctl -u nginx -n 50 --no-pager
 
 ---
 
+## Deploying an update
+
+```bash
+cd /root/tracktrip
+git pull origin main
+npm ci --omit=dev
+npm run migrate
+pm2 restart tracktrip-api
+```
+
+**`npm run migrate` is not optional and not only for the first install.** Most
+updates to this server have been code-only, so `pull` + `restart` was enough and
+the habit stuck. Any release that adds a table or a column needs the migrate
+step, and skipping it does not fail loudly — the app starts fine and then throws
+`SQLITE_ERROR: no such table` on the one route that needed the new schema, which
+reads on the phone as that one feature being broken.
+
+Running it when there is nothing to apply is free and safe: applied migrations
+are recorded in `schema_migrations` and skipped.
+
+**Which releases need it**, so far:
+
+| Migration | Adds | Feature it is behind |
+|---|---|---|
+| `0009_trip_endpoints.sql` | `trips.origin_*`, `trips.destination_*` | Setting a route up |
+| `0010_user_roles.sql` | `users.role` | Super users |
+| `0011_shared_places.sql` | `shared_places` | Shared places (`/places`) |
+
+To check what a database has already had applied:
+
+```bash
+sqlite3 /root/tracktrip/data/trip-tracker.db \
+  "SELECT filename, applied_at FROM schema_migrations ORDER BY filename;"
+```
+
+And to confirm the newest one landed:
+
+```bash
+sqlite3 /root/tracktrip/data/trip-tracker.db ".schema shared_places"
+```
+
+**Back up first if the release changes schema.** The database is one file, so a
+backup is one copy, and it is the only way back from a migration that goes
+wrong:
+
+```bash
+cp /root/tracktrip/data/trip-tracker.db \
+   /root/tracktrip/data/trip-tracker.db.$(date +%F-%H%M).bak
+```
+
+Migrations run inside a transaction each, so a failing one leaves the database
+as it was and stops the run — but a *successful* migration is not undone by
+`git checkout` of the previous release, which is what the backup is for.
+
+---
+
 ## Turning on place search
 
 Place search — typing "Pai" instead of hunting for it on the map — runs on

@@ -196,7 +196,6 @@
       only one that works for a spot with no name, and the only one that works
       at all on a server with no search key configured.
     -->
-    <string name="map_search_label">Search for a place</string>
     <string name="map_search_placeholder">Town, road, petrol station…</string>
     <string name="map_search_empty">No place by that name.</string>
     <!--
@@ -242,24 +241,24 @@
     <string name="map_route_pick_to">Where are you going?</string>
     <string name="map_route_pick_stop">Add a stop</string>
     <string name="map_route_pick_hint">Or press and hold anywhere on the map to choose a point.</string>
-    <!-- Back out of the picker to the two fields. A glyph, so not translated. -->
-    <string name="map_route_back_symbol" translatable="false">‹</string>
     <!--
-      The sheet that appears once both ends are set. The button says "Confirm
-      route" and not "Start" on purpose: this app has no turn-by-turn
-      navigation, and "Start" on a screen shaped like this one is read by
-      anyone who has used Google Maps as "begin guiding me".
+      The route list at the bottom of the map: both ends, every stop, and the
+      row that adds another. The button says "Confirm route" and not "Start"
+      on purpose: this app has no turn-by-turn navigation, and "Start" on a
+      screen shaped like this one is read by anyone who has used Google Maps
+      as "begin guiding me".
     -->
     <string name="map_route_summary_title">Your route</string>
-    <string name="map_route_ends">%1$s → %2$s</string>
     <string name="map_route_measuring">Working out the route…</string>
     <string name="map_route_duration_minutes">%1$d min</string>
     <string name="map_route_duration_hours">%1$d hr</string>
     <string name="map_route_duration_hours_minutes">%1$d hr %2$d min</string>
     <string name="map_route_confirm">Confirm route</string>
-    <string name="map_route_add_stops">Add stops</string>
-    <string name="map_route_stops">Stops</string>
+    <!-- What a stop row is called, beside the number that says which one. -->
+    <string name="map_route_stop">Stop</string>
     <string name="map_route_stop_number">%1$d.</string>
+    <!-- The plus on the "Add stop" row. A glyph, so not translated. -->
+    <string name="map_route_add_symbol" translatable="false">+</string>
     <string name="map_route_stop_name_title">Name this stop</string>
     <!--
       Prefilled in the naming dialog so a stop dropped by pressing and
@@ -270,6 +269,34 @@
     <string name="map_route_stop_default_name">Stop %1$d</string>
     <string name="map_route_stop_hint">Or press and hold the map to drop a stop where you are pointing.</string>
     <string name="map_route_stop_add">Add stop</string>
+
+    <!--
+      Places the riders write down themselves, shared across the server.
+
+      The geocoder cannot find what is not in OpenStreetMap, and the thing
+      that started this was exactly that: "ปตท สวนดอก" is a petrol station
+      every rider in Chiang Mai can name and OSM has no row for. So the riders
+      add it, and everybody finds it afterwards.
+
+      The wording keeps the two sources apart on purpose. A LocationIQ row is
+      a map company's record of somewhere; one of these is a rider saying "I
+      have been, it is here". Both are useful and a rider is entitled to know
+      which they are about to plan a ride round.
+    -->
+    <string name="map_search_shared_heading">Added by riders here</string>
+    <string name="map_search_shared_tag">Rider-added</string>
+    <string name="map_search_shared_by">Added by %1$s</string>
+    <string name="map_search_shared_by_gone">Added by a rider who has left</string>
+    <string name="map_search_add_named">Add \"%1$s\" as a new place</string>
+    <string name="map_search_add_place">Add a place that isn\'t on the map</string>
+    <!-- Armed from the search, answered by a long press on the map. -->
+    <string name="map_shared_place_drop">Press and hold the map where \"%1$s\" is.</string>
+    <string name="map_shared_place_drop_unnamed">Press and hold the map where the place is.</string>
+    <string name="map_shared_place_title">Add a place</string>
+    <string name="map_shared_place_note">Everyone on this server will be able to find it.</string>
+    <string name="map_shared_place_save">Save place</string>
+    <string name="map_shared_place_remove_title">Remove this place?</string>
+    <string name="map_shared_place_remove_message">\"%1$s\" disappears from everyone\'s search.</string>
 
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>

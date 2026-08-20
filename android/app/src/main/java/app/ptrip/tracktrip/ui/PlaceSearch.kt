@@ -5,11 +5,16 @@ import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceLookup
 import app.ptrip.tracktrip.data.PlaceSearchException
 import app.ptrip.tracktrip.data.PlaceSearchProblem
+import app.ptrip.tracktrip.data.PlaceSource
+import app.ptrip.tracktrip.data.SharedPlaceStore
 import app.ptrip.tracktrip.data.placeSearchProblem
 import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.map.LatLng
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,6 +96,14 @@ data class PlaceSearchState(
      */
     val problem: PlaceSearchProblem? = null,
     /**
+     * Whether any of [results] came from the riders' own list.
+     *
+     * Kept so the screen can head that group without walking the list, and so
+     * "nothing found" can stay honest: a geocoder failure with shared results
+     * behind it is not a failed search.
+     */
+    val hasShared: Boolean = false,
+    /**
      * What the server said, kept only for [PlaceSearchProblem.UNKNOWN], where
      * the server knows something this app does not.
      */
@@ -103,6 +116,27 @@ data class PlaceSearchState(
     /** Whether there is anything at all to draw under the field. */
     val hasPanel: Boolean get() = searching || problem != null || results.isNotEmpty() || isEmpty
 }
+
+/**
+ * How the two lists become one.
+ *
+ * ## Why the riders' own places go first
+ *
+ * They are the answer to the question the geocoder could not answer. Somebody
+ * on this server typed "ปตท สวนดอก" because searching for it found nothing;
+ * putting that row below eight towns whose names merely resemble it would
+ * throw away the whole point of having written it down.
+ *
+ * There are never many — the server sends at most five — so first costs the
+ * geocoder's results nothing but a scroll they mostly did not need.
+ *
+ * Duplicates are left alone rather than merged. A shared place and an OSM
+ * object at the same spot are two different claims about it, and silently
+ * collapsing them would hide whichever one a rider was looking for. They read
+ * differently on screen, which is enough.
+ */
+fun mergePlaceResults(shared: List<Place>, geocoded: List<Place>): List<Place> =
+    shared + geocoded
 
 /**
  * The typing-to-results loop, kept out of the composable so it can be tested.
@@ -118,6 +152,16 @@ data class PlaceSearchState(
 class PlaceSearchController(
     private val scope: CoroutineScope,
     private val api: PlaceLookup?,
+    /**
+     * The riders' own places.
+     *
+     * Separate from [api] because the two fail separately, and that is the
+     * point of having both: LocationIQ answers 503 with no key on the server,
+     * 429 when the day's quota is gone and 502 when it cannot be reached, and
+     * on every one of those days this list still answers. Null in previews and
+     * in the tests that are only about the debounce.
+     */
+    private val shared: SharedPlaceStore? = null,
     private val onSessionExpired: () -> Unit = {},
     private val debounceMs: Long = PlaceSearchRules.DEBOUNCE_MS,
 ) {
@@ -181,45 +225,88 @@ class PlaceSearchController(
      * been set, and "nothing found" would be the wrong thing to tell somebody
      * about that.
      */
-    private suspend fun run(query: String) {
-        val search = api ?: run {
-            _state.update { it.copy(searching = false, searched = true, results = emptyList()) }
-            return
+    private suspend fun run(query: String) = coroutineScope {
+        // `coroutineScope`, not `scope.async`: the two lookups have to be
+        // children of the job the debounce cancels. Started on the view
+        // model's scope they would outlive the keystroke that made them
+        // irrelevant, and a search cancelled at the field would still be
+        // running against the server.
+        var sharedExpired = false
+        val sharedDeferred = shared?.let { store ->
+            async {
+                try {
+                    store.search(query, near = near).map { it.asPlace() }
+                } catch (e: CancellationException) {
+                    // Never swallowed: this one is the cancellation working.
+                    throw e
+                } catch (e: SessionExpiredException) {
+                    // Recorded rather than thrown. Thrown, it would come out
+                    // of the await and cancel whatever else is in flight; the
+                    // geocoder is almost certainly about to report the same
+                    // 401 anyway, and one sign-out is enough.
+                    sharedExpired = true
+                    emptyList()
+                } catch (e: Exception) {
+                    // This half failing is not something to report while the
+                    // other half is answering — and on a backend older than
+                    // this app it is a 404 on a route that does not exist yet,
+                    // which must not read as a broken search. Anything at all,
+                    // because a malformed body throws something that is not an
+                    // ApiException and must not take the search down with it.
+                    emptyList()
+                }
+            }
         }
 
-        try {
-            val results = search.search(query, near = near)
-            _state.update {
-                // Guarded: the field may have moved on while this was in
-                // flight, and painting a stale answer under a newer query is
-                // the bug this whole class exists to avoid.
-                if (PlaceSearchRules.normalize(it.query) != query) it
-                else it.copy(
-                    searching = false,
-                    searched = true,
-                    results = results,
-                    problem = null,
-                    serverMessage = null,
-                )
+        var geocoded: List<Place> = emptyList()
+        var problem: PlaceSearchProblem? = null
+        var serverMessage: String? = null
+
+        // Null on a build with no search configured and in previews. Not a
+        // failure and not reported as one: the riders' own list still answers.
+        if (api != null) {
+            try {
+                geocoded = api.search(query, near = near)
+            } catch (e: SessionExpiredException) {
+                _state.update { it.copy(searching = false) }
+                onSessionExpired()
+                return@coroutineScope
+            } catch (e: ApiException) {
+                // A lookup that is not [PlaceSearchApi] — a stub, a preview —
+                // throws a plain ApiException, so the reason is derived from
+                // the status here as well rather than only inside the API class.
+                problem = (e as? PlaceSearchException)?.problem ?: placeSearchProblem(e.status)
+                serverMessage = e.message
             }
-        } catch (e: SessionExpiredException) {
+        }
+
+        val sharedPlaces = sharedDeferred?.await().orEmpty()
+        if (sharedExpired && problem == null && geocoded.isEmpty()) {
+            // Only reachable with no geocoder configured — otherwise its own
+            // 401 got there first and this function has already returned.
             _state.update { it.copy(searching = false) }
             onSessionExpired()
-        } catch (e: ApiException) {
-            // A lookup that is not [PlaceSearchApi] — a stub, a preview —
-            // throws a plain ApiException, so the reason is derived from the
-            // status here as well rather than only inside the API class.
-            val problem = (e as? PlaceSearchException)?.problem ?: placeSearchProblem(e.status)
-            _state.update {
-                if (PlaceSearchRules.normalize(it.query) != query) it
-                else it.copy(
-                    searching = false,
-                    searched = true,
-                    results = emptyList(),
-                    problem = problem,
-                    serverMessage = e.message,
-                )
-            }
+            return@coroutineScope
+        }
+
+        val merged = mergePlaceResults(sharedPlaces, geocoded)
+
+        _state.update {
+            // Guarded: the field may have moved on while this was in flight,
+            // and painting a stale answer under a newer query is the bug this
+            // whole class exists to avoid.
+            if (PlaceSearchRules.normalize(it.query) != query) it
+            else it.copy(
+                searching = false,
+                searched = true,
+                results = merged,
+                hasShared = sharedPlaces.isNotEmpty(),
+                // A geocoder failure with the riders' own answers behind it is
+                // not a failed search, and saying so would send somebody
+                // looking for a fault while the row they wanted is on screen.
+                problem = problem.takeIf { merged.isEmpty() },
+                serverMessage = serverMessage.takeIf { merged.isEmpty() },
+            )
         }
     }
 }

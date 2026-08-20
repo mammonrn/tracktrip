@@ -162,7 +162,6 @@
     <string name="map_remove_point">ลบ</string>
 
     <!-- ค้นหาสถานที่ด้วยชื่อ แทนการไล่หาบนแผนที่ -->
-    <string name="map_search_label">ค้นหาสถานที่</string>
     <string name="map_search_placeholder">อำเภอ ถนน ปั๊มน้ำมัน…</string>
     <string name="map_search_empty">ไม่พบสถานที่ชื่อนี้</string>
     <!-- ปุ่มลัดด้านบนสุดของผลการค้นหา ใช้พิกัดที่เครื่องมีอยู่แล้ว ไม่กินโควตาค้นหา -->
@@ -189,14 +188,12 @@
     <string name="map_route_pick_stop">เพิ่มจุดแวะ</string>
     <string name="map_route_pick_hint">หรือกดค้างบนแผนที่ตรงไหนก็ได้เพื่อเลือกจุดนั้น</string>
     <string name="map_route_summary_title">เส้นทางของคุณ</string>
-    <string name="map_route_ends">%1$s → %2$s</string>
     <string name="map_route_measuring">กำลังคำนวณเส้นทาง…</string>
     <string name="map_route_duration_minutes">%1$d นาที</string>
     <string name="map_route_duration_hours">%1$d ชม.</string>
     <string name="map_route_duration_hours_minutes">%1$d ชม. %2$d นาที</string>
     <string name="map_route_confirm">ยืนยันเส้นทาง</string>
-    <string name="map_route_add_stops">เพิ่มจุดแวะ</string>
-    <string name="map_route_stops">จุดแวะ</string>
+    <string name="map_route_stop">จุดแวะ</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">ตั้งชื่อจุดแวะนี้</string>
     <string name="map_route_stop_default_name">จุดแวะ %1$d</string>
@@ -204,6 +201,20 @@
     <string name="map_route_stop_add">เพิ่มจุดแวะ</string>
 
     <!-- Location permission -->
+    <string name="map_search_shared_heading">คนในกลุ่มเพิ่มไว้</string>
+    <string name="map_search_shared_tag">คนในกลุ่มเพิ่ม</string>
+    <string name="map_search_shared_by">เพิ่มโดย %1$s</string>
+    <string name="map_search_shared_by_gone">เพิ่มโดยคนที่ออกจากระบบไปแล้ว</string>
+    <string name="map_search_add_named">เพิ่ม \"%1$s\" เป็นสถานที่ใหม่</string>
+    <string name="map_search_add_place">เพิ่มสถานที่ที่ไม่มีในแผนที่</string>
+    <string name="map_shared_place_drop">กดค้างบนแผนที่ตรงจุดที่ \"%1$s\" อยู่</string>
+    <string name="map_shared_place_drop_unnamed">กดค้างบนแผนที่ตรงจุดที่สถานที่นั้นอยู่</string>
+    <string name="map_shared_place_title">เพิ่มสถานที่</string>
+    <string name="map_shared_place_note">ทุกคนในระบบนี้จะค้นหาเจอ</string>
+    <string name="map_shared_place_save">บันทึกสถานที่</string>
+    <string name="map_shared_place_remove_title">ลบสถานที่นี้?</string>
+    <string name="map_shared_place_remove_message">\"%1$s\" จะหายไปจากการค้นหาของทุกคน</string>
+
     <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
     <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>
