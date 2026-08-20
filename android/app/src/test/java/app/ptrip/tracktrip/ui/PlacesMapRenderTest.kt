@@ -54,6 +54,7 @@ class PlacesMapRenderTest {
                     searchState = PlaceSearchState(),
                     myLocation = null,
                     centreOn = null,
+                    centringOnMe = false,
                     hasLocationPermission = false,
                     currentUserId = 1L,
                     onSearchQueryChanged = {},
