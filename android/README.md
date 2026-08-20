@@ -31,7 +31,7 @@ inline message rather than crashing.
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
 | Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
-| Live map — everyone's position, with the member list under it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId` |
+| Live map — everyone's position, with the member list under it and the route card over it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId`, `GET /geocode/search`, `GET /directions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
@@ -176,6 +176,63 @@ app/src/main/java/app/ptrip/tracktrip/map/RiderMarker.kt) from
 rider is one colour everywhere and stays that colour across refreshes and
 restarts. Panning follows an explicit tap, never the poll: re-centring every
 45 seconds would fight a rider who has dragged the map somewhere.
+
+### Setting a route up
+
+Two fields, `From` and `To`, stacked under the top bar, the way every map app
+asks. [`ui/RouteSetup.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/RouteSetup.kt) holds the rules;
+`RouteSetupCard` and `RouteSummarySheet` in [`ui/TripMapScreen.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/TripMapScreen.kt) draw them.
+
+What was here before was one search box, and it asked the question backwards.
+A rider found a place, and *then* a three-button dialog asked whether it was
+the start, the finish or a stop — an answer they had decided before they
+started typing. Every route went through that twice, and the second time it
+asked the same question again, having just been told.
+
+Tapping a field answers it in advance. The picker that opens is the same one
+as before — the same search, the same debounce, the same "use my current
+location" row, the same long press — and it has nothing left to ask, because
+the field the rider tapped already said what the point is for.
+
+Once both ends are set, a sheet rises off the bottom edge with the distance and
+the time from `GET /directions`, and three things to do with it:
+
+- **Confirm route** — one `PATCH /trips/:id` per end that actually moved, and
+  one `POST /trips/:id/waypoints` per stop. Not "Start": this app has no
+  turn-by-turn navigation, and a button saying "Start" on a screen shaped like
+  this one is read by anyone who has used Google Maps as "begin guiding me".
+- **Add stops** — the same picker again, appending a `planned` waypoint per
+  pick, `order_index` counting on from the highest already on the trip. No
+  re-ordering: stops go in the order they were added.
+- **Close** — throws the draft away. Nothing in it was ever sent.
+
+**Nothing is written until Confirm.** That is the point of holding a draft
+rather than saving each end as it is picked, which is what the old flow did: a
+rider planning a route used to commit half of it to everybody else's map and
+then go looking for the other half, and a rider who changed their mind had
+already published the wrong start. While the card is open the map draws the
+draft — its flags, its stops, its road — and closing it puts the trip back
+exactly as it was.
+
+**The routing quota is defended the same way it was.** A preview is one request
+per pair of ends a rider actually settles on, keyed on that pair through the
+same [`map/RouteRequests.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RouteRequests.kt) rule the trip's own
+route uses, with the same five-minute wait after a failure. A draft whose two
+ends are the trip's own ends is not fetched at all — that route has already
+been fetched, for exactly that pair — which is the common case of opening the
+card to look at what is set.
+
+**Editing after confirming is the same card.** It opens seeded from the trip,
+so changing one end is one tap. Removing a stop is still a tap on its pin.
+
+**A member who does not own the trip** sees the two fields greyed with a line
+saying why: `PATCH /trips/:id` is owner-only, and offering them a field whose
+save comes back 403 would read as a broken app rather than as a rule. Adding
+stops, which the server does allow them, still works — from the sheet, and from
+the long press, which is unchanged.
 
 ### The route line
 

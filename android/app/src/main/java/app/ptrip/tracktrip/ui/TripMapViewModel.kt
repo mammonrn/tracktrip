@@ -85,6 +85,25 @@ data class TripMapUiState(
      * would be an alarm about a thing they cannot act on.
      */
     val live: Boolean = false,
+    /**
+     * The route a rider is setting up, before anybody has confirmed it.
+     *
+     * Empty whenever the route card is closed, which is what makes every
+     * derived value below fall back to the trip's own ends and the trip's own
+     * road. Nothing in here is on the server until [TripMapViewModel.confirmRoute]
+     * is called — see [RouteDraft] for why that is the point of it.
+     */
+    val routeDraft: RouteDraft = RouteDraft(),
+    /**
+     * The road along the draft's two ends, when they are not the trip's own.
+     *
+     * Null when the draft is incomplete, when the draft happens to be the
+     * route the trip already has (in which case [route] is the same answer,
+     * already paid for), or when the fetch found no road.
+     */
+    val routePreview: RouteLine? = null,
+    /** Whether a preview is in flight, so the summary can say so rather than read empty. */
+    val routePreviewLoading: Boolean = false,
     val error: String? = null,
 ) {
     /** The riders with a fix — the ones that can be drawn. */
@@ -92,6 +111,52 @@ data class TripMapUiState(
 
     /** Everyone else. Listed, never dropped: an absent friend is information. */
     val unplaced: List<MemberPosition> get() = members.filterNot { it.hasPosition }
+
+    /**
+     * Whether the draft is a route of its own rather than the trip's, redrawn.
+     *
+     * The distinction the three values below turn on: a rider who opened the
+     * card and changed nothing is looking at the trip, and everything should
+     * read exactly as it did before they opened it.
+     */
+    private val hasOwnDraft: Boolean
+        get() = routeDraft.isComplete &&
+            !RouteSetupRules.endsMatch(routeDraft, trip?.origin, trip?.destination)
+
+    /**
+     * The route the summary sheet reads: the draft's when there is one, and
+     * otherwise the trip's own — which is the same line, already fetched.
+     */
+    val draftRoute: RouteLine? get() = if (hasOwnDraft) routePreview else route
+
+    /**
+     * The two ends the map draws flags on.
+     *
+     * The draft's while one is being set up, so a rider sees the start land
+     * the moment they pick it rather than after they confirm; the trip's the
+     * rest of the time, which is every moment the card is closed.
+     */
+    val drawnOrigin: TripEndpoint?
+        get() = routeDraft.from?.let { TripEndpoint(it.point.lat, it.point.lng, it.label) }
+            ?: trip?.origin
+
+    /** Where the map draws the finish. See [drawnOrigin]. */
+    val drawnDestination: TripEndpoint?
+        get() = routeDraft.to?.let { TripEndpoint(it.point.lat, it.point.lng, it.label) }
+            ?: trip?.destination
+
+    /**
+     * The line the map draws.
+     *
+     * A draft with its own two ends draws its own preview and nothing else:
+     * leaving the trip's road on screen under a start the rider has just
+     * moved would be a road to somewhere they are no longer setting off from.
+     */
+    val drawnRoute: List<LatLng> get() = draftRoute?.points.orEmpty()
+
+    /** Every stop the map draws: the trip's, plus the ones only this draft holds. */
+    val drawnWaypoints: List<Waypoint>
+        get() = waypoints.all + RouteSetupRules.draftWaypoints(routeDraft)
 }
 
 /** A member's fix as plain coordinates, or null if they have not reported. */
@@ -406,6 +471,212 @@ class TripMapViewModel(
             return
         }
         _uiState.update { it.copy(route = line) }
+    }
+
+    /** What [TripMapUiState.routePreview] was fetched for. See [routeFor]. */
+    private var previewFor: Pair<LatLng, LatLng>? = null
+
+    /** When a failed preview may be tried again. See [routeRetryAtMs]. */
+    private var previewRetryAtMs: Long? = null
+
+    /**
+     * Opens the route card on what the trip already has.
+     *
+     * Seeded rather than blank, which is the whole of requirement four: after
+     * a route is confirmed, opening the card again shows it, and changing one
+     * end is one tap. The edit mechanism did not change — the way in did.
+     */
+    fun openRouteSetup() {
+        _uiState.update {
+            it.copy(routeDraft = RouteSetupRules.fromTrip(it.trip?.origin, it.trip?.destination))
+        }
+        refreshRoutePreview()
+    }
+
+    /**
+     * Throws the draft away.
+     *
+     * Closing the card *is* cancelling: nothing in a draft has been sent, so
+     * there is nothing to undo, and keeping a half-finished route to show on
+     * the way back would mean a rider re-opening the card to look at their
+     * trip's route and being shown somebody's abandoned edit of it instead.
+     */
+    fun closeRouteSetup() {
+        previewFor = null
+        previewRetryAtMs = null
+        _uiState.update {
+            it.copy(routeDraft = RouteDraft(), routePreview = null, routePreviewLoading = false)
+        }
+    }
+
+    /**
+     * Puts a chosen point into the draft.
+     *
+     * No round trip, and no question about what the point is for: the field
+     * the rider tapped to open the picker is the answer, which is the reason
+     * the old three-button dialog is gone from this path.
+     */
+    fun pickRoutePoint(field: RouteField, picked: RoutePoint) {
+        _uiState.update { it.copy(routeDraft = RouteSetupRules.with(it.routeDraft, field, picked)) }
+        // Only the ends change the road. A stop is drawn as a pin and does not
+        // re-route: the app has no multi-leg routing and inventing one out of
+        // extra requests is not what this change is.
+        if (field != RouteField.STOP) refreshRoutePreview()
+    }
+
+    /** Takes a stop back off the draft. Nothing was ever sent, so nothing is deleted. */
+    fun removeRouteStop(index: Int) {
+        _uiState.update { it.copy(routeDraft = RouteSetupRules.withoutStop(it.routeDraft, index)) }
+    }
+
+    /**
+     * Writes the draft to the trip.
+     *
+     * Exactly the calls the old flow made when a rider finished setting both
+     * ends by hand — one PATCH per end, one POST per stop — with two
+     * differences that both come out of holding the draft first: an end that
+     * did not move costs no request at all, and the stops go on in the order
+     * the rider added them because there is an order to read.
+     *
+     * The draft is cleared here, before the writes, rather than by the screen:
+     * the screen closes the card the moment this is called, and a failure is
+     * reported as the line above the map like every other failure on this
+     * screen. Holding the card open over a failed save would leave a rider
+     * looking at a route they cannot tell apart from a saved one.
+     */
+    fun confirmRoute() {
+        val state = _uiState.value
+        val trip = state.trip
+        val draft = state.routeDraft
+
+        // Cleared first and unconditionally, before anything can return early.
+        // The screen closes the card the moment this is called, and a draft
+        // left behind a closed card would go on drawing its own flags over the
+        // trip's for the rest of the ride.
+        previewFor = null
+        previewRetryAtMs = null
+        _uiState.update {
+            it.copy(
+                routeDraft = RouteDraft(),
+                routePreview = null,
+                routePreviewLoading = false,
+                error = null,
+            )
+        }
+
+        if (trip == null || !draft.isComplete) return
+
+        viewModelScope.launch {
+            try {
+                // Owner-gated here as well as on the card, because the server
+                // gates it: a member who is not the owner can only ever have
+                // got this far to add stops.
+                if (RouteSetupRules.canEditEnds(trip.isOwner)) {
+                    RouteSetupRules.endpointToSave(draft.from, trip.origin)
+                        ?.let { tripApi.setOrigin(tripId, it) }
+                    RouteSetupRules.endpointToSave(draft.to, trip.destination)
+                        ?.let { tripApi.setDestination(tripId, it) }
+                }
+
+                if (RouteSetupRules.canAddStops(trip.isActive)) {
+                    var order = RouteSetupRules.nextOrderIndex(state.waypoints.planned)
+                    draft.stops.forEach { stop ->
+                        val name = stop.label.trim()
+                        // The server refuses an unnamed waypoint, so an
+                        // unnamed one is never sent. The picker will not
+                        // produce one — this is the guard behind that.
+                        if (!RouteSetupRules.isStopNameValid(name)) return@forEach
+                        tripApi.addWaypoint(
+                            tripId = tripId,
+                            name = name,
+                            lat = stop.point.lat,
+                            lng = stop.point.lng,
+                            type = Waypoint.TYPE_PLANNED,
+                            orderIndex = order,
+                        )
+                        order += 1
+                    }
+                }
+
+                refreshTrip()
+                refresh()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * The road along the draft's ends, for the summary sheet.
+     *
+     * ## Why this is not simply another call to the directions API
+     *
+     * It is the same 5,000-a-day quota [loadRoute] is so careful with, and a
+     * route card is a thing a rider opens and fiddles with. So the same rule
+     * applies, keyed on the same pair of ends: one request per pair somebody
+     * actually settles on, a failure that waits [RouteRequests.RETRY_AFTER_MS]
+     * before being worth another go, and nothing at all on a poll.
+     *
+     * On top of that, one case that only exists here: a draft whose ends are
+     * the trip's own ends is not fetched at all. The trip's route has already
+     * been fetched for exactly that pair, and [TripMapUiState.draftRoute]
+     * reads it. That is the common case — a rider opens the card, looks at
+     * the route that is already set, and changes one end — so the common case
+     * costs nothing.
+     */
+    private fun refreshRoutePreview() {
+        val state = _uiState.value
+        val draft = state.routeDraft
+        val ends = RouteSetupRules.ends(draft)
+
+        val alreadyTheTrips = ends != null &&
+            RouteSetupRules.endsMatch(draft, state.trip?.origin, state.trip?.destination)
+
+        if (ends == null || alreadyTheTrips) {
+            previewFor = null
+            previewRetryAtMs = null
+            if (state.routePreview != null || state.routePreviewLoading) {
+                _uiState.update { it.copy(routePreview = null, routePreviewLoading = false) }
+            }
+            return
+        }
+
+        if (!RouteRequests.shouldFetch(ends, previewFor, previewRetryAtMs, now())) return
+
+        // Null behaves exactly like a server with no key: no road figures, and
+        // the sheet falls back to the straight-line measure it labels "direct".
+        val api = routeApi ?: return
+
+        previewFor = ends
+        previewRetryAtMs = null
+        _uiState.update { it.copy(routePreview = null, routePreviewLoading = true) }
+
+        viewModelScope.launch {
+            val line = try {
+                api.route(ends.first, ends.second)
+            } catch (e: SessionExpiredException) {
+                // The spinner is stopped as well as the session ended: the
+                // sign-out takes the rider off this screen, but a state left
+                // saying "still working it out" would greet them on the way
+                // back in.
+                _uiState.update { it.copy(routePreviewLoading = false) }
+                onSessionExpired()
+                return@launch
+            } catch (e: ApiException) {
+                previewRetryAtMs = now() + RouteRequests.RETRY_AFTER_MS
+                _uiState.update { it.copy(routePreview = null, routePreviewLoading = false) }
+                return@launch
+            }
+            _uiState.update {
+                // Guarded: the rider may have moved an end while this was in
+                // flight, and a road drawn between the ends they just replaced
+                // is the search-as-you-type bug wearing a different hat.
+                if (RouteSetupRules.ends(it.routeDraft) != ends) it
+                else it.copy(routePreview = line, routePreviewLoading = false)
+            }
+        }
     }
 
     /**

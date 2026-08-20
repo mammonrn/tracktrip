@@ -1,5 +1,6 @@
 package app.ptrip.tracktrip.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -60,6 +62,8 @@ import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.LiveCadence
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.data.TripEndpoint
+import app.ptrip.tracktrip.data.RouteLine
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.Bounds
 import app.ptrip.tracktrip.map.Breadcrumbs
@@ -137,9 +141,14 @@ data class MapFocus(val lat: Double, val lng: Double, val sequence: Int)
 /**
  * A point waiting for a rider to say what it is.
  *
- * [name] is empty for a point pressed and held on the map — there is nothing
- * to call it yet — and carries the place's own name when it came out of the
- * search box, which is the entire saving of typing that a search offers.
+ * The long press's own path, and now only that: a point picked while a route
+ * field is waiting knows what it is for already, and goes straight into the
+ * field. This is what is left — a rider pressing and holding the map with no
+ * field waiting, who still has all three answers open to them.
+ *
+ * [name] is therefore always empty on the way in. It stays on the type because
+ * it is what the dialog's field is seeded from, and a point pressed and held
+ * has nothing to call itself yet.
  */
 data class PendingPlacement(val point: LatLng, val name: String = "")
 
@@ -193,11 +202,23 @@ fun TripMapScreen(
      * An *addition* to pressing and holding the map, never a replacement:
      * dropping a stop at the viewpoint you are standing at has no name to
      * type, and a rider planning a route from the sofa has no idea where on
-     * the map "Mae Hong Son" is. Both gestures end in the same dialog.
+     * the map "Mae Hong Son" is. Both gestures end in the same place.
      */
     searchState: PlaceSearchState = PlaceSearchState(),
     onSearchQueryChanged: (String) -> Unit = {},
     onSearchCleared: () -> Unit = {},
+    /**
+     * Setting a route up: opening the card, filling a field, and committing.
+     *
+     * Five callbacks rather than one because they are five different moments,
+     * and only the last of them touches the server. Defaulted so the previews
+     * and the tests that do not exercise routing need none of them.
+     */
+    onOpenRouteSetup: () -> Unit = {},
+    onCloseRouteSetup: () -> Unit = {},
+    onPickRoutePoint: (RouteField, RoutePoint) -> Unit = { _, _ -> },
+    onRemoveRouteStop: (Int) -> Unit = {},
+    onConfirmRoute: () -> Unit = {},
     /**
      * Whether this app may read the phone's position at all.
      *
@@ -239,10 +260,23 @@ fun TripMapScreen(
     // about.
     var placing by remember { mutableStateOf<PendingPlacement?>(null) }
 
-    // Whether the search panel is open. A panel rather than a box that is
+    // Whether the route card is open. A card rather than something that is
     // always there: it covers the top of the route-progress bar while it is
     // open, and a rider who is riding rather than planning is not typing.
-    var searching by rememberSaveable { mutableStateOf(false) }
+    var routeSetupOpen by rememberSaveable { mutableStateOf(false) }
+
+    // Which field the picker that is open is filling, or null when none is.
+    //
+    // The whole of the new flow is in this one value. It is set by tapping a
+    // field, and it is what a search result, "use my current location" and a
+    // long press all land in — so none of the three has to ask what the point
+    // is for, because the rider already said.
+    var picking by rememberSaveable { mutableStateOf<RouteField?>(null) }
+
+    // A stop chosen with no name on it, waiting for one. The server refuses an
+    // unnamed waypoint, so this is the one thing a picker still has to ask.
+    var namingStop by remember { mutableStateOf<RoutePoint?>(null) }
+
     var removing by remember { mutableStateOf<Waypoint?>(null) }
 
     // Who is driving the camera. See CameraRules — the rule that matters is
@@ -259,10 +293,14 @@ fun TripMapScreen(
     // if they have been set. Not the other riders — the overview answers "how
     // far have I got", and a friend who set off from home three provinces away
     // would blow the frame out to nothing useful.
+    //
+    // The drawn ends rather than the trip's, so that a rider who has just
+    // picked a start two provinces away can frame what they are planning as
+    // well as what is saved.
     val overviewPoints = listOfNotNull(
         myLocation,
-        state.trip?.origin?.let { LatLng(it.lat, it.lng) },
-        destination,
+        state.drawnOrigin?.let { LatLng(it.lat, it.lng) },
+        state.drawnDestination?.let { LatLng(it.lat, it.lng) },
     )
     var focus by remember { mutableStateOf<MapFocus?>(null) }
     var sequence by remember { mutableIntStateOf(0) }
@@ -274,6 +312,19 @@ fun TripMapScreen(
         focused = null
         sequence += 1
         focus = MapFocus(target.lat, target.lng, sequence)
+    }
+
+    // Filling the card in from the trip, whenever it is open with nothing in
+    // it yet.
+    //
+    // An effect rather than a line in the button's handler, because there are
+    // two ways to arrive at an open card with an empty draft and only one of
+    // them is a press: the open flag is saved across the process being killed
+    // and the draft is not, so a rider coming back to a re-created screen
+    // would otherwise find two blank fields over a trip whose route is set.
+    // It also covers a card opened while the trip was still loading.
+    LaunchedEffect(routeSetupOpen, state.trip?.id) {
+        if (routeSetupOpen && state.routeDraft.isEmpty) onOpenRouteSetup()
     }
 
     // Centring from a tap, on a pin or on a row.
@@ -338,6 +389,51 @@ fun TripMapScreen(
         }
     }
 
+    val canSetUpRoute = RouteSetupRules.canSetUpRoute(
+        isOwner = state.trip?.isOwner == true,
+        isTripActive = state.trip?.isActive == true,
+    )
+
+    // Everything a picked point does, wherever it was picked from: move the
+    // map to it so the rider can see what they chose, put it in the field that
+    // asked for it, and close the picker.
+    //
+    // One lambda rather than three copies, because the whole point of the new
+    // flow is that the three ways in — a search result, "use my current
+    // location", a long press — end identically. A stop is the one that still
+    // has a question left, and only when it arrived without a name: the server
+    // refuses an unnamed waypoint.
+    val takePicked: (RouteField, RoutePoint) -> Unit = { field, chosen ->
+        sequence += 1
+        camera = MapCamera.FREE
+        focused = null
+        focus = MapFocus(chosen.point.lat, chosen.point.lng, sequence)
+        if (field == RouteField.STOP && !RouteSetupRules.isStopNameValid(chosen.label)) {
+            namingStop = chosen
+        } else {
+            onPickRoutePoint(field, chosen)
+        }
+        picking = null
+        onSearchCleared()
+    }
+
+    // Back steps out of what is open rather than off the map.
+    //
+    // A rider two taps deep into a picker pressing back means "not that one",
+    // not "leave the ride I am watching" — and a route card that can only be
+    // closed by finding the button that opened it is a trap on a phone whose
+    // whole navigation is one gesture. Disabled when nothing is open, so the
+    // back stack behaves exactly as it did.
+    BackHandler(enabled = routeSetupOpen) {
+        if (picking != null) {
+            picking = null
+        } else {
+            routeSetupOpen = false
+            onCloseRouteSetup()
+        }
+        onSearchCleared()
+    }
+
     // The top bar is *over* the map, not above it. As a row in the same column
     // it belonged to the scrolling layout and slid away the moment the map was
     // dragged; a rider then had no trip name and, worse, no way back.
@@ -351,9 +447,10 @@ fun TripMapScreen(
 
                 RiderMap(
                     members = state.placed,
-                    waypoints = state.waypoints.all,
-                    trip = state.trip,
-                    route = state.route?.points.orEmpty(),
+                    waypoints = state.drawnWaypoints,
+                    origin = state.drawnOrigin,
+                    destination = state.drawnDestination,
+                    route = state.drawnRoute,
                     trails = if (state.trailsVisible) state.trails else emptyMap(),
                     myLocation = myLocation,
                     focus = focus,
@@ -366,21 +463,40 @@ fun TripMapScreen(
                         focused = it
                     },
                     onLongPress = { point ->
-                        // Nothing to offer means nothing to open: a member
-                        // looking at a finished ride can place neither end
-                        // nor a stop, and a dialog with no buttons is worse
-                        // than no dialog.
-                        if (placementsAllowed(state.trip).isNotEmpty()) {
-                            placing = PendingPlacement(point)
+                        val field = picking
+                        when {
+                            // Pressing and holding while a field is waiting for
+                            // a point fills that field. The third way in, and
+                            // the only one that works with the server's search
+                            // key unset — a rider pointing at a spot on the map
+                            // has said where, and the field they tapped to open
+                            // the picker already said what for.
+                            field != null -> takePicked(field, RoutePoint(point))
+                            // With no field waiting, the gesture means what it
+                            // has always meant. Nothing to offer means nothing
+                            // to open: a member looking at a finished ride can
+                            // place neither end nor a stop, and a dialog with
+                            // no buttons is worse than no dialog.
+                            placementsAllowed(state.trip).isNotEmpty() ->
+                                placing = PendingPlacement(point)
                         }
                     },
                     onWaypointTap = { waypoint ->
-                        val allowed = MapPlacementRules.canRemoveWaypoint(
-                            isOwner = state.trip?.isOwner == true,
-                            addedBy = waypoint.addedBy,
-                            currentUserId = currentUserId,
-                        )
-                        if (allowed && state.trip?.isActive == true) removing = waypoint
+                        val draftIndex = RouteSetupRules.draftIndex(waypoint.id)
+                        if (draftIndex != null) {
+                            // A stop that only this draft holds. Nothing was
+                            // ever sent, so it comes straight back off the
+                            // list rather than through a confirmation about
+                            // making it disappear from everyone's map.
+                            onRemoveRouteStop(draftIndex)
+                        } else {
+                            val allowed = MapPlacementRules.canRemoveWaypoint(
+                                isOwner = state.trip?.isOwner == true,
+                                addedBy = waypoint.addedBy,
+                                currentUserId = currentUserId,
+                            )
+                            if (allowed && state.trip?.isActive == true) removing = waypoint
+                        }
                     },
                     follow = myLocation.takeIf { CameraRules.followsPosition(camera) },
                     overview = overview,
@@ -600,9 +716,9 @@ fun TripMapScreen(
             MapOverlayBar(
                 // Measured, and the progress bar down the right-hand edge
                 // starts below whatever this actually came out as. Only the
-                // bar itself is measured, not the search panel underneath it:
-                // the panel is meant to cover the top of the gauge while it is
-                // open, and a rider typing a place name is not riding.
+                // bar itself is measured, not the route card underneath it:
+                // the card is meant to cover the top of the gauge while it is
+                // open, and a rider setting a route up is not riding.
                 modifier = Modifier.onSizeChanged { size ->
                     headerHeightDp = with(density) { size.height.toDp() }.value
                 },
@@ -617,56 +733,96 @@ fun TripMapScreen(
                 error = state.error,
                 onBack = onBack,
                 // Offered only to a rider who has somewhere to put what they
-                // find. On a finished trip a member can place nothing, and a
-                // search whose every result opens a dialog with no buttons is
-                // worse than no search.
-                canSearch = placementsAllowed(state.trip).isNotEmpty(),
-                searchOpen = searching,
-                onToggleSearch = {
-                    searching = !searching
-                    if (!searching) onSearchCleared()
+                // find. On a finished trip a member can set neither end nor
+                // add a stop, and a route card that saves nothing is worse
+                // than no card.
+                canSetUpRoute = canSetUpRoute,
+                routeSetupOpen = routeSetupOpen,
+                onToggleRouteSetup = {
+                    routeSetupOpen = !routeSetupOpen
+                    picking = null
+                    onSearchCleared()
+                    // Only the closing half here — the opening half is the
+                    // effect below, which has one more case to cover.
+                    if (!routeSetupOpen) onCloseRouteSetup()
                 },
             )
 
-            if (searching && placementsAllowed(state.trip).isNotEmpty()) {
-                PlaceSearchPanel(
-                    state = searchState,
-                    onQueryChanged = onSearchQueryChanged,
-                    onClear = onSearchCleared,
-                    onPick = { place ->
-                        // Straight to the map as well as into the dialog: a
-                        // rider deciding between two results wants to see
-                        // where they are, not read two addresses.
-                        sequence += 1
-                        camera = MapCamera.FREE
-                        focused = null
-                        focus = MapFocus(place.lat, place.lng, sequence)
-                        placing = PendingPlacement(LatLng(place.lat, place.lng), place.name)
-                        searching = false
-                    },
-                    myLocation = myLocation,
-                    hasLocationPermission = hasLocationPermission,
-                    onUseCurrentLocation = { here ->
-                        // The same ending as picking a search result — the
-                        // one dialog, with the same three buttons — so the
-                        // shortcut is a faster way to the existing flow
-                        // rather than a second flow to learn.
-                        //
-                        // No name is prefilled. "My location" as a label
-                        // would be a name a rider has to delete before typing
-                        // the one they meant, and it means nothing on the map
-                        // an hour later. The start and the finish take no
-                        // label at all; a stop still asks for one, exactly as
-                        // it does after a long press.
-                        sequence += 1
-                        camera = MapCamera.FREE
-                        focused = null
-                        focus = MapFocus(here.lat, here.lng, sequence)
-                        placing = PendingPlacement(here)
-                        searching = false
-                    },
-                )
+            if (routeSetupOpen && canSetUpRoute) {
+                val field = picking
+                if (field == null) {
+                    // The two fields, stacked. This is the whole entry point:
+                    // no mode to enter, no question about what a point is
+                    // for — a rider reads their route and taps the half of it
+                    // they want to change.
+                    RouteSetupCard(
+                        draft = state.routeDraft,
+                        canEditEnds = RouteSetupRules.canEditEnds(state.trip?.isOwner == true),
+                        onPick = { tapped ->
+                            picking = tapped
+                            onSearchCleared()
+                        },
+                    )
+                } else {
+                    // The picker that has always been here — the same search,
+                    // the same shortcut, the same long press — with the one
+                    // question it used to end on already answered.
+                    PlaceSearchPanel(
+                        state = searchState,
+                        heading = stringResource(field.pickHeadingRes),
+                        onQueryChanged = onSearchQueryChanged,
+                        onClear = onSearchCleared,
+                        onBack = {
+                            picking = null
+                            onSearchCleared()
+                        },
+                        onPick = { place ->
+                            takePicked(field, RoutePoint(LatLng(place.lat, place.lng), place.name))
+                        },
+                        myLocation = myLocation,
+                        hasLocationPermission = hasLocationPermission,
+                        // No name is prefilled. "My location" as a label would
+                        // be a name a rider has to delete before typing the one
+                        // they meant, and it means nothing on the map an hour
+                        // later. The two ends take no label at all; a stop
+                        // still asks for one.
+                        onUseCurrentLocation = { here -> takePicked(field, RoutePoint(here)) },
+                    )
+                }
             }
+        }
+
+        // Both ends chosen, so there is a route to read and a decision to
+        // make. Over everything, at the bottom, where a summary of what you
+        // are about to do belongs — and only while the picker is closed, since
+        // a sheet over a keyboard is a sheet nobody can read.
+        if (routeSetupOpen && canSetUpRoute && picking == null && state.routeDraft.isComplete) {
+            RouteSummarySheet(
+                draft = state.routeDraft,
+                route = state.draftRoute,
+                loading = state.routePreviewLoading,
+                canAddStops = RouteSetupRules.canAddStops(state.trip?.isActive == true),
+                onAddStop = {
+                    picking = RouteField.STOP
+                    onSearchCleared()
+                },
+                onRemoveStop = onRemoveRouteStop,
+                onConfirm = {
+                    // The draft is read and cleared inside confirmRoute before
+                    // it returns, so closing the card here cannot race it.
+                    onConfirmRoute()
+                    routeSetupOpen = false
+                    picking = null
+                    onSearchCleared()
+                },
+                onDismiss = {
+                    routeSetupOpen = false
+                    picking = null
+                    onSearchCleared()
+                    onCloseRouteSetup()
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -681,6 +837,17 @@ fun TripMapScreen(
                 onSearchCleared()
             },
             onDismiss = { placing = null },
+        )
+    }
+
+    namingStop?.let { stop ->
+        StopNameDialog(
+            point = stop.point,
+            onName = { name ->
+                onPickRoutePoint(RouteField.STOP, stop.copy(label = name.trim()))
+                namingStop = null
+            },
+            onDismiss = { namingStop = null },
         )
     }
 
@@ -699,31 +866,451 @@ fun TripMapScreen(
     }
 }
 
+/** The heading over the picker: which field it is filling. */
+private val RouteField.pickHeadingRes: Int
+    get() = when (this) {
+        RouteField.FROM -> R.string.map_route_pick_from
+        RouteField.TO -> R.string.map_route_pick_to
+        RouteField.STOP -> R.string.map_route_pick_stop
+    }
 
 /**
- * Type a place name, pick it off a list, and place it.
+ * "From" and "To", stacked — the whole of the new way in.
  *
- * ## Why this sits under the top bar rather than in the dialog
+ * ## Why two fields rather than one search box
+ *
+ * The box that was here asked a rider to find a place and then answer a
+ * three-button dialog about what it was for. Every route went through that
+ * twice, and the second time it asked the same question again, having just
+ * been told. Two fields answer it in advance: tapping "To" *is* saying this
+ * next point is the finish, so the picker that opens has nothing left to ask.
+ *
+ * It is also, unlike a search box, a thing a rider can *read*. A route that is
+ * already set shows in it, which is what makes changing one end one tap — and
+ * what makes editing after confirming work at all.
+ *
+ * A member who is not the trip's owner still sees it, greyed: `PATCH /trips/:id`
+ * is owner-only, so offering them a field that answers 403 would read as a
+ * broken app rather than as a rule. They can still add stops from the sheet.
+ */
+@Composable
+private fun RouteSetupCard(
+    draft: RouteDraft,
+    canEditEnds: Boolean,
+    onPick: (RouteField) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(AppSurface.copy(alpha = 0.94f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(AppSurface, AppSearchPanelShape)
+                .border(1.dp, AppLine, AppSearchPanelShape),
+        ) {
+            RouteFieldRow(
+                field = RouteField.FROM,
+                picked = draft.from,
+                enabled = canEditEnds,
+                onClick = { onPick(RouteField.FROM) },
+            )
+            HudDivider(modifier = Modifier.padding(start = 42.dp))
+            RouteFieldRow(
+                field = RouteField.TO,
+                picked = draft.to,
+                enabled = canEditEnds,
+                onClick = { onPick(RouteField.TO) },
+            )
+        }
+
+        if (!canEditEnds) {
+            Text(
+                text = stringResource(R.string.map_route_ends_locked),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * One field: what it is for, and what is in it.
+ *
+ * The subtitle is the place's own name when it has one and its coordinate
+ * when it does not, rather than an empty row — a start dropped by long press
+ * has no name, and a field that looks blank after a rider filled it reads as
+ * the tap not having worked.
+ */
+@Composable
+private fun RouteFieldRow(
+    field: RouteField,
+    picked: RoutePoint?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+    ) {
+        // A dot for where you set off and a flag for where you are going —
+        // the same two shapes the map draws, so the card and the map read as
+        // one thing rather than two lists of the same coordinates.
+        Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+            if (field == RouteField.FROM) {
+                HudDot(color = if (enabled) AppPrimary else AppTextMuted)
+            } else {
+                HudPinIcon(tint = if (enabled) AppPrimary else AppTextMuted)
+            }
+        }
+
+        Column(modifier = Modifier.padding(start = 10.dp)) {
+            Text(
+                text = stringResource(
+                    if (field == RouteField.FROM) R.string.map_route_from
+                    else R.string.map_route_to
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+            )
+            Text(
+                text = picked?.let { routePointLabel(it) } ?: stringResource(
+                    if (field == RouteField.FROM) R.string.map_route_from_hint
+                    else R.string.map_route_to_hint
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (picked == null) AppTextMuted else AppText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** What to call a chosen point: its own name, or where it is. */
+@Composable
+private fun routePointLabel(picked: RoutePoint): String =
+    picked.label.trim().takeIf { it.isNotEmpty() } ?: stringResource(
+        R.string.map_place_coordinates,
+        formatCoordinate(picked.point.lat),
+        formatCoordinate(picked.point.lng),
+    )
+
+/**
+ * What the route comes to, and what to do about it.
+ *
+ * ## Why the button does not say "Start"
+ *
+ * This app has no turn-by-turn navigation and is not getting any. A button
+ * saying "Start" on a screen that looks like this one would be read by every
+ * rider who has ever used Google Maps as "begin guiding me", and what it
+ * actually does is save two coordinates to a trip. So it says what it does.
+ *
+ * The figures are LocationIQ's own, over the road. When there is no road
+ * route — no key on the server, no road between the points, a quota already
+ * spent — it falls back to the straight-line measure the progress bar has
+ * always shown, captioned "direct" in exactly the same words, rather than
+ * showing nothing or pretending the straight line is a road.
+ */
+@Composable
+private fun RouteSummarySheet(
+    draft: RouteDraft,
+    route: RouteLine?,
+    loading: Boolean,
+    canAddStops: Boolean,
+    onAddStop: () -> Unit,
+    onRemoveStop: (Int) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(AppSurface, AppSheetShape)
+            .border(1.dp, AppLine, AppSheetShape)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = stringResource(R.string.map_route_summary_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = AppText,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(R.string.map_search_clear_symbol),
+                color = AppTextMuted,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+
+        // The route in one line, so what is about to be saved is readable
+        // without looking back up at the card behind the sheet.
+        draft.from?.let { from ->
+            draft.to?.let { to ->
+                Text(
+                    text = stringResource(
+                        R.string.map_route_ends,
+                        routePointLabel(from),
+                        routePointLabel(to),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTextMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = AppPrimary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = stringResource(R.string.map_route_measuring),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTextMuted,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            } else {
+                Column {
+                    Text(
+                        text = routeDistanceText(draft, route),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppText,
+                    )
+                    Text(
+                        text = routeMeasureCaption(route),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppTextMuted,
+                    )
+                }
+                routeDurationText(route)?.let { duration ->
+                    Text(
+                        text = duration,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = AppPrimary,
+                        modifier = Modifier.padding(start = 16.dp),
+                    )
+                }
+            }
+        }
+
+        if (draft.stops.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.map_route_stops),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            // Capped and scrolling rather than growing without limit: this
+            // sheet sits over the map, and a route of a dozen stops must not
+            // swallow the thing it is describing.
+            LazyColumn(modifier = Modifier.heightIn(max = ROUTE_STOPS_MAX_HEIGHT)) {
+                itemsIndexed(draft.stops) { index, stop ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.map_route_stop_number, index + 1),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = AppTextMuted,
+                            modifier = Modifier.width(24.dp),
+                        )
+                        Text(
+                            text = routePointLabel(stop),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AppText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = stringResource(R.string.map_search_clear_symbol),
+                            color = AppTextMuted,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .clickable { onRemoveStop(index) }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
+            if (canAddStops) {
+                HudSecondaryButton(
+                    text = stringResource(R.string.map_route_add_stops),
+                    onClick = onAddStop,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            HudPrimaryButton(
+                text = stringResource(R.string.map_route_confirm),
+                onClick = onConfirm,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** The distance to show: the road's when there is one, the straight line's otherwise. */
+@Composable
+private fun routeDistanceText(draft: RouteDraft, route: RouteLine?): String {
+    val km = route?.distanceKm ?: RouteSetupRules.ends(draft)?.let { (from, to) ->
+        RouteProgress.distanceKm(from, to)
+    }
+    return RouteProgress.format(km) ?: stringResource(R.string.map_speed_unknown)
+}
+
+/** Which of the two measures is on screen, in the same words the gauge uses. */
+@Composable
+private fun routeMeasureCaption(route: RouteLine?): String =
+    if (route?.distanceKm != null) stringResource(R.string.map_progress_by_road)
+    else stringResource(R.string.map_progress_straight_line)
+
+/**
+ * How long the road takes, or null when nothing said.
+ *
+ * Nothing is estimated from the distance when the figure is missing: an
+ * invented time on a mountain road would be wrong by a factor, and wrong in
+ * the direction that makes a rider late.
+ */
+@Composable
+private fun routeDurationText(route: RouteLine?): String? {
+    val (hours, minutes) = RouteEta.split(route?.durationMinutes) ?: return null
+    return when {
+        hours == 0 -> stringResource(R.string.map_route_duration_minutes, minutes)
+        minutes == 0 -> stringResource(R.string.map_route_duration_hours, hours)
+        else -> stringResource(R.string.map_route_duration_hours_minutes, hours, minutes)
+    }
+}
+
+/**
+ * A name for a stop that arrived without one.
+ *
+ * The one question the new flow still has to ask, and only for a stop: the
+ * server refuses an unnamed waypoint, because a list of unnamed stops is a
+ * list of identical rows. The two ends need nothing — the map draws the flag
+ * either way — which is why picking them opens no dialog at all.
+ */
+@Composable
+private fun StopNameDialog(
+    point: LatLng,
+    onName: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by rememberSaveable(point) { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.map_route_stop_name_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(
+                        R.string.map_place_coordinates,
+                        formatCoordinate(point.lat),
+                        formatCoordinate(point.lng),
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = AppTextMuted,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { typed ->
+                        if (typed.length <= MapPlacementRules.NAME_MAX_LENGTH) name = typed
+                    },
+                    label = { Text(stringResource(R.string.map_place_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            HudPrimaryButton(
+                text = stringResource(R.string.map_route_stop_add),
+                onClick = { onName(name) },
+                enabled = RouteSetupRules.isStopNameValid(name),
+            )
+        },
+        dismissButton = {
+            HudSecondaryButton(text = stringResource(R.string.cancel), onClick = onDismiss)
+        },
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+    )
+}
+
+/** Tall enough for three or four stops, short enough to leave the map visible. */
+private val ROUTE_STOPS_MAX_HEIGHT = 132.dp
+
+/** Rounded at the top only: it rises off the bottom edge rather than floating. */
+private val AppSheetShape = androidx.compose.foundation.shape.RoundedCornerShape(
+    topStart = 16.dp,
+    topEnd = 16.dp,
+)
+
+
+/**
+ * Type a place name, pick it off a list, and fill the field that asked for it.
+ *
+ * ## Why this sits under the top bar rather than in a dialog
  *
  * The long press already had a dialog, and putting the search inside it would
  * mean pressing and holding somewhere on the map first — which is exactly the
  * thing a rider who does not know where the place is cannot do. So the box
- * opens from the header instead, and a result taken from it opens the *same*
- * dialog with the coordinate and the name already filled in.
+ * opens from the route card instead, and a result taken from it goes straight
+ * into the field the rider tapped to get here.
  *
  * It opens rather than sitting there because it covers the top of the
  * route-progress bar while it is open, and a rider who is riding rather than
  * planning is not typing.
  *
- * Nothing about the long press changes. It is still the way to place a point
- * that has no name — the viewpoint you are standing at — and still the only
- * one that works with the server's search key unset.
+ * Nothing about the search itself changed with the route card: the same
+ * debounce, the same three ways in, the same wording for every failure. What
+ * changed is what happens after a result is tapped — [heading] says which
+ * field is waiting for it, so nothing has to ask afterwards.
+ *
+ * Nothing about the long press changes either. It is still the way to choose a
+ * point that has no name — the viewpoint you are standing at — and still the
+ * only one that works with the server's search key unset.
  */
 @Composable
 private fun PlaceSearchPanel(
     state: PlaceSearchState,
+    /** Which field this is filling, said out loud over the box. */
+    heading: String,
     onQueryChanged: (String) -> Unit,
     onClear: () -> Unit,
+    /** Back to the card without choosing anything. */
+    onBack: () -> Unit,
     onPick: (Place) -> Unit,
     /**
      * Where this phone is, and whether it was allowed to know — the two
@@ -741,6 +1328,27 @@ private fun PlaceSearchPanel(
             .background(AppSurface.copy(alpha = 0.94f))
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.map_route_back_symbol),
+                color = AppTextMuted,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+            Text(
+                text = heading,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = AppText,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+
         OutlinedTextField(
             value = state.query,
             onValueChange = onQueryChanged,
@@ -827,6 +1435,17 @@ private fun PlaceSearchPanel(
                 }
             }
         }
+
+        // The third way in, and the only one that needs neither a name nor a
+        // working search key. Said out loud here because a long press is the
+        // one gesture on this screen with nothing on it to suggest the gesture
+        // exists — and while a field is waiting, it fills that field.
+        Text(
+            text = stringResource(R.string.map_route_pick_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        )
     }
 }
 
@@ -1288,9 +1907,10 @@ private fun MapOverlayBar(
     error: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    canSearch: Boolean = false,
-    searchOpen: Boolean = false,
-    onToggleSearch: () -> Unit = {},
+    /** Whether this rider has anything they could set, and so a button worth showing. */
+    canSetUpRoute: Boolean = false,
+    routeSetupOpen: Boolean = false,
+    onToggleRouteSetup: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -1318,13 +1938,13 @@ private fun MapOverlayBar(
                 }
             },
             trailing = {
-                if (canSearch) {
+                if (canSetUpRoute) {
                     HudIconButton(
-                        onClick = onToggleSearch,
-                        contentDescription = stringResource(R.string.map_search_places),
+                        onClick = onToggleRouteSetup,
+                        contentDescription = stringResource(R.string.map_route_setup),
                         icon = {
                             HudSearchIcon(
-                                tint = if (searchOpen) AppPrimary else AppTextMuted
+                                tint = if (routeSetupOpen) AppPrimary else AppTextMuted
                             )
                         },
                     )
@@ -1367,9 +1987,18 @@ private val MEMBER_LIST_MAX_HEIGHT = 300.dp
 private fun RiderMap(
     members: List<MemberPosition>,
     waypoints: List<Waypoint>,
-    trip: Trip?,
     /**
-     * The road between the trip's two ends, or empty when there is none to
+     * The two ends to draw flags on.
+     *
+     * The trip's own most of the time, and the draft's while a route is being
+     * set up — which is why they are passed as endpoints rather than as the
+     * trip: a start a rider has just picked has to appear under their finger
+     * before it is saved, or picking it looks like nothing happened.
+     */
+    origin: TripEndpoint?,
+    destination: TripEndpoint?,
+    /**
+     * The road between those two ends, or empty when there is none to
      * draw. Empty is the ordinary state and draws nothing — the map looks
      * exactly as it did before road routing existed.
      */
@@ -1510,8 +2139,15 @@ private fun RiderMap(
 
     // The two ends of the trip. They change only when the owner edits them, so
     // they are keyed on the pair rather than redrawn with every poll.
-    LaunchedEffect(trip?.origin, trip?.destination) {
-        syncEndpoints(mapView, trip, endpointMarkers, originFallback, destinationFallback)
+    LaunchedEffect(origin, destination) {
+        syncEndpoints(
+            view = mapView,
+            origin = origin,
+            destination = destination,
+            drawn = endpointMarkers,
+            originFallback = originFallback,
+            destinationFallback = destinationFallback,
+        )
     }
 
     // The road between them, when the server managed to work one out. Changes
@@ -1868,7 +2504,8 @@ private fun syncWaypoints(
  */
 private fun syncEndpoints(
     view: MapView,
-    trip: Trip?,
+    origin: TripEndpoint?,
+    destination: TripEndpoint?,
     drawn: MutableList<Marker>,
     originFallback: String,
     destinationFallback: String,
@@ -1877,8 +2514,8 @@ private fun syncEndpoints(
     drawn.clear()
 
     val ends = listOfNotNull(
-        trip?.origin?.let { Triple(EndpointMarker.Kind.ORIGIN, it, originFallback) },
-        trip?.destination?.let { Triple(EndpointMarker.Kind.DESTINATION, it, destinationFallback) },
+        origin?.let { Triple(EndpointMarker.Kind.ORIGIN, it, originFallback) },
+        destination?.let { Triple(EndpointMarker.Kind.DESTINATION, it, destinationFallback) },
     )
 
     ends.forEach { (kind, endpoint, fallback) ->

@@ -100,21 +100,28 @@ class CurrentLocationRulesTest {
     fun `a point from the shortcut carries no name, exactly like a long press`() {
         // "My location" as a prefilled label would be a name to delete before
         // typing the real one, and it means nothing on the map an hour later.
-        // The two ends take no label; a stop still asks for one.
-        val fromShortcut = PendingPlacement(here)
+        // The two ends take no label; a stop still asks for one, which is why
+        // a stop picked this way is the one case that still opens a dialog.
+        val fromShortcut = RoutePoint(here)
 
-        assertEquals("", fromShortcut.name)
-        assertTrue(MapPlacementRules.isNameValid(MapPlacement.ORIGIN, fromShortcut.name))
-        assertTrue(MapPlacementRules.isNameValid(MapPlacement.DESTINATION, fromShortcut.name))
-        assertFalse(MapPlacementRules.isNameValid(MapPlacement.WAYPOINT, fromShortcut.name))
+        assertEquals("", fromShortcut.label)
+        assertTrue(MapPlacementRules.isNameValid(MapPlacement.ORIGIN, fromShortcut.label))
+        assertTrue(MapPlacementRules.isNameValid(MapPlacement.DESTINATION, fromShortcut.label))
+        assertFalse(RouteSetupRules.isStopNameValid(fromShortcut.label))
     }
 
     @Test
     fun `the shortcut places the exact fix, not a rounded one`() {
         // It exists because pressing and holding on your own dot is imprecise.
-        // Handing the dialog anything but the fix itself would give that back.
-        val placement = PendingPlacement(here)
+        // Handing the field anything but the fix itself would give that back.
+        val picked = RoutePoint(here)
 
+        assertEquals(here.lat, picked.point.lat, 0.0)
+        assertEquals(here.lng, picked.point.lng, 0.0)
+
+        // And the same for the long press, which still ends in the dialog when
+        // no field is waiting for a point.
+        val placement = PendingPlacement(here)
         assertEquals(here.lat, placement.point.lat, 0.0)
         assertEquals(here.lng, placement.point.lng, 0.0)
     }
