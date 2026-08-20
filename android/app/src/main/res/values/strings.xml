@@ -56,7 +56,7 @@
     <!-- Trip detail -->
     <string name="members_title">Members</string>
     <string name="invite_title">Invite a rider</string>
-    <string name="invite_email_label">Google account email</string>
+    <string name="invite_email_label">Google account emails</string>
     <string name="send_invite">Invite</string>
     <!--
       The way into the email invite, which is a dialog now rather than a form
@@ -64,7 +64,9 @@
     -->
     <string name="invite_by_email">Add by email</string>
     <string name="invite_sent_to">Invited %1$s</string>
-    <string name="invite_hint">They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
+    <!-- One press of Invite can carry several now, and five addresses on one line is not a confirmation anybody reads. -->
+    <string name="invite_sent_count">Invited %1$d riders</string>
+    <string name="invite_hint">Separate several with a comma. They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
     <string name="not_tracking_yet">not tracking yet</string>
     <string name="start_sharing">Tracking</string>
     <string name="view_final_positions">Final positions</string>
@@ -378,6 +380,8 @@
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">Ridden with before</string>
+    <!-- The chip that opens the companions the first five did not fit. -->
+    <string name="invite_suggestions_more">+%1$d more</string>
     <string name="qr_invite_action">QR code</string>
     <string name="qr_invite_title">Invite with QR</string>
     <string name="qr_invite_intro">Show this code to someone standing next to you and they can join the trip without swapping email addresses.</string>

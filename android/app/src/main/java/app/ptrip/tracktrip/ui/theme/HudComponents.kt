@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -492,6 +493,15 @@ fun HudAvatar(
 /**
  * A tappable pill — a suggestion, a filter, a shortcut. Distinct from a button
  * by being one of several, and by carrying data rather than an action.
+ *
+ * [selected] inverts it: the soft tint becomes the solid one and the label
+ * flips to read against it. That is for the chips that are a *choice* being
+ * held — several riders picked before one press of Invite — rather than an
+ * action taken on the spot, and it is drawn as fill rather than as a tick
+ * because a row of pills has to be scannable for which ones are in.
+ *
+ * The `selected` semantic goes on with it, so a screen reader says "selected"
+ * and a test can ask, rather than both having to infer a choice from a colour.
  */
 @Composable
 fun HudChip(
@@ -499,19 +509,27 @@ fun HudChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = AppPrimary,
+    selected: Boolean = false,
 ) {
     Row(
         modifier = modifier
             .clip(CircleShape)
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, onClick = onClick)
             .drawBehind {
                 val radius = size.height / 2f
-                drawRoundRect(color = AppPrimarySoft, cornerRadius = CornerRadius(radius))
+                drawRoundRect(
+                    color = if (selected) accent else AppPrimarySoft,
+                    cornerRadius = CornerRadius(radius),
+                )
             }
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = text, style = MaterialTheme.typography.labelMedium, color = accent)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) AppOnPrimary else accent,
+        )
     }
 }
 

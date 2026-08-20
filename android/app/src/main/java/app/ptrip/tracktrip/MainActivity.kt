@@ -592,8 +592,8 @@ private fun SignedInNavigation(
                 onShareInviteLink = detailViewModel::requestShareLink,
                 onOpenMap = { backStack.push(Screen.TripMap(screen.tripId)) },
                 onInviteEmailChange = detailViewModel::onInviteEmailChange,
-                onSendInvite = detailViewModel::sendInvite,
-                onUseSuggestion = detailViewModel::useSuggestion,
+                onSendInvites = detailViewModel::sendInvites,
+                onInviteSuggestion = detailViewModel::inviteSuggestion,
                 onShowQr = {
                     // Issued on the way in, so the screen never opens on a
                     // code from an earlier visit that has since lapsed.
