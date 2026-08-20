@@ -96,6 +96,11 @@ android {
             // throwing. org.json is the one that matters here, and the real
             // implementation is on the test classpath ahead of the stub.
             isReturnDefaultValues = true
+
+            // Robolectric reads the merged resources and the manifest, so a
+            // test that composes a screen can resolve `stringResource` for
+            // real rather than against a stub that answers "".
+            isIncludeAndroidResources = true
         }
     }
 
@@ -139,4 +144,16 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.json)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Composing a screen on the JVM. Unit-test scope only — none of this is in
+    // the APK. See PlacesMapRenderTest for why it is worth the dependency.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    // Debug scope, not test scope: this artifact is a manifest, and the empty
+    // activity it declares has to be *merged into the debug manifest* for a
+    // Robolectric test to be able to launch one. On the test classpath the AAR
+    // is present and the manifest is not, which fails as "unable to resolve
+    // activity". Debug builds only — it never reaches a release APK.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

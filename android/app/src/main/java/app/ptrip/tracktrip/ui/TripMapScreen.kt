@@ -67,6 +67,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.view.MotionEvent
@@ -3025,7 +3026,30 @@ internal fun RiderMap(
 
     // No scrim: the map is the thing being read, and every layer over it costs
     // contrast on the road names.
-    AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+    //
+    // ## Why the clip is load-bearing
+    //
+    // `AndroidView` does not clip the view it hosts to the bounds Compose
+    // measured for it, and osmdroid paints *whole tiles*. A 256px tile row is
+    // ~93dp at xhdpi, and the topmost row is aligned to the tile grid rather
+    // than to the top edge of the view — so the map paints up to a tile above
+    // where it ends, over whatever Compose drew there first.
+    //
+    // Nothing was ever drawn there until the places screen put a search bar
+    // above the map inside the same Column. The trip map has the map first,
+    // with its header drawn *after* the column and therefore on top, so this
+    // was invisible for as long as there was only one map screen. On the
+    // places screen it painted over all but the top ~8dp of a 46dp search bar
+    // and the bug arrived as "the search box renders empty" — a white pill
+    // with no icon and no placeholder, because the icon and the placeholder
+    // are vertically centred and the overdraw started above them.
+    //
+    // Here rather than on the caller so that the next screen to put anything
+    // above a map does not have to know this.
+    AndroidView(
+        factory = { mapView },
+        modifier = Modifier.fillMaxSize().clipToBounds(),
+    )
 
     // Pins: added, removed, and then slid to where their rider now is.
     LaunchedEffect(members) {
