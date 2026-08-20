@@ -38,11 +38,6 @@
     <!-- Edit trip -->
     <string name="edit_trip">Edit trip</string>
     <string name="edit_trip_save">Save</string>
-    <string name="edit_trip_route_title">Route</string>
-    <string name="edit_trip_route_unset">Not set yet</string>
-    <string name="edit_trip_route_point">%1$s, %2$s</string>
-    <string name="edit_trip_route_hint">The route is edited on the map, where you can point at the places on it.</string>
-    <string name="edit_trip_open_route">Edit the route on the map</string>
 
     <!-- Trip detail -->
     <string name="members_title">Members</string>

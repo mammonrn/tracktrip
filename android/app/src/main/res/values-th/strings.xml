@@ -52,11 +52,6 @@
     <!-- Edit trip -->
     <string name="edit_trip">แก้ไขทริป</string>
     <string name="edit_trip_save">บันทึก</string>
-    <string name="edit_trip_route_title">เส้นทาง</string>
-    <string name="edit_trip_route_unset">ยังไม่ได้ตั้ง</string>
-    <string name="edit_trip_route_point">%1$s, %2$s</string>
-    <string name="edit_trip_route_hint">เส้นทางแก้ไขได้ที่หน้าแผนที่ ซึ่งชี้ตำแหน่งบนแผนที่ได้เลย</string>
-    <string name="edit_trip_open_route">แก้ไขเส้นทางบนแผนที่</string>
     <string name="back">ย้อนกลับ</string>
 
     <!-- Trip detail -->

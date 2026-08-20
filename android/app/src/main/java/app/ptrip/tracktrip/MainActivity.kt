@@ -588,6 +588,47 @@ private fun SignedInNavigation(
             )
             val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
 
+            // And the map's, on *its* key, for the same reason: the route list
+            // on this screen is the map's route list, editing the map's draft.
+            // A second instance here would give the two screens a draft each,
+            // which is precisely the disagreement the shared list avoids.
+            //
+            // It is not free. TripMapViewModel opens this trip's position
+            // socket in its `init`, so reaching the route list from here starts
+            // a live feed for a screen that draws no positions — and, being
+            // scoped to the activity, it outlives the visit. A rider who opens
+            // the map at all pays that anyway; this brings it forward. Worth
+            // revisiting if the route ever needs its own view model, but not
+            // worth a second copy of the route logic to avoid today.
+            val mapViewModel: TripMapViewModel = viewModel(
+                key = "map-${screen.tripId}",
+                factory = tripMapViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val mapState by mapViewModel.uiState.collectAsStateWithLifecycle()
+            val routeSearchState by mapViewModel.placeSearch.state.collectAsStateWithLifecycle()
+
+            val context = LocalContext.current
+            var routePermission by remember { mutableStateOf(false) }
+            var routeLocation by remember { mutableStateOf<LatLng?>(null) }
+            LaunchedEffect(Unit) {
+                routePermission = LocationFix.hasPermission(context)
+                if (routePermission) {
+                    val fix = LocationFix.lastKnown(context)
+                        ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                    routeLocation = fix?.let { LatLng(it.latitude, it.longitude) }
+                    mapViewModel.placeSearch.near = routeLocation
+                }
+            }
+
+            // Leaving throws the draft away rather than letting it sit on the
+            // view model: the map opens the list by seeding it from the trip,
+            // and a stale draft left here is what it would find.
+            val leave: () -> Unit = {
+                mapViewModel.closeRouteSetup()
+                mapViewModel.placeSearch.clear()
+                backStack.pop()
+            }
+
             EditTripScreen(
                 trip = detailState.trip,
                 saving = detailState.renamePending,
@@ -597,16 +638,26 @@ private fun SignedInNavigation(
                         // The trip list shows every name, so it is stale the
                         // moment one changes.
                         tripsViewModel.refresh()
-                        backStack.pop()
+                        leave()
                     }
                 },
-                onEditRoute = {
-                    // The route's editor is the list behind the magnifier on
-                    // the map. Pushed rather than swapped: back from the map
-                    // returns here, which is where the rider was.
-                    backStack.push(Screen.TripMap(screen.tripId))
-                },
-                onBack = { backStack.pop() },
+                routeDraft = mapState.routeDraft,
+                routePlan = mapState.summaryPlan,
+                routeLine = mapState.draftRoute,
+                routePreviewLoading = mapState.routePreviewLoading,
+                searchState = routeSearchState,
+                personalPlaces = mapState.personalPlaces,
+                myLocation = routeLocation,
+                hasLocationPermission = routePermission,
+                currentUserId = profile?.id,
+                onOpenRouteSetup = mapViewModel::openRouteSetup,
+                onSearchQueryChanged = mapViewModel.placeSearch::onQueryChanged,
+                onSearchCleared = mapViewModel.placeSearch::clear,
+                onPickRoutePoint = mapViewModel::pickRoutePoint,
+                onRemoveRouteRow = mapViewModel::removeRouteRow,
+                onMoveRoutePoint = mapViewModel::moveRoutePoint,
+                onConfirmRoute = mapViewModel::confirmRoute,
+                onBack = leave,
                 modifier = modifier,
             )
         }
