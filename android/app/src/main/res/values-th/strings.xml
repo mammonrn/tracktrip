@@ -136,6 +136,7 @@
     <string name="map_riders_placed">มีตำแหน่ง %1$d จาก %2$d คน</string>
     <string name="map_center_on_me">กลับมาที่ตำแหน่งฉัน</string>
     <string name="map_finding_me">กำลังค้นหาตำแหน่งของคุณ…</string>
+    <string name="map_centred_on_me">อยู่ที่ตำแหน่งคุณแล้ว</string>
     <string name="map_overview">ดูเส้นทางทั้งหมด</string>
     <string name="map_progress_straight_line">เส้นตรง</string>
     <string name="map_progress_by_road">ตามถนน</string>

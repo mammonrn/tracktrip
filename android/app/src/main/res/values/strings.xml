@@ -129,6 +129,7 @@
     <string name="map_riders_placed">%1$d of %2$d riders on the map</string>
     <string name="map_center_on_me">Centre on me</string>
     <string name="map_finding_me">Finding you…</string>
+    <string name="map_centred_on_me">Centred on you</string>
     <!--
       The overview control and the bar down the edge of the map. The bar's
       caption says "straight line" because that is what it measures: the app
