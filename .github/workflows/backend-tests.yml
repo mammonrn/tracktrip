@@ -61,6 +61,17 @@ jobs:
         # here would skip.
         run: npm ci
 
+      - name: Report the Node this ran on
+        # Printed because the version is the point, not a detail: DEPLOY.md
+        # pins the VPS to Node 20 and says not to move it. GitHub's own
+        # deprecation notice in this log ("actions ... forced to run on Node.js
+        # 24") is about the runtime of `checkout` and `setup-node` themselves,
+        # not about the toolchain they install, and the two are easy to confuse
+        # when reading a run. This line is the one that answers it.
+        run: |
+          echo "node $(node --version), npm $(npm --version)"
+          node -e "if (process.versions.node.split('.')[0] !== '20') { console.log('::warning::Tests are running on Node ' + process.versions.node + ', not the Node 20 floor DEPLOY.md pins the server to.'); }"
+
       - name: Run tests
         # `node --test`, which walks test/ and applies every migration to an
         # in-memory database in each file's setup. Migrations are therefore
