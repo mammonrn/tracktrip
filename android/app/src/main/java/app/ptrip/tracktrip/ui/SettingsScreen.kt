@@ -34,6 +34,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import android.os.Build
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.location.DeviceSharing
 import app.ptrip.tracktrip.location.PhoneVendor
 import app.ptrip.tracktrip.location.VendorBatteryAdvice
 import app.ptrip.tracktrip.data.Trip
@@ -112,6 +113,7 @@ fun SettingsScreen(
     onRemoveSharedPlace: (Long) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onSharingDurationChange: (SharingDuration) -> Unit,
+    onShareFromThisPhoneChange: (Boolean) -> Unit,
     onToggleSharing: (Trip, Boolean) -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
@@ -248,10 +250,13 @@ fun SettingsScreen(
             HudDivider()
 
             SharingSection(
+                on = state.shareFromThisPhone,
+                switchPending = state.switchPending,
                 trips = state.activeTrips,
                 loading = state.loadingTrips,
                 sharingTripId = sharingTripId,
                 pendingTripId = state.pendingTripId,
+                onSwitch = onShareFromThisPhoneChange,
                 onToggle = onToggleSharing,
             )
 
@@ -297,20 +302,49 @@ fun SettingsScreen(
 }
 
 /**
- * Location sharing, one switch per running trip.
+ * Location sharing: this phone's switch, and under it the trip a fix goes to.
  *
- * A list rather than a single switch because nothing stops a rider being on
- * two running trips at once — the schema has no such constraint, and a
- * weekend group ride during a longer tour is the ordinary case. Only one can
- * be shared to at a time, though: the phone has one location, and the service
- * reports to the trip it was started for.
+ * ## What was wrong with one switch per trip
+ *
+ * There was no phone switch. The section was a list built from the running
+ * trips, with a `Switch` on each row, and every one of those switches was a
+ * statement about a trip. A rider whose trip had **ended** came here to turn
+ * sharing on and found nothing to press: the trip had been filtered out before
+ * the list was drawn, and there was no other control on the screen. The report
+ * was "I can't turn it on". The screen's answer was "there is no trip to turn
+ * it on for" — an answer to a different question, and the wrong one to give
+ * about a privacy setting.
+ *
+ * It is two questions, and they are drawn as two now:
+ *
+ * 1. **May this phone share where it is?** The switch at the top. Always
+ *    pressable — with no trips, with every trip finished, with the network
+ *    down. It is about the phone in the rider's hand, and nothing about
+ *    anybody's weekend can take it away.
+ * 2. **Which trip is a fix reported to?** The rows below, unchanged, and
+ *    subordinate: they are greyed while the phone's answer is no, because a
+ *    trip switch that could contradict the phone's is how the two got confused
+ *    in the first place.
+ *
+ * The line under the switch says which of the three states it is actually in
+ * — see [DeviceSharing.Status] — because "on" while nothing is being sent is a
+ * perfectly ordinary state and a switch alone cannot tell a rider that.
+ *
+ * A list rather than a single trip because nothing stops a rider being on two
+ * running trips at once — the schema has no such constraint, and a weekend
+ * group ride during a longer tour is the ordinary case. Only one can be shared
+ * to at a time, though: the phone has one location, and the service reports to
+ * the trip it was started for.
  */
 @Composable
 private fun SharingSection(
+    on: Boolean,
+    switchPending: Boolean,
     trips: List<Trip>,
     loading: Boolean,
     sharingTripId: Long?,
     pendingTripId: Long?,
+    onSwitch: (Boolean) -> Unit,
     onToggle: (Trip, Boolean) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -324,12 +358,43 @@ private fun SharingSection(
                 text = stringResource(R.string.settings_sharing),
                 style = MaterialTheme.typography.titleMedium,
                 color = AppText,
+                modifier = Modifier.weight(1f),
             )
+            if (switchPending) {
+                CircularProgressIndicator(
+                    color = AppPrimary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(20.dp),
+                )
+            } else {
+                Switch(
+                    checked = on,
+                    onCheckedChange = onSwitch,
+                    colors = sharingSwitchColors(),
+                )
+            }
         }
+
+        Text(
+            text = stringResource(
+                when (DeviceSharing.status(on, sharingTripId)) {
+                    DeviceSharing.Status.OFF -> R.string.settings_sharing_device_off
+                    DeviceSharing.Status.ON_IDLE -> R.string.settings_sharing_device_idle
+                    DeviceSharing.Status.ON_SHARING -> R.string.settings_sharing_device_on
+                }
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(start = 38.dp, bottom = 12.dp, end = 8.dp),
+        )
 
         when {
             loading && trips.isEmpty() -> HudLoading()
 
+            // Not an error and not an empty state to apologise for: the switch
+            // above is set either way, and this only says why nothing is
+            // moving. The old copy said this where the control should have
+            // been, which is what made it read as a refusal.
             trips.isEmpty() -> Text(
                 text = stringResource(R.string.sharing_no_active_trips),
                 style = MaterialTheme.typography.bodySmall,
@@ -359,15 +424,15 @@ private fun SharingSection(
                     } else {
                         Switch(
                             checked = trip.id == sharingTripId,
-                            onCheckedChange = { on -> onToggle(trip, on) },
-                            enabled = pendingTripId == null,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = AppOnPrimary,
-                                checkedTrackColor = AppPrimary,
-                                uncheckedThumbColor = AppTextMuted,
-                                uncheckedTrackColor = AppSurfaceAlt,
-                                uncheckedBorderColor = AppLine,
-                            ),
+                            onCheckedChange = { onToggle(trip, it) },
+                            // The phone's answer outranks the trip's. Both
+                            // halves of it, from the one place that knows the
+                            // rule: the switch above, and a trip the server
+                            // would refuse a session on anyway.
+                            enabled = DeviceSharing.canShareOn(trip, on) &&
+                                pendingTripId == null &&
+                                !switchPending,
+                            colors = sharingSwitchColors(),
                         )
                     }
                 }
@@ -375,6 +440,16 @@ private fun SharingSection(
         }
     }
 }
+
+/** The app's switch, rather than Material's default purple. */
+@Composable
+private fun sharingSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = AppOnPrimary,
+    checkedTrackColor = AppPrimary,
+    uncheckedThumbColor = AppTextMuted,
+    uncheckedTrackColor = AppSurfaceAlt,
+    uncheckedBorderColor = AppLine,
+)
 
 /** Who is signed in, and the way into editing it. */
 @Composable
@@ -502,6 +577,7 @@ private fun SettingsPreview() {
             onRemoveSharedPlace = {},
             onLanguageChange = {},
             onSharingDurationChange = {},
+            onShareFromThisPhoneChange = {},
             onToggleSharing = { _, _ -> },
             onSignOut = {},
             onBack = {},

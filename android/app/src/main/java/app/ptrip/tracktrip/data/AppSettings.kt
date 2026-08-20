@@ -48,6 +48,28 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putInt(KEY_SHARING_MINUTES, value ?: UNTIL_STOPPED).apply()
 
     /**
+     * Whether this phone may share its location at all.
+     *
+     * A device-wide switch, and deliberately not a fact about any trip. The
+     * screen that used to ask this asked it once per running trip, so a rider
+     * whose trip had ended had nothing to press — see `DeviceSharing` for the
+     * whole of that bug. This is the other half of the split: the phone's own
+     * answer, which survives every trip starting, ending and being left.
+     *
+     * Defaults to **true**, matching the backend, where a rider who has never
+     * touched the controls already counts as sharing. A false default would
+     * have silently stopped everyone who upgraded mid-tour — a setting nobody
+     * chose is not consent to stop any more than it is consent to start, and
+     * of the two, matching what the app did yesterday is the honest one.
+     *
+     * Being on is permission, not transmission: nothing is sent until there is
+     * a trip to send to.
+     */
+    var shareLocationFromThisPhone: Boolean
+        get() = prefs.getBoolean(KEY_SHARE_LOCATION, true)
+        set(value) = prefs.edit().putBoolean(KEY_SHARE_LOCATION, value).apply()
+
+    /**
      * Whether the rider has already been shown Android's battery-exemption
      * dialog.
      *
@@ -67,6 +89,7 @@ class AppSettings(context: Context) {
         const val KEY_LANGUAGE = "language_tag"
         const val KEY_SHARING_MINUTES = "default_sharing_minutes"
         const val KEY_BATTERY_ASKED = "battery_exemption_asked"
+        const val KEY_SHARE_LOCATION = "share_location_from_this_phone"
 
         /** No value written yet. Not a duration anyone could choose. */
         const val ABSENT = -1

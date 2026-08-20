@@ -74,6 +74,7 @@ class SettingsPlacesTest {
                     onRemoveSharedPlace = { removedShared += it },
                     onLanguageChange = {},
                     onSharingDurationChange = {},
+                    onShareFromThisPhoneChange = {},
                     onToggleSharing = { _, _ -> },
                     onSignOut = {},
                     onBack = {},

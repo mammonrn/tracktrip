@@ -280,6 +280,11 @@ private fun SignedInNavigation(
     var pendingToggle by remember { mutableStateOf<Pair<Trip, Boolean>?>(null) }
     var pendingDuration by remember { mutableStateOf<SharingDuration?>(null) }
 
+    // The device-wide switch, when moving it is about to start sending and so
+    // needs Android's answer first. Kept apart from [pendingToggle] because
+    // they are different sentences — this one is about the phone.
+    var pendingDeviceSwitch by remember { mutableStateOf<Boolean?>(null) }
+
     BackHandler(enabled = backStack.canGoBack) { backStack.pop() }
 
     when (val screen = backStack.current) {
@@ -320,7 +325,13 @@ private fun SignedInNavigation(
             }
 
             val requestSharingPermission = rememberSharingPermissionRequest(
-                onGranted = { pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) } },
+                onGranted = {
+                    pendingDeviceSwitch?.let { on ->
+                        pendingDeviceSwitch = null
+                        settingsViewModel.setShareFromThisPhone(on)
+                    }
+                    pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) }
+                },
                 onDenied = settingsViewModel::onPermissionDenied,
                 askBatteryExemption = true,
             )
@@ -337,6 +348,20 @@ private fun SignedInNavigation(
                 onRemoveSharedPlace = placesViewModel::removeShared,
                 onLanguageChange = settingsViewModel::setLanguage,
                 onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
+                // Turning the switch on only asks Android when it is about to
+                // start sending. With no trip running it records a preference,
+                // and putting the location dialog in front of that would be
+                // demanding an answer nothing is about to act on. Turning it
+                // off never asks — a kill switch that waits on a dialog is not
+                // a kill switch.
+                onShareFromThisPhoneChange = { on ->
+                    if (on && settingsViewModel.switchWouldStartSharing(true)) {
+                        pendingDeviceSwitch = true
+                        requestSharingPermission()
+                    } else {
+                        settingsViewModel.setShareFromThisPhone(on)
+                    }
+                },
                 onToggleSharing = { trip, on ->
                     if (on) {
                         pendingToggle = trip to true

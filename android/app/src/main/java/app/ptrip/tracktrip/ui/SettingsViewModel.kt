@@ -8,6 +8,7 @@ import app.ptrip.tracktrip.data.SessionExpiredException
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
 import app.ptrip.tracktrip.location.ActiveSharing
+import app.ptrip.tracktrip.location.DeviceSharing
 import app.ptrip.tracktrip.location.SharingController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +57,17 @@ enum class SharingDuration(val minutes: Int?) {
 data class SettingsUiState(
     val language: AppLanguage = AppLanguage.SYSTEM,
     val defaultSharingDuration: SharingDuration = SharingDuration.ONE_HOUR,
+    /**
+     * Whether this phone may share its location at all.
+     *
+     * A device switch, not a trip's. It is here on the same state object as
+     * the language because that is what it is — a preference of this phone's
+     * — and unlike [activeTrips] it is answerable with the network down and
+     * with every trip a rider has ever been on finished.
+     */
+    val shareFromThisPhone: Boolean = true,
+    /** True while the switch's own start or stop is in flight. */
+    val switchPending: Boolean = false,
     /** Trips that could be shared on — running ones the rider belongs to. */
     val activeTrips: List<Trip> = emptyList(),
     val loadingTrips: Boolean = true,
@@ -82,6 +94,7 @@ class SettingsViewModel(
         SettingsUiState(
             language = AppLanguage.fromTag(settings.languageTag),
             defaultSharingDuration = SharingDuration.fromMinutes(settings.defaultSharingMinutes),
+            shareFromThisPhone = sharingController.enabled.value,
         )
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -91,6 +104,15 @@ class SettingsViewModel(
 
     init {
         refreshTrips()
+
+        // The switch can be moved from the trip screen too — starting there is
+        // consenting — so this screen follows the controller rather than only
+        // its own writes.
+        viewModelScope.launch {
+            sharingController.enabled.collect { on ->
+                _uiState.update { it.copy(shareFromThisPhone = on) }
+            }
+        }
     }
 
     fun setLanguage(language: AppLanguage) {
@@ -134,6 +156,67 @@ class SettingsViewModel(
     }
 
     /**
+     * Moves the device-wide switch, and does what that means to whatever is
+     * live.
+     *
+     * Always available. Nothing here consults the trip list to decide *whether*
+     * the rider may press it — that was the bug: an ended trip left the screen
+     * with no control at all, and a rider trying to turn sharing on found the
+     * app answering a question about their weekend instead. The list is read
+     * only to answer the second question, which trip an "on" should start on,
+     * and [DeviceSharing.onSwitched] decides that.
+     *
+     * The stored preference is written first and unconditionally, so a phone
+     * with no signal still stops sending and still remembers why.
+     */
+    fun setShareFromThisPhone(on: Boolean) {
+        if (_uiState.value.switchPending) return
+
+        val effect = DeviceSharing.onSwitched(
+            on = on,
+            sharingTripId = sharingController.active.value?.tripId,
+            running = _uiState.value.activeTrips,
+        )
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(switchPending = true, error = null) }
+            try {
+                when (effect) {
+                    is DeviceSharing.Effect.Remember -> sharingController.setEnabled(on)
+                    is DeviceSharing.Effect.Stop -> sharingController.disable()
+                    is DeviceSharing.Effect.Start ->
+                        sharingController.start(effect.trip, settings.defaultSharingMinutes)
+                }
+                _uiState.update { it.copy(switchPending = false) }
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                // The phone's own answer survives a failed round trip: turning
+                // off has already stopped the service by this point, and
+                // turning on has already been remembered.
+                sharingController.setEnabled(on)
+                _uiState.update { it.copy(switchPending = false, error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Whether moving the switch to [on] would actually begin transmitting.
+     *
+     * The screen asks before it asks Android: turning the switch on with no
+     * trip running only records a preference, and putting the location
+     * permission dialog in front of that would be demanding an answer to a
+     * question nothing is about to act on. The same decision as the toggle
+     * itself, so it is the same function that makes it.
+     */
+    fun switchWouldStartSharing(on: Boolean): Boolean =
+        DeviceSharing.onSwitched(
+            on = on,
+            sharingTripId = sharingController.active.value?.tripId,
+            running = _uiState.value.activeTrips,
+        ) is DeviceSharing.Effect.Start
+
+    /**
      * Turns sharing on or off for one trip.
      *
      * Starting uses whatever default duration the rider set, so the toggle
@@ -141,7 +224,7 @@ class SettingsViewModel(
      * someone about to ride is making a deliberate choice.
      */
     fun toggleSharing(trip: Trip, on: Boolean) {
-        if (_uiState.value.pendingTripId != null) return
+        if (_uiState.value.pendingTripId != null || _uiState.value.switchPending) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(pendingTripId = trip.id, error = null) }
