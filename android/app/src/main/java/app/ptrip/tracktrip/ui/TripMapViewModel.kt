@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.MemberPosition
+import app.ptrip.tracktrip.data.PersonalPlace
+import app.ptrip.tracktrip.data.PersonalPlaceStore
 import app.ptrip.tracktrip.data.PlaceLookup
 import app.ptrip.tracktrip.data.SharedPlaceStore
 import app.ptrip.tracktrip.data.PositionSocket
@@ -84,6 +86,13 @@ data class TripMapUiState(
     val routePreview: RouteLine? = null,
     /** Whether a preview is in flight, so the summary can say so rather than read empty. */
     val routePreviewLoading: Boolean = false,
+    /**
+     * This rider's own saved places, for the shortcut chips over the search.
+     *
+     * Theirs and nobody else's — the server has no way to answer with anybody
+     * else's, and this app has no way to ask. See [PersonalPlace].
+     */
+    val personalPlaces: List<PersonalPlace> = emptyList(),
     val error: String? = null,
 ) {
     /** The riders with a fix — the ones that can be drawn. */
@@ -214,6 +223,14 @@ class TripMapViewModel(
      */
     private val sharedPlacesApi: SharedPlaceStore? = null,
     /**
+     * This rider's own places, or null in a preview or a test.
+     *
+     * A separate dependency from [sharedPlacesApi] rather than a mode on it,
+     * because the property worth keeping is that a private place and a shared
+     * one never travel through the same code.
+     */
+    private val personalPlacesApi: PersonalPlaceStore? = null,
+    /**
      * Road routing, or null in a preview or a test. Null behaves exactly like
      * a server with no key: no route, and the straight line stays.
      */
@@ -301,6 +318,10 @@ class TripMapViewModel(
     // a listener that writes to a field that does not exist yet.
     init {
         listenForPositions()
+        // Once, on the way in. These change only when this rider changes them,
+        // so there is nothing for a poll to notice — and the shortcut row has
+        // to be there the first time the search opens, not a beat later.
+        loadPersonalPlaces()
     }
 
     /**
@@ -690,6 +711,74 @@ class TripMapViewModel(
 
                 refreshTrip()
                 refresh()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Reads this rider's own places.
+     *
+     * Its failure is swallowed: shortcuts that did not load are a row of chips
+     * that is not there, which is a smaller thing than an error line over a
+     * map. The search underneath still works, and so does everything else.
+     */
+    fun loadPersonalPlaces() {
+        val api = personalPlacesApi ?: return
+        viewModelScope.launch {
+            val places = try {
+                api.list()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+                return@launch
+            } catch (e: ApiException) {
+                return@launch
+            }
+            _uiState.update { it.copy(personalPlaces = places) }
+        }
+    }
+
+    /**
+     * Saves a place to this rider's own list, and hands it back for the row
+     * that asked for it.
+     *
+     * Deliberately a twin of [addSharedPlace] rather than a branch inside it.
+     * The two write to different tables through different routes under
+     * different rules, and the one mistake this feature cannot afford is a
+     * private place taking a shared code path — which is exactly what a
+     * boolean parameter on one function invites.
+     */
+    suspend fun addPersonalPlace(label: String, name: String, point: LatLng): RoutePoint? {
+        val api = personalPlacesApi ?: return null
+        val trimmedName = name.trim()
+        val trimmedLabel = label.trim().takeIf { it.isNotEmpty() } ?: trimmedName
+        if (!RouteSetupRules.isStopNameValid(trimmedName)) return null
+
+        return try {
+            val saved = api.add(trimmedLabel, trimmedName, point)
+            _uiState.update { it.copy(error = null) }
+            loadPersonalPlaces()
+            RoutePoint(saved.point, saved.name)
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            null
+        } catch (e: ApiException) {
+            _uiState.update { it.copy(error = e.message) }
+            null
+        }
+    }
+
+    /** Takes one of this rider's own shortcuts away. Nobody else is affected. */
+    fun removePersonalPlace(id: Long) {
+        val api = personalPlacesApi ?: return
+        viewModelScope.launch {
+            try {
+                api.remove(id)
+                _uiState.update { it.copy(error = null) }
+                loadPersonalPlaces()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {

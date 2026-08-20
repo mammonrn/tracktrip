@@ -52,6 +52,17 @@ class AppContainer private constructor(context: Context) {
     val sharedPlacesApi: SharedPlacesApi by lazy { SharedPlacesApi(apiClient) }
 
     /**
+     * The places this rider saved for themselves — home, work, wherever else.
+     *
+     * A separate object from [sharedPlacesApi] because they are separate
+     * everywhere: separate tables, separate routes, separate types. The one
+     * thing that must never happen is a private row being handled by code that
+     * thinks it is a shared one, and two objects cannot be confused for each
+     * other the way one object with a flag can.
+     */
+    val personalPlacesApi: PersonalPlacesApi by lazy { PersonalPlacesApi(apiClient) }
+
+    /**
      * Road routing, proxied by this app's own backend, on the same metered key
      * as place search and for the same reasons — see [DirectionsApi]. The
      * object exists whether or not the server has a key: without one the

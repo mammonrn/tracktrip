@@ -53,6 +53,8 @@ import app.ptrip.tracktrip.ui.rememberSharingPermissionRequest
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
 import app.ptrip.tracktrip.ui.ProfileScreen
 import app.ptrip.tracktrip.ui.ProfileViewModel
+import app.ptrip.tracktrip.ui.PlacesMapScreen
+import app.ptrip.tracktrip.ui.PlacesViewModel
 import app.ptrip.tracktrip.ui.ScanQrScreen
 import app.ptrip.tracktrip.ui.Screen
 import app.ptrip.tracktrip.ui.SettingsScreen
@@ -287,6 +289,7 @@ private fun SignedInNavigation(
             onAcceptInvite = tripsViewModel::acceptInvite,
             onRefresh = tripsViewModel::refresh,
             onScanQr = { backStack.push(Screen.ScanQr) },
+            onOpenMap = { backStack.push(Screen.Places) },
             onOpenSettings = { backStack.push(Screen.Settings) },
             isSuperuser = profile?.isSuperuser == true,
             onShowAllTrips = tripsViewModel::setShowAllTrips,
@@ -358,6 +361,47 @@ private fun SignedInNavigation(
                     profileViewModel.uploadAvatar(picked.bytes, picked.contentType)
                 },
                 onImageUnreadable = profileViewModel::onImageUnreadable,
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        Screen.Places -> {
+            val placesViewModel: PlacesViewModel =
+                viewModel(factory = placesViewModelFactory(container, profile?.id, onSignOut))
+            val placesState by placesViewModel.uiState.collectAsStateWithLifecycle()
+            val searchState by placesViewModel.placeSearch.state.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+
+            // Read, never reported. Nothing on this screen shares a position:
+            // there is no trip to share it with. It is here to bias the search
+            // towards the region the rider is in, and to fill "use my current
+            // location" — both of which want a fix, not a feed.
+            var mapPermission by remember { mutableStateOf(false) }
+            var myLocation by remember { mutableStateOf<LatLng?>(null) }
+            LaunchedEffect(Unit) {
+                mapPermission = LocationFix.hasPermission(context)
+                if (mapPermission) {
+                    val fix = LocationFix.lastKnown(context)
+                        ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                    myLocation = fix?.let { LatLng(it.latitude, it.longitude) }
+                    placesViewModel.placeSearch.near = myLocation
+                }
+            }
+
+            PlacesMapScreen(
+                state = placesState,
+                searchState = searchState,
+                myLocation = myLocation,
+                hasLocationPermission = mapPermission,
+                currentUserId = profile?.id,
+                onSearchQueryChanged = placesViewModel.placeSearch::onQueryChanged,
+                onSearchCleared = placesViewModel.placeSearch::clear,
+                onAddShared = placesViewModel::addShared,
+                onAddPersonal = placesViewModel::addPersonal,
+                onRemoveShared = placesViewModel::removeShared,
+                onRemovePersonal = placesViewModel::removePersonal,
+                onDismissError = placesViewModel::clearError,
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -644,6 +688,8 @@ private fun SignedInNavigation(
                 onConfirmRoute = mapViewModel::confirmRoute,
                 onAddSharedPlace = mapViewModel::addSharedPlace,
                 onRemoveSharedPlace = mapViewModel::removeSharedPlace,
+                onAddPersonalPlace = mapViewModel::addPersonalPlace,
+                personalPlaces = mapState.personalPlaces,
                 hasLocationPermission = hasLocationPermission,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
@@ -757,7 +803,23 @@ private fun tripMapViewModelFactory(
             onSessionExpired = onSessionExpired,
             placeSearchApi = container.placeSearchApi,
             sharedPlacesApi = container.sharedPlacesApi,
+            personalPlacesApi = container.personalPlacesApi,
             routeApi = container.directionsApi,
+        )
+    }
+
+private fun placesViewModelFactory(
+    container: AppContainer,
+    currentUserId: Long?,
+    onSessionExpired: () -> Unit,
+): ViewModelProvider.Factory =
+    factoryOf {
+        PlacesViewModel(
+            sharedPlacesApi = container.sharedPlacesApi,
+            personalPlacesApi = container.personalPlacesApi,
+            placeSearchApi = container.placeSearchApi,
+            currentUserId = currentUserId,
+            onSessionExpired = onSessionExpired,
         )
     }
 
