@@ -28,12 +28,16 @@ const NAME_MAX_LENGTH = 60;
 const JOIN_ATTEMPTS_PER_MINUTE = 10;
 
 /**
- * Validates a POST /trips body. Returns { error } with a message, or { value }
- * with the trimmed name ready to insert.
+ * The one rule about a trip's name, in one place.
+ *
+ * Shared by POST and PATCH rather than written twice. The two used to be the
+ * same rule only by coincidence — a rename could not drift from a create
+ * because a rename did not exist — and the moment it did, a second copy would
+ * be a 60-character limit on one route and something else on the other, with
+ * the disagreement visible only to a rider whose title was refused by the
+ * screen that saves it after being accepted by the screen that creates it.
  */
-export function validateTripInput(body) {
-  const { name } = body || {};
-
+export function validateTripName(name) {
   if (typeof name !== 'string') {
     return { error: 'name is required' };
   }
@@ -44,7 +48,44 @@ export function validateTripInput(body) {
     };
   }
 
-  return { value: { name: trimmed } };
+  return { value: trimmed };
+}
+
+/**
+ * Validates a POST /trips body. Returns { error } with a message, or { value }
+ * with the trimmed name ready to insert.
+ */
+export function validateTripInput(body) {
+  const { error, value } = validateTripName((body || {}).name);
+  if (error) {
+    return { error };
+  }
+  return { value: { name: value } };
+}
+
+/**
+ * A rename off a PATCH body, in the same three-way shape the endpoints use —
+ * except that only two of the three are legal.
+ *
+ *  - **absent**: `{ value: undefined }`, leave the stored name alone;
+ *  - **a string**: `{ value: 'trimmed' }`, subject to [validateTripName].
+ *
+ * `null` is refused rather than treated as "clear it", which is the one place
+ * this deliberately parts company with `origin` and `destination`. A trip with
+ * no start is a trip whose route is not filled in yet; a trip with no name is
+ * a row nobody can find in a list. The name is how a rider picks this ride out
+ * of eleven others, so there is no state in which not having one is what
+ * somebody meant.
+ */
+export function validateTripRename(body) {
+  const payload = body || {};
+  if (!Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    return { value: undefined };
+  }
+  if (payload.name === null) {
+    return { error: 'name cannot be cleared' };
+  }
+  return validateTripName(payload.name);
 }
 
 const LABEL_MAX_LENGTH = 120;
@@ -183,25 +224,33 @@ export function createTripsRouter({ db, config }) {
   });
 
   /**
-   * Sets or clears where a trip starts and ends.
+   * Edits the trip itself: its name, and where it starts and ends.
    *
-   * A partial update: a field left out is left alone, and sending it as
+   * A partial update: a field left out is left alone, and an endpoint sent as
    * `null` clears it. That distinction is the whole reason this is a PATCH —
    * a PUT would make "I only want to set the destination" indistinguishable
-   * from "I want to wipe the origin".
+   * from "I want to wipe the origin". `name` takes the same "absent means
+   * leave it" rule and refuses the third case; see [validateTripRename].
    *
    * Owner-only, matching every other edit to the trip itself. Allowed on an
-   * ended trip on purpose: filling in where a ride actually finished is
-   * something people do afterwards, and the write guard that stops position
-   * reports has nothing to do with it.
+   * ended trip on purpose: filling in where a ride actually finished — or
+   * finally giving "Trip 3" the name everyone called it — is something people
+   * do afterwards, and the write guard that stops position reports has
+   * nothing to do with it.
    */
   router.patch('/trips/:id', auth, requireTripOwner(db), (req, res) => {
+    const rename = validateTripRename(req.body);
+    if (rename.error) {
+      return res.status(400).json({ error: rename.error });
+    }
+
     const { error, value } = validateTripEndpoints(req.body);
     if (error) {
       return res.status(400).json({ error });
     }
 
-    const columns = { ...endpointColumns('origin', value.origin) };
+    const columns = rename.value === undefined ? {} : { name: rename.value };
+    Object.assign(columns, endpointColumns('origin', value.origin));
     Object.assign(columns, endpointColumns('destination', value.destination));
 
     const fields = Object.keys(columns);

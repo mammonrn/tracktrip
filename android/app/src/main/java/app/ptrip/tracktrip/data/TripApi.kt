@@ -264,6 +264,21 @@ class TripApi(private val client: ApiClient) {
     suspend fun endTrip(tripId: Long): Trip =
         JSONObject(client.post("/trips/$tripId/end")).toTrip()
 
+    /**
+     * Renames a trip.
+     *
+     * The same `PATCH /trips/:id` the two ends go through, and for the same
+     * reason it is a PATCH: a field left out is left alone, so a rename cannot
+     * wipe a destination somebody set from the map five seconds earlier.
+     *
+     * Owner-only on the server, and allowed on a finished trip — naming a ride
+     * afterwards is when people do it. The name itself cannot be cleared: an
+     * empty one comes back 400 rather than being stored, so the screen refuses
+     * it first.
+     */
+    suspend fun renameTrip(tripId: Long, name: String): Trip =
+        JSONObject(client.patch("/trips/$tripId", JSONObject().put("name", name))).toTrip()
+
     suspend fun listInvites(): List<Invite> =
         JSONArray(client.get("/invites")).map { it.toInvite() }
 

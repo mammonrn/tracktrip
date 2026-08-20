@@ -28,6 +28,13 @@ data class TripDetailUiState(
     /** Set after a successful invite, cleared when the field is edited again. */
     val inviteSentTo: String? = null,
     val endPending: Boolean = false,
+    val renamePending: Boolean = false,
+    /**
+     * Kept apart from [error] for the same reason [joinCodeError] is: a rename
+     * that failed belongs on the form the rider is looking at, not on the
+     * member list they are about to come back to.
+     */
+    val renameError: String? = null,
     /** Riders this owner has ridden with before, offered instead of typing. */
     val suggestions: List<SuggestedInvitee> = emptyList(),
     val joinCode: JoinCode? = null,
@@ -144,6 +151,42 @@ class TripDetailViewModel(
         } catch (e: ApiException) {
             _uiState.update { it.copy(suggestions = emptyList()) }
         }
+    }
+
+    /**
+     * Renames the trip.
+     *
+     * [onRenamed] runs only on success, so navigation stays out of the view
+     * model and a failure leaves the rider on the form with their text intact
+     * — the same shape [CreateTripViewModel.create] uses.
+     *
+     * The trip in state is replaced with what the server sent back rather than
+     * with what was typed, and no refresh is asked for: the response to a
+     * PATCH *is* the trip, so the member list this screen sits in front of
+     * shows the new title the moment the rider lands back on it, without a
+     * round trip they would watch happen.
+     */
+    fun rename(name: String, onRenamed: () -> Unit) {
+        val trimmed = name.trim()
+        if (_uiState.value.renamePending || !TripNameRules.isValid(trimmed)) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(renamePending = true, renameError = null) }
+            try {
+                val trip = tripApi.renameTrip(tripId, trimmed)
+                _uiState.update { it.copy(renamePending = false, renameError = null, trip = trip) }
+                onRenamed()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(renamePending = false, renameError = e.message) }
+            }
+        }
+    }
+
+    /** Clears a rename failure, so leaving the form does not carry it back. */
+    fun clearRenameError() {
+        _uiState.update { it.copy(renameError = null) }
     }
 
     /** Fills the invite field from a suggestion instead of typing it out. */

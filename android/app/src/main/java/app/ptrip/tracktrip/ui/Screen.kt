@@ -28,6 +28,15 @@ sealed interface Screen {
      */
     data object Places : Screen
     data class TripDetail(val tripId: Long) : Screen
+
+    /**
+     * The trip's own details, as opposed to who is on it.
+     *
+     * Its name, and a way through to the route. Owner-only, and a screen
+     * rather than a dialog because renaming is unlikely to stay the only
+     * thing on it.
+     */
+    data class EditTrip(val tripId: Long) : Screen
     data class TripQr(val tripId: Long) : Screen
     data class TripMap(val tripId: Long) : Screen
 }
@@ -55,6 +64,7 @@ internal fun screenToken(screen: Screen): String = when (screen) {
     Screen.ScanQr -> "scanQr"
     Screen.Places -> "places"
     is Screen.TripDetail -> "tripDetail:${screen.tripId}"
+    is Screen.EditTrip -> "editTrip:${screen.tripId}"
     is Screen.TripQr -> "tripQr:${screen.tripId}"
     is Screen.TripMap -> "tripMap:${screen.tripId}"
 }
@@ -79,6 +89,7 @@ internal fun screenFromToken(token: String): Screen? {
         "scanQr" -> Screen.ScanQr
         "places" -> Screen.Places
         "tripDetail" -> argument.toLongOrNull()?.let { Screen.TripDetail(it) }
+        "editTrip" -> argument.toLongOrNull()?.let { Screen.EditTrip(it) }
         "tripQr" -> argument.toLongOrNull()?.let { Screen.TripQr(it) }
         "tripMap" -> argument.toLongOrNull()?.let { Screen.TripMap(it) }
         else -> null

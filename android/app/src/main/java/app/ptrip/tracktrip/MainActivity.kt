@@ -46,6 +46,7 @@ import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
+import app.ptrip.tracktrip.ui.EditTripScreen
 import app.ptrip.tracktrip.ui.JoinTripViewModel
 import app.ptrip.tracktrip.ui.joinCodeFrom
 import app.ptrip.tracktrip.ui.joinWebLinkFor
@@ -510,6 +511,12 @@ private fun SignedInNavigation(
                     detailViewModel.createJoinCode()
                     backStack.push(Screen.TripQr(screen.tripId))
                 },
+                onEditTrip = {
+                    // Any failure from a previous visit stays on the form it
+                    // happened on, not on the one being opened.
+                    detailViewModel.clearRenameError()
+                    backStack.push(Screen.EditTrip(screen.tripId))
+                },
                 onEndTrip = {
                     detailViewModel.endTrip()
                     // The list shows each trip's status, so it is stale the
@@ -520,6 +527,40 @@ private fun SignedInNavigation(
                 // clear an error the rider has not read. See
                 // TripDetailViewModel.refresh for why this screen polls at all.
                 onRefresh = { detailViewModel.refresh(quiet = true) },
+                onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        is Screen.EditTrip -> {
+            // The same view model the member list uses, on the same key, so
+            // the trip is already loaded when this opens and the new name is
+            // on the screen behind before the rider gets back to it — no
+            // second fetch, and no window where the two disagree.
+            val detailViewModel: TripDetailViewModel = viewModel(
+                key = "trip-${screen.tripId}",
+                factory = tripDetailViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
+
+            EditTripScreen(
+                trip = detailState.trip,
+                saving = detailState.renamePending,
+                error = detailState.renameError,
+                onSave = { name ->
+                    detailViewModel.rename(name) {
+                        // The trip list shows every name, so it is stale the
+                        // moment one changes.
+                        tripsViewModel.refresh()
+                        backStack.pop()
+                    }
+                },
+                onEditRoute = {
+                    // The route's editor is the list behind the magnifier on
+                    // the map. Pushed rather than swapped: back from the map
+                    // returns here, which is where the rider was.
+                    backStack.push(Screen.TripMap(screen.tripId))
+                },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
