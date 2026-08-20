@@ -215,6 +215,27 @@
     <string name="map_shared_place_remove_title">ลบสถานที่นี้?</string>
     <string name="map_shared_place_remove_message">\"%1$s\" จะหายไปจากการค้นหาของทุกคน</string>
 
+    <string name="map_place_visibility">ใครค้นหาเจอบ้าง?</string>
+    <string name="map_place_shared_option">ทุกคนในระบบนี้</string>
+    <string name="map_place_shared_hint">เพิ่มเข้ารายการส่วนกลาง คนอื่นค้นหาก็เจอ</string>
+    <string name="map_place_personal_option">เฉพาะฉัน</string>
+    <string name="map_place_personal_hint">ทางลัดส่วนตัว คนอื่นไม่เห็น แม้แต่ super user</string>
+    <string name="map_place_shortcut_label">ชื่อทางลัด</string>
+    <string name="map_place_shortcut_home">บ้าน</string>
+    <string name="map_place_shortcut_work">ที่ทำงาน</string>
+    <string name="map_personal_places_title">สถานที่ที่บันทึกไว้</string>
+    <string name="map_personal_place_remove_title">ลบทางลัดนี้?</string>
+    <string name="map_personal_place_remove_message">\"%1$s\" จะหายไปจากทางลัดของคุณ คนอื่นไม่เคยเห็นอยู่แล้ว</string>
+    <string name="map_personal_places_full">เก็บได้สูงสุด %1$d แห่ง ลบอันเก่าออกก่อนถึงจะเพิ่มใหม่ได้</string>
+
+    <string name="places_title">แผนที่และสถานที่</string>
+    <string name="places_search_hint">ค้นหาสถานที่</string>
+    <string name="places_drop_hint">กดค้างบนแผนที่ตรงไหนก็ได้เพื่อบันทึกสถานที่</string>
+    <string name="places_mine_title">สถานที่ที่คุณเพิ่มไว้</string>
+    <string name="places_mine_empty">ยังไม่มี กดค้างบนแผนที่เพื่อเพิ่ม</string>
+    <string name="places_shared_section">แชร์ให้ทุกคน</string>
+    <string name="places_personal_section">เฉพาะคุณ</string>
+
     <string name="location_permission_rationale">PTrips ต้องขอสิทธิ์เข้าถึงตำแหน่ง เพื่อส่งตำแหน่งของคุณให้เพื่อนร่วมทริป ถ้าไม่อนุญาตก็จะไม่มีอะไรให้ส่ง การแชร์จะปิดไว้</string>
     <string name="location_permission_denied">สิทธิ์เข้าถึงตำแหน่งถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android เพื่อแชร์ตำแหน่งกับกลุ่ม</string>
     <string name="location_permission_allow">อนุญาตให้เข้าถึงตำแหน่ง</string>

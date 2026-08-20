@@ -808,6 +808,31 @@ shows that sentence under the search box. Nothing else on the server is
 affected. Filling the key in later needs no migration and no new build of the
 app: put it in `.env` on the VPS and `npm run pm2:restart`.
 
+## Editing a planned route
+
+`PATCH /trips/:id/waypoints/:wpId` takes `name` and `order_index`. Until it
+existed a route could only be appended to, so the order stops were arranged in
+lived on the phone: a rider who added stops, left the trip and came back found
+the route list empty, because there was nothing to load them into.
+
+**Owner-only, and stricter than the `DELETE` beside it.** Re-ordering one stop
+renumbers the ones around it, so a member dragging their own stop up two places
+rewrites two stops that are not theirs. An author-only rule would let the first
+write succeed and the second come back `403`, leaving the route half renumbered
+with no way for the rider to tell. The road between the ends is the owner's,
+the same way `PATCH /trips/:id` already was; adding a stop and removing your
+own are what a member gets, both unchanged.
+
+`lat`/`lng` and `type` are not patchable — a stop that moved somewhere else is
+a different stop, and a planned waypoint that became live would silently leave
+the route it was ordered inside. Both are a delete and a create.
+
+`order_index` is **not** unique. A client rewriting a route sends one PATCH per
+moved stop, and every intermediate state would collide with itself under a
+unique index. It is a sort key; ties fall back to `id`, exactly as the `GET`
+says. A body with neither field is `400` — a PATCH that changes nothing is a
+request somebody meant to fill in.
+
 ## Shared places — the riders' own list
 
 `GET /geocode/search` cannot find what OpenStreetMap does not contain, and the
@@ -898,6 +923,62 @@ comes back, keeping the two failure modes apart.
 
 **No API key is involved**, so this feature works on a server that has never had
 `LOCATIONIQ_API_KEY` set.
+
+## Private places — one rider's own
+
+`shared_places` above is a list the whole installation reads. This is the
+opposite, and it is a **second table** rather than a flag on that one:
+
+```
+GET    /me/places
+POST   /me/places      { "label": "บ้าน", "name": "คอนโด ดิ แอสตร้า", "lat": …, "lng": … }
+DELETE /me/places/:id
+```
+
+**Why a table and not a column.** A privacy flag on `shared_places` would make
+every read of it one forgotten `WHERE` away from publishing somebody's home
+address, and the forgetting would be silent — the query still returns rows, the
+screen still looks right, and the only symptom is a stranger seeing where you
+live. A query against `personal_places` that forgets its owner is wrong in an
+obvious way; a query against `shared_places` is *supposed* to be unscoped. The
+rule is legible from the table name at every call site.
+
+**Why `/me` and not `/places/mine`.** There is no id in the path naming whose
+places these are. The owner is `req.user.id`, decided by `requireAuth` and by
+nothing a caller can send, so there is no parameter to forget to check. Every
+statement carries `WHERE user_id = ?` on top of that, and `canAccessPersonalPlace`
+is checked before any single row is answered with — three independent guards,
+because one is not enough for this.
+
+**No super-user path, deliberately.** A super user administers the shared list;
+nobody administers a home address. A privilege that could read one would have
+to be re-audited every time this file changed, and the absence is the feature.
+
+**No search endpoint, and no join.** A rider has a handful of these and they all
+arrive at once, so matching against a typed query happens on the phone — the
+query never travels and there is no filter to get wrong. `shared_places` joins
+`users` to show who added a place; this never joins anything, because a join is
+how a scoped query stops being scoped while still reading correctly.
+
+**404, not 403, on somebody else's row** — the opposite of the shared list, on
+purpose. A 403 confirms the row exists and belongs to somebody. On a shared
+list that is already public knowledge; here it is exactly what must not leak, so
+"not there" is the only honest answer. `DELETE /me/places/999999` and a delete
+of a real row belonging to another rider are byte-identical replies.
+
+`user_id` is `NOT NULL` and `ON DELETE CASCADE` — the reverse of
+`shared_places.created_by`, and for the reverse reason. Nobody else is using
+this row, and an account being deleted is exactly when a note about where
+somebody lives should stop existing. A row with no owner could only ever leak.
+
+At most 20 per rider — not a spam guard (nobody else can see them) but a guard
+on the screen, which draws them as a row of chips. Over that is `409`, not
+`429`: waiting changes nothing, something has to come off the list first.
+
+Two tests guard the rule against future edits rather than against the current
+code: one sweeps `src/` and fails any statement naming the table without
+`user_id = ?` (an `INSERT` scopes by column instead), and one fails any join to
+it. Removing the `WHERE` from the list query fails eight tests.
 
 ## Road routing
 

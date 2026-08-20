@@ -107,7 +107,52 @@ class RouteDraftStateTest {
     }
 
     @Test
-    fun `draft stops are drawn alongside the trip's own`() {
+    fun `an open list draws the draft and not the trip's planned stops as well`() {
+        val saved = Waypoint(
+            id = 9,
+            name = "Fuel",
+            lat = 18.5,
+            lng = 99.0,
+            type = Waypoint.TYPE_PLANNED,
+            orderIndex = 0,
+        )
+        val live = Waypoint(
+            id = 10,
+            name = "Coffee",
+            lat = 18.6,
+            lng = 99.1,
+            type = Waypoint.TYPE_LIVE,
+            orderIndex = null,
+        )
+        // What openRouteSetup now produces: the trip's planned stop seeded
+        // into the draft, plus one the rider has just added.
+        val state = TripMapUiState(
+            trip = trip(),
+            waypoints = TripWaypoints(planned = listOf(saved), live = listOf(live)),
+            routeDraft = RouteDraft(
+                stops = listOf(
+                    RoutePoint(LatLng(saved.lat, saved.lng), "Fuel", savedId = saved.id),
+                    RoutePoint(lampang, "Lampang"),
+                ),
+            ),
+        )
+
+        // "Fuel" once, not twice. Drawing the trip's planned stops *and* the
+        // draft that was seeded from them put two pins on every saved stop.
+        assertEquals(listOf("Coffee", "Fuel", "Lampang"), state.drawnWaypoints.map { it.name })
+
+        // Every stop on the open list is drawn under a row id, saved or not:
+        // while the list is open a tap on a pin means "take this row off the
+        // list", and the server hears about it at confirm like every other
+        // edit. The live drop keeps its real id — it is not on the list.
+        assertEquals(
+            listOf(false, true, true),
+            state.drawnWaypoints.map { RouteSetupRules.isDraftId(it.id) },
+        )
+    }
+
+    @Test
+    fun `a closed list draws the trip's own stops`() {
         val saved = Waypoint(
             id = 9,
             name = "Fuel",
@@ -119,12 +164,12 @@ class RouteDraftStateTest {
         val state = TripMapUiState(
             trip = trip(),
             waypoints = TripWaypoints(planned = listOf(saved)),
-            routeDraft = RouteDraft(stops = listOf(RoutePoint(lampang, "Lampang"))),
+            routeDraft = RouteDraft(),
         )
 
-        assertEquals(listOf("Fuel", "Lampang"), state.drawnWaypoints.map { it.name })
-        // The saved one keeps its real id, so tapping it still asks the server.
-        assertEquals(listOf(false, true), state.drawnWaypoints.map { RouteSetupRules.isDraftId(it.id) })
+        assertEquals(listOf("Fuel"), state.drawnWaypoints.map { it.name })
+        // Real id: tapping it asks the server, through the confirmation.
+        assertEquals(listOf(false), state.drawnWaypoints.map { RouteSetupRules.isDraftId(it.id) })
     }
 
     @Test

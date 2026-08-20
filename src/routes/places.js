@@ -3,6 +3,13 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import { isSuperuser } from '../auth/roles.js';
 import {
+  MAX_PER_USER,
+  canAccessPersonalPlace,
+  hasRoomForAnother,
+  serializePersonalPlace,
+  validatePersonalPlaceInput,
+} from '../places/personal.js';
+import {
   ADD_LIMIT,
   MAX_LIMIT,
   NAME_MAX_LENGTH,
@@ -157,6 +164,97 @@ export function createPlacesRouter({ db, config, now = () => Date.now() }) {
     res.status(201).json(serializeSharedPlace(created));
   });
 
+  // ---------------------------------------------------------------------
+  // The riders' *private* places, under /me — home, work, wherever else.
+  //
+  // Mounted under `/me` and not `/places/mine` for one reason that is worth
+  // the four characters: there is no id in the path that names whose places
+  // these are. The owner is `req.user.id`, decided by requireAuth and by
+  // nothing a caller can send, so there is no parameter to forget to check and
+  // no way to ask for somebody else's list. Every statement below carries
+  // `WHERE user_id = ?` on top of that, and src/places/personal.js says why
+  // both belong here rather than one of them.
+  //
+  // Deliberately no search, no listing across riders, and no super-user path.
+  // See personal.js.
+  // ---------------------------------------------------------------------
+
+  router.use('/me/places', requireAuth(db, config));
+
+  /** This rider's places. All of them — there are at most [MAX_PER_USER]. */
+  router.get('/me/places', (req, res) => {
+    const rows = db
+      .prepare(
+        `SELECT * FROM personal_places
+          WHERE user_id = ?
+          ORDER BY created_at DESC, id DESC`
+      )
+      .all(req.user.id);
+
+    res.json({ results: rows.map(serializePersonalPlace) });
+  });
+
+  router.post('/me/places', limitAdds, (req, res) => {
+    const { error, value } = validatePersonalPlaceInput(req.body);
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    const count = db
+      .prepare('SELECT COUNT(*) AS n FROM personal_places WHERE user_id = ?')
+      .get(req.user.id).n;
+
+    if (!hasRoomForAnother(count)) {
+      // 409 rather than 429: this is not a rate. The rider is not being asked
+      // to wait — waiting changes nothing — they are being told the list is
+      // full and something has to come off it first.
+      return res.status(409).json({
+        error: `You can keep up to ${MAX_PER_USER} saved places. Remove one to add another.`,
+      });
+    }
+
+    // user_id comes from the session, never from the body. A caller cannot
+    // write into somebody else's list by asking to.
+    const inserted = db
+      .prepare(
+        'INSERT INTO personal_places (user_id, label, name, lat, lng) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(req.user.id, value.label, value.name, value.lat, value.lng);
+
+    const created = db
+      .prepare('SELECT * FROM personal_places WHERE id = ? AND user_id = ?')
+      .get(inserted.lastInsertRowid, req.user.id);
+
+    res.status(201).json(serializePersonalPlace(created));
+  });
+
+  router.delete('/me/places/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(404).json({ error: 'place not found' });
+    }
+
+    // Read scoped to the owner as well as checked afterwards. Either alone
+    // would be correct; both together mean a future edit has to defeat two
+    // independent guards to leak a row.
+    const place = db
+      .prepare('SELECT * FROM personal_places WHERE id = ? AND user_id = ?')
+      .get(id, req.user.id);
+
+    if (!canAccessPersonalPlace({ place, userId: req.user.id })) {
+      // 404 and *not* 403, which is the opposite of the shared list above and
+      // deliberate. A 403 would confirm that a row with this id exists and
+      // belongs to somebody — on a shared list that is already public
+      // knowledge, and here it is exactly the thing that must not leak. "Not
+      // there" is the only honest answer to give somebody about a row they
+      // cannot see.
+      return res.status(404).json({ error: 'place not found' });
+    }
+
+    db.prepare('DELETE FROM personal_places WHERE id = ? AND user_id = ?').run(id, req.user.id);
+    res.status(204).end();
+  });
+
   router.delete('/places/:id', (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
@@ -187,5 +285,5 @@ export function createPlacesRouter({ db, config, now = () => Date.now() }) {
   return router;
 }
 
-export { ADD_LIMIT, MAX_LIMIT, NAME_MAX_LENGTH, NAME_MIN_LENGTH };
+export { ADD_LIMIT, MAX_LIMIT, MAX_PER_USER, NAME_MAX_LENGTH, NAME_MIN_LENGTH };
 export default createPlacesRouter;

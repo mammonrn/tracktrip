@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.imePadding
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -113,6 +115,7 @@ import app.ptrip.tracktrip.ui.theme.AppRouteProgressTrack
 import app.ptrip.tracktrip.ui.theme.AppSurfaceAlt
 import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppBackground
+import app.ptrip.tracktrip.data.PersonalPlace
 import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.data.PlaceSource
@@ -250,6 +253,15 @@ fun TripMapScreen(
      */
     onAddSharedPlace: suspend (String, LatLng) -> RoutePoint? = { _, _ -> null },
     onRemoveSharedPlace: (Long, () -> Unit) -> Unit = { _, _ -> },
+    /**
+     * Saving a place to this rider's own list, and the list itself.
+     *
+     * Separate from the shared pair above and never routed through them: the
+     * whole property this feature has to hold is that a private row and a
+     * shared row are handled by different code from end to end.
+     */
+    onAddPersonalPlace: suspend (String, String, LatLng) -> RoutePoint? = { _, _, _ -> null },
+    personalPlaces: List<PersonalPlace> = emptyList(),
     /**
      * Whether this app may read the phone's position at all.
      *
@@ -551,12 +563,26 @@ fun TripMapScreen(
                     },
                     onWaypointTap = { waypoint ->
                         val draftIndex = RouteSetupRules.draftIndex(waypoint.id)
+                        val draftStop = draftIndex?.let { state.routeDraft.stops.getOrNull(it) }
                         if (draftIndex != null) {
-                            // A stop that only this draft holds. Nothing was
-                            // ever sent, so it comes straight back off the
-                            // list rather than through a confirmation about
-                            // making it disappear from everyone's map.
-                            onRemoveRouteStop(draftIndex)
+                            // A stop on the open route list. It comes off the
+                            // list rather than off the trip — the server hears
+                            // about it when the rider confirms, like every
+                            // other edit on this card — so there is no
+                            // confirmation to ask for and nothing to undo.
+                            //
+                            // Gated all the same: a saved stop follows the
+                            // waypoints route's rule, so a member tapping
+                            // somebody else's pin would be queueing a delete
+                            // that comes back 403.
+                            val mayRemove = draftStop != null &&
+                                RouteSetupRules.canAddStops(state.trip?.isActive == true) &&
+                                RouteSetupRules.canRemoveStop(
+                                    stop = draftStop,
+                                    isOwner = state.trip?.isOwner == true,
+                                    currentUserId = currentUserId,
+                                )
+                            if (mayRemove) onRemoveRouteStop(draftIndex)
                         } else {
                             val allowed = MapPlacementRules.canRemoveWaypoint(
                                 isOwner = state.trip?.isOwner == true,
@@ -808,6 +834,7 @@ fun TripMapScreen(
                 loading = state.routePreviewLoading,
                 canEditEnds = RouteSetupRules.canEditEnds(state.trip?.isOwner == true),
                 canAddStops = RouteSetupRules.canAddStops(state.trip?.isActive == true),
+                currentUserId = currentUserId,
                 onPick = { tapped ->
                     picking = tapped
                     onSearchCleared()
@@ -864,6 +891,12 @@ fun TripMapScreen(
                 currentUserId = currentUserId,
                 onAddPlace = { typed -> droppingPlace = typed.trim() },
                 onRemoveSharedPlace = { place -> removingPlace = place },
+                personalPlaces = personalPlaces,
+                onPickPersonal = { saved ->
+                    // Straight into the row the rider came here to fill. No
+                    // request: the coordinate arrived with the chip.
+                    takePicked(field, RoutePoint(saved.point, saved.name))
+                },
             )
         }
 
@@ -899,7 +932,7 @@ fun TripMapScreen(
             point = stop.point,
             suggestedName = stringResource(
                 R.string.map_route_stop_default_name,
-                RouteSetupRules.nextStopNumber(state.waypoints.all, state.routeDraft),
+                RouteSetupRules.nextStopNumber(state.routeDraft),
             ),
             onName = { name ->
                 onPickRoutePoint(RouteField.STOP, stop.copy(label = name.trim()))
@@ -910,16 +943,17 @@ fun TripMapScreen(
     }
 
     namingPlace?.let { pending ->
-        SharedPlaceDialog(
+        SavePlaceDialog(
             point = pending.point,
             suggestedName = pending.name,
+            canSavePersonal = true,
             saving = savingPlace,
             // Whatever the last failed save said. The dialog is the only place
             // this can be read: the line above the map, where every other
             // failure on this screen goes, is behind a full-screen picker by
             // the time a rider gets back to it.
             error = state.error.takeIf { !savingPlace && failedToSavePlace },
-            onSave = { name ->
+            onSave = { visibility, name, label ->
                 val point = pending.point
                 val field = picking
                 savingPlace = true
@@ -927,7 +961,10 @@ fun TripMapScreen(
                     // Saved first, and only used if the save worked. A place
                     // dropped into the route on the strength of a request that
                     // failed would be a row nobody else can ever find.
-                    val saved = onAddSharedPlace(name, point)
+                    val saved = when (visibility) {
+                        PlaceVisibility.SHARED -> onAddSharedPlace(name, point)
+                        PlaceVisibility.PERSONAL -> onAddPersonalPlace(label, name, point)
+                    }
                     savingPlace = false
                     if (saved == null) {
                         // The dialog stays up with the reason on it. The two
@@ -1006,7 +1043,7 @@ fun TripMapScreen(
  * gesture is a mode people get stuck in.
  */
 @Composable
-private fun DropPlaceBanner(name: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+internal fun DropPlaceBanner(name: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -1037,36 +1074,72 @@ private fun DropPlaceBanner(name: String, onCancel: () -> Unit, modifier: Modifi
 }
 
 /**
- * The name a place goes onto the shared list under.
+ * Where a dropped pin is about to be saved.
  *
- * Prefilled with whatever was typed into the search, because that is almost
- * always the answer — the rider searched for "ปตท สวนดอก", did not find it,
- * and is adding it under the name they already looked for. Which is the point:
- * the next rider will search for the same words.
+ * Two lists, and the difference between them is not a setting — it is whether
+ * the whole server can see where somebody lives. So it is a choice the rider
+ * makes explicitly, in words, every time, rather than a toggle that remembers
+ * what they picked last and quietly applies it to their home address.
+ */
+enum class PlaceVisibility {
+    /** `shared_places` — every rider on this server finds it. */
+    SHARED,
+
+    /** `personal_places` — a private shortcut, and nobody else's business. */
+    PERSONAL,
+}
+
+/**
+ * The name a place goes under, and which of the two lists it joins.
  *
- * The line about everybody finding it is not decoration. This list is shared
- * across the server, and a rider who thought they were making a private note
- * would be surprised by their own handwriting turning up in somebody else's
- * search.
+ * ## Why one dialog and not two entry points
+ *
+ * A rider who has pressed and held a spot on the map has already said the hard
+ * part: *where*. Sending them back to choose which kind of place they meant
+ * before they can name it would be asking them to classify something they have
+ * not described yet. So the pin is dropped, the name is typed, and the last
+ * question is who gets to see it — which is the order the decision actually
+ * happens in.
+ *
+ * The two options are spelled out rather than iconified. "Only me" and
+ * "Everyone on this server" are the whole of what a rider needs to understand,
+ * and a padlock glyph is not: this is the one screen in the app where getting
+ * the wrong answer publishes an address.
+ *
+ * A personal place also takes a [PersonalPlace.label] — what the shortcut chip
+ * says. Prefilled from the name and offered as two chips, because the honest
+ * answer is "บ้าน" or "ที่ทำงาน" almost every time.
  */
 @Composable
-private fun SharedPlaceDialog(
+internal fun SavePlaceDialog(
     point: LatLng,
     suggestedName: String,
-    /** Whether the save is in flight, so the button cannot be pressed twice. */
+    /** Whether the private half is offered at all. See [PlacesAccess]. */
+    canSavePersonal: Boolean,
+    /** Whether a save is in flight, so the button cannot be pressed twice. */
     saving: Boolean,
     /** Why the last save failed, or null. Shown here because nowhere else can. */
     error: String?,
-    onSave: (String) -> Unit,
+    onSave: (PlaceVisibility, String, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by rememberSaveable(point) { mutableStateOf(suggestedName) }
+    var label by rememberSaveable(point) { mutableStateOf("") }
+    // Shared is the default because it is the ordinary case — the feature
+    // exists because OpenStreetMap is missing petrol stations, not because
+    // people want private bookmarks. Nothing is remembered between dialogs.
+    var visibility by rememberSaveable(point) { mutableStateOf(PlaceVisibility.SHARED) }
+
+    val homeLabel = stringResource(R.string.map_place_shortcut_home)
+    val workLabel = stringResource(R.string.map_place_shortcut_work)
+    val personal = visibility == PlaceVisibility.PERSONAL
+    val effectiveLabel = label.trim().takeIf { it.isNotEmpty() } ?: name.trim()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.map_shared_place_title)) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     text = stringResource(
                         R.string.map_place_coordinates,
@@ -1085,12 +1158,67 @@ private fun SharedPlaceDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
-                Text(
-                    text = stringResource(R.string.map_shared_place_note),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppTextMuted,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
+
+                if (canSavePersonal) {
+                    Text(
+                        text = stringResource(R.string.map_place_visibility),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = AppText,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                    )
+                    VisibilityChoice(
+                        selected = visibility,
+                        option = PlaceVisibility.SHARED,
+                        title = stringResource(R.string.map_place_shared_option),
+                        detail = stringResource(R.string.map_place_shared_hint),
+                        onSelect = { visibility = it },
+                    )
+                    VisibilityChoice(
+                        selected = visibility,
+                        option = PlaceVisibility.PERSONAL,
+                        title = stringResource(R.string.map_place_personal_option),
+                        detail = stringResource(R.string.map_place_personal_hint),
+                        onSelect = { visibility = it },
+                    )
+                }
+
+                if (personal) {
+                    OutlinedTextField(
+                        value = label,
+                        onValueChange = { typed ->
+                            if (typed.length <= SHORTCUT_LABEL_MAX_LENGTH) label = typed
+                        },
+                        label = { Text(stringResource(R.string.map_place_shortcut_label)) },
+                        placeholder = { Text(name) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
+                    // The honest answer almost every time, one tap away.
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        listOf(homeLabel, workLabel).forEach { suggestion ->
+                            Text(
+                                text = suggestion,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = AppPrimary,
+                                modifier = Modifier
+                                    .background(AppPrimarySoft, AppChipShape)
+                                    .clickable { label = suggestion }
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = stringResource(R.string.map_shared_place_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppTextMuted,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+
                 error?.takeIf { it.isNotBlank() }?.let { message ->
                     Text(
                         text = message,
@@ -1104,12 +1232,14 @@ private fun SharedPlaceDialog(
         confirmButton = {
             HudPrimaryButton(
                 text = stringResource(R.string.map_shared_place_save),
-                onClick = { onSave(name.trim()) },
-                // The same bound the server puts on a name, checked here so a
+                onClick = { onSave(visibility, name.trim(), effectiveLabel) },
+                // The same bounds the server puts on these, checked here so a
                 // rider learns while they are still typing rather than by
                 // having the save come back 400. Off while a save is in
                 // flight, so a second press cannot write the place twice.
-                enabled = RouteSetupRules.isStopNameValid(name) && !saving,
+                enabled = RouteSetupRules.isStopNameValid(name) &&
+                    !saving &&
+                    (!personal || effectiveLabel.isNotEmpty()),
             )
         },
         dismissButton = {
@@ -1120,6 +1250,42 @@ private fun SharedPlaceDialog(
         textContentColor = AppTextMuted,
     )
 }
+
+/** One of the two answers to "who can find this?", with what it means under it. */
+@Composable
+private fun VisibilityChoice(
+    selected: PlaceVisibility,
+    option: PlaceVisibility,
+    title: String,
+    detail: String,
+    onSelect: (PlaceVisibility) -> Unit,
+) {
+    val chosen = selected == option
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .background(if (chosen) AppPrimarySoft else AppSurface, AppSearchPanelShape)
+            .border(1.dp, if (chosen) AppPrimary else AppLine, AppSearchPanelShape)
+            .clickable { onSelect(option) }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = if (chosen) AppPrimary else AppText,
+        )
+        Text(
+            text = detail,
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+        )
+    }
+}
+
+/** As long a shortcut name as the server will take. See src/places/personal.js. */
+private const val SHORTCUT_LABEL_MAX_LENGTH = 24
 
 /** The heading over the picker: which field it is filling. */
 private val RouteField.pickHeadingRes: Int
@@ -1190,6 +1356,8 @@ private fun RouteListSheet(
     loading: Boolean,
     canEditEnds: Boolean,
     canAddStops: Boolean,
+    /** Whoever is signed in — the author half of who may remove a saved stop. */
+    currentUserId: Long?,
     /** Tapping a row: fill this part of the route. */
     onPick: (RouteField) -> Unit,
     /** The cross on a row, by row index rather than by stop index. */
@@ -1277,6 +1445,7 @@ private fun RouteListSheet(
                     index = index,
                     canEditEnds = canEditEnds,
                     canAddStops = canAddStops,
+                    currentUserId = currentUserId,
                     dragging = dragging == index,
                     dragOffset = if (dragging == index) dragOffset else 0f,
                     canDrag = RouteSetupRules.canMoveRow(draft, index, canEditEnds),
@@ -1431,6 +1600,8 @@ private fun RouteListRow(
     index: Int,
     canEditEnds: Boolean,
     canAddStops: Boolean,
+    /** Whoever is signed in — the author half of who may remove a saved stop. */
+    currentUserId: Long?,
     dragging: Boolean,
     dragOffset: Float,
     canDrag: Boolean,
@@ -1444,7 +1615,8 @@ private fun RouteListRow(
     val picked = RouteSetupRules.pointAtRow(draft, index)
     val stopNumber = RouteSetupRules.stopIndexAtRow(draft, index)?.plus(1)
     val editable = if (field == RouteField.STOP) canAddStops else canEditEnds
-    val removable = RouteSetupRules.canRemoveRow(draft, index, canEditEnds, canAddStops)
+    val removable =
+        RouteSetupRules.canRemoveRow(draft, index, canEditEnds, canAddStops, currentUserId)
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1798,7 +1970,7 @@ private val AppSheetShape = androidx.compose.foundation.shape.RoundedCornerShape
  * taps a rider expects to reach the map.
  */
 @Composable
-private fun PlaceSearchScreen(
+internal fun PlaceSearchScreen(
     state: PlaceSearchState,
     /** Which part of the route this is filling, said out loud over the box. */
     heading: String,
@@ -1823,6 +1995,16 @@ private fun PlaceSearchScreen(
      */
     onAddPlace: (String) -> Unit,
     onRemoveSharedPlace: (Place) -> Unit,
+    /**
+     * This rider's own saved places, drawn as shortcuts above everything else.
+     *
+     * Never anybody else's — see [PersonalPlace]. They are at the top because
+     * they are the answer most often: the two places a person rides to most
+     * are home and work, and typing either of them into a geocoder to find a
+     * point the phone already knows is the long way round.
+     */
+    personalPlaces: List<PersonalPlace> = emptyList(),
+    onPickPersonal: (PersonalPlace) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val focus = remember { FocusRequester() }
@@ -1903,11 +2085,18 @@ private fun PlaceSearchScreen(
 
         HudDivider()
 
-        // Pinned above everything, and there before a key is pressed: most
-        // points a rider places are where they already are, and making them
-        // type a name for the spot they are standing on — and then wait on a
-        // geocoder to hand back a coordinate the phone has had all along — is
-        // the long way round. Costs no request.
+        // The rider's own shortcuts, above everything. Home and work are the
+        // two places most rides start or end at, and neither is worth a search.
+        if (personalPlaces.isNotEmpty()) {
+            PersonalPlaceChips(places = personalPlaces, onPick = onPickPersonal)
+            HudDivider()
+        }
+
+        // Pinned above everything else, and there before a key is pressed:
+        // most points a rider places are where they already are, and making
+        // them type a name for the spot they are standing on — and then wait
+        // on a geocoder to hand back a coordinate the phone has had all along
+        // — is the long way round. Costs no request.
         CurrentLocationRow(
             location = myLocation,
             hasPermission = hasLocationPermission,
@@ -1987,6 +2176,69 @@ private fun PlaceSearchScreen(
         )
     }
 }
+
+/**
+ * A rider's own saved places, as a row of chips.
+ *
+ * ## Why these are chips and not rows
+ *
+ * They are not results. A result is something the rider is choosing between;
+ * these are things they already decided on, and the decision was made the day
+ * they saved them. A chip reads as a shortcut — one tap, no reading — and a
+ * row of them costs a fraction of the height the same places would take as
+ * list rows, above a list that needs every pixel it can get.
+ *
+ * It also keeps them visually apart from the two lists underneath, which
+ * matters more here than it usually would: everything below this row is
+ * visible to the whole server, and everything in it is visible to nobody.
+ *
+ * Tapping one fills the row the rider came here to fill and closes the search.
+ * There is no request: the coordinate arrived with the chip.
+ */
+@Composable
+private fun PersonalPlaceChips(places: List<PersonalPlace>, onPick: (PersonalPlace) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        places.forEach { place ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .background(AppPrimarySoft, AppChipShape)
+                    .clickable { onPick(place) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                HudPinIcon(tint = AppPrimary)
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(
+                        text = place.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = AppPrimary,
+                        maxLines = 1,
+                    )
+                    // The place's own name under the label, because "บ้าน" a
+                    // year later is not obviously the same address it was.
+                    Text(
+                        text = place.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppTextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 140.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The rounded shape behind a shortcut chip. */
+private val AppChipShape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
 
 /**
  * "Use my current location", as the first row of the panel.
@@ -2629,7 +2881,7 @@ private val MEMBER_LIST_MAX_HEIGHT = 300.dp
  * them, as this did, made every update a teleport.
  */
 @Composable
-private fun RiderMap(
+internal fun RiderMap(
     members: List<MemberPosition>,
     waypoints: List<Waypoint>,
     /**

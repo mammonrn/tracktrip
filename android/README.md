@@ -254,17 +254,38 @@ the five-minute wait is up.
 **Editing after confirming is the same list.** It opens seeded from the trip, so
 changing one end is one tap.
 
-**What the list does not show** is stops already saved on the trip. A draft is
-seeded from the trip's two ends only, so re-opening on a trip that has stops
-shows a list without them and they cannot be re-ordered. Giving them rows would
-mean the confirm having to update and delete waypoints rather than only posting
-them, which is an API change and has not been made.
+**The list is the trip's real route.** It is seeded from `GET /trips/:id/waypoints`,
+so re-opening a trip shows the stops it actually has, each carrying the
+`trip_waypoints` id it came from. That was not true at first, and the symptom
+was the bug this replaced: a rider added two stops, watched the pins land, left
+the trip and came back to From and To with nothing between them, because the
+list only ever described things it had made itself.
+
+Confirming is a **difference**, not a rewrite — `RouteSetupRules.waypointEdits`
+computes removals first, then a PATCH per saved stop that moved or was renamed,
+then a POST per row that has never been saved. A stop nobody touched costs
+nothing. Posting the seeded list as-is would have duplicated every existing stop
+on every visit, doubling the route each time.
+
+Two cases the diff handles because the trip is shared and the list on screen can
+be minutes old: a row whose id the trip no longer has is dropped rather than
+re-created, so a stop somebody else deleted is not resurrected; and a `404`
+while applying is taken as "somebody got there first" and the remaining edits
+still run. `openRouteSetup` also re-reads the waypoints before seeding — the
+screen opens the list as soon as the *trip* has loaded, which on a cold start is
+before the waypoints have.
 
 **A member who does not own the trip** sees the two ends with neither grip nor
 cross, and a line saying why: `PATCH /trips/:id` is owner-only, and offering
 them a control whose save comes back 403 would read as a broken app rather than
-as a rule. Adding and ordering their own stops, which the server does allow,
-still works.
+as a rule.
+
+Re-ordering became owner-only too, once a drag started being written. Moving one
+stop renumbers the ones around it, so a member dragging their own stop up two
+places rewrites two stops that are not theirs — the server refuses those, and
+the rider would be left with a route half renumbered and no way to tell which
+half. Members still add stops and remove their own; where those stops sit in the
+ride is the owner's call.
 
 ### Finding a place
 
@@ -326,6 +347,77 @@ perfectly well; that is swallowed for the same reason.
 Both lookups are children of the job the debounce cancels, so a search
 abandoned at the keyboard is abandoned at both servers, and one keystroke costs
 one request to each rather than one per letter.
+
+#### Private places — home, work, and nobody else's business
+
+A third list, and the only one that is not shared. [`data/PersonalPlacesApi.kt`](
+app/src/main/java/app/ptrip/tracktrip/data/PersonalPlacesApi.kt) talks to
+`/me/places`; nothing this rider saves there is visible to anybody else on the
+server, including a super user. See the backend README for why that is a second
+table rather than a flag.
+
+They are drawn as a row of **chips at the top of the picker**, above both
+search lists. They are not results — a result is something a rider is choosing
+between, and these are decisions already made — so one tap fills the row and
+closes the screen, with no request: the coordinate arrived with the chip. The
+chip says the label ("บ้าน"), the line under it says the place's own name,
+because "บ้าน" a year later is not obviously the same address it was.
+
+`PersonalPlace` deliberately has **no `asPlace()`**, unlike `SharedPlace`. A
+private row must not be able to enter the merged search list — everything in
+that list is drawn with a tag saying who can see it, and there is no honest tag
+for "nobody but you" in a list of things everybody has. There is a test that
+fails if one appears.
+
+#### Saving a place: which list?
+
+The long press ends in one dialog — the pin is dropped, the name is typed, and
+the last question is who gets to see it, which is the order the decision
+actually happens in. Two options, spelled out in words rather than behind a
+padlock glyph: **"Everyone on this server"** and **"Only me"**, each with a line
+saying what it means. Shared is the default and nothing is remembered between
+dialogs; this is the one screen in the app where the wrong answer publishes an
+address, so it is asked every time.
+
+Choosing "Only me" adds a shortcut-name field, prefilled from the place's name
+and offered as two chips — the honest answer is "บ้าน" or "ที่ทำงาน" almost
+every time.
+
+### The map with no trip
+
+[`ui/PlacesMapScreen.kt`](app/src/main/java/app/ptrip/tracktrip/ui/PlacesMapScreen.kt),
+reached from the pin button on the trip list.
+
+Two things a rider could previously only do from inside a ride — look a place up,
+and write one down — are things people think of when they are *not* riding. The
+petrol station nobody could find last weekend is worth adding on a Tuesday
+evening, and until now the only way in was to open a trip and pretend to plan a
+route on it.
+
+What it deliberately is not is a ride: no riders, no positions, no position
+reporting, no route, no poll, no live feed. Everything that makes the trip map
+expensive is about the ride rather than the map, which is why
+[`PlacesViewModel`](app/src/main/java/app/ptrip/tracktrip/ui/PlacesViewModel.kt)
+is its own object rather than the trip map's with nulls threaded through it —
+a null trip would leave every one of those features one missed branch from
+running against nothing.
+
+What it shares is shared as pieces rather than as a mode: the same `RiderMap`,
+the same full-screen picker, the same save dialog, the same long press. A rider
+who learned the gesture on one screen already knows it on the other.
+
+Under the map are the rider's own places in two headed sections — **"Only you"**
+and **"Shared with everyone"** — because a rider tidying up needs to know which
+is which without tapping anything. Tapping a row moves the map to it; the cross
+removes it, behind a confirmation. The shared half is the whole shared list
+filtered to this rider's own rows on the phone: the server has no "mine" filter
+and should not grow one, since a shared list is shared and an endpoint answering
+"just yours" would be a second way to ask a question it deliberately does not
+care about.
+
+Pins for both lists are drawn on one map, so the id has to say which list a tap
+came from: a shared place keeps its own rowid, which is positive, and a private
+one becomes `-(id + 1)`, which is at most `-2` and can never collide.
 
 ### The route line
 

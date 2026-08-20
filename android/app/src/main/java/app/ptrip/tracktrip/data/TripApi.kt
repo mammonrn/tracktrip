@@ -406,6 +406,31 @@ class TripApi(private val client: ApiClient) {
     suspend fun deleteWaypoint(tripId: Long, waypointId: Long) {
         client.delete("/trips/$tripId/waypoints/$waypointId")
     }
+
+    /**
+     * Changes a stop that is already on the trip — in practice, where it sits
+     * in the route.
+     *
+     * Owner-only on the server, and stricter than delete on purpose: moving
+     * one stop renumbers the ones around it, so a rule that let a member move
+     * their own would have them rewriting stops that are not theirs. See
+     * `src/routes/waypoints.js`.
+     *
+     * Only the two fields that can change after a stop exists. A stop that
+     * moved somewhere else on the map is a different stop — that is a delete
+     * and a create, which this class already does.
+     */
+    suspend fun updateWaypoint(
+        tripId: Long,
+        waypointId: Long,
+        name: String? = null,
+        orderIndex: Int? = null,
+    ): Waypoint {
+        val body = JSONObject()
+        name?.let { body.put("name", it) }
+        orderIndex?.let { body.put("order_index", it) }
+        return JSONObject(client.patch("/trips/$tripId/waypoints/$waypointId", body)).toWaypoint()
+    }
 }
 
 internal inline fun <T> JSONArray.map(transform: (JSONObject) -> T): List<T> =

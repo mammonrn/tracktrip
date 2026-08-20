@@ -21,6 +21,7 @@ class ScreenTokenTest {
         Screen.Settings,
         Screen.Profile,
         Screen.ScanQr,
+        Screen.Places,
         Screen.TripDetail(42L),
         Screen.TripQr(42L),
         Screen.TripMap(42L),

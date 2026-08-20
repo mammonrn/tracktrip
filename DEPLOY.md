@@ -270,6 +270,7 @@ are recorded in `schema_migrations` and skipped.
 | `0009_trip_endpoints.sql` | `trips.origin_*`, `trips.destination_*` | Setting a route up |
 | `0010_user_roles.sql` | `users.role` | Super users |
 | `0011_shared_places.sql` | `shared_places` | Shared places (`/places`) |
+| `0012_personal_places.sql` | `personal_places` | Private places (`/me/places`) |
 
 To check what a database has already had applied:
 
@@ -281,7 +282,7 @@ sqlite3 /root/tracktrip/data/trip-tracker.db \
 And to confirm the newest one landed:
 
 ```bash
-sqlite3 /root/tracktrip/data/trip-tracker.db ".schema shared_places"
+sqlite3 /root/tracktrip/data/trip-tracker.db ".schema personal_places"
 ```
 
 **Back up first if the release changes schema.** The database is one file, so a

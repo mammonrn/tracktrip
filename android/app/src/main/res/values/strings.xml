@@ -298,6 +298,38 @@
     <string name="map_shared_place_remove_title">Remove this place?</string>
     <string name="map_shared_place_remove_message">\"%1$s\" disappears from everyone\'s search.</string>
 
+    <!--
+      Places a rider keeps for themselves. A separate list from the shared one
+      in every way that matters — separate table, separate route, and wording
+      that never lets the two be confused, because the difference between them
+      is whether the whole server can see where somebody lives.
+    -->
+    <string name="map_place_visibility">Who can find this?</string>
+    <string name="map_place_shared_option">Everyone on this server</string>
+    <string name="map_place_shared_hint">Adds it to the shared list, so any rider searching finds it.</string>
+    <string name="map_place_personal_option">Only me</string>
+    <string name="map_place_personal_hint">A private shortcut. Nobody else can see it, not even a super user.</string>
+    <string name="map_place_shortcut_label">Shortcut name</string>
+    <string name="map_place_shortcut_home">Home</string>
+    <string name="map_place_shortcut_work">Work</string>
+    <string name="map_personal_places_title">Your saved places</string>
+    <string name="map_personal_place_remove_title">Remove this shortcut?</string>
+    <string name="map_personal_place_remove_message">\"%1$s\" disappears from your shortcuts. Nobody else ever saw it.</string>
+    <string name="map_personal_places_full">You can keep up to %1$d saved places. Remove one to add another.</string>
+
+    <!--
+      The map with no trip behind it, reached from the trip list. Not a ride:
+      no riders, no positions, no route — a place to look somewhere up and to
+      write somewhere down without first having a trip to attach it to.
+    -->
+    <string name="places_title">Map &amp; places</string>
+    <string name="places_search_hint">Search for a place</string>
+    <string name="places_drop_hint">Press and hold anywhere on the map to save a place.</string>
+    <string name="places_mine_title">Places you added</string>
+    <string name="places_mine_empty">Nothing yet. Press and hold the map to add one.</string>
+    <string name="places_shared_section">Shared with everyone</string>
+    <string name="places_personal_section">Only you</string>
+
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>
     <string name="location_permission_denied">Location access is off for PTrips. Turn it on in Android\'s app settings to share your position with your group.</string>

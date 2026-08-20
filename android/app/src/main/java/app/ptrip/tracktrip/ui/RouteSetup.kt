@@ -53,7 +53,39 @@ enum class RouteField {
  * The two ends are happy with an empty label; a stop is not, because the
  * server refuses an unnamed waypoint.
  */
-data class RoutePoint(val point: LatLng, val label: String = "")
+data class RoutePoint(
+    val point: LatLng,
+    val label: String = "",
+    /**
+     * The `trip_waypoints` row this stop already is, or null when it is one
+     * the rider has just added and nothing has been written for yet.
+     *
+     * ## Why the draft had to learn about ids
+     *
+     * It did not have them, and that was the bug: a draft was seeded from the
+     * trip's two ends only, so stops saved on a previous visit had nothing to
+     * be loaded *into*. A rider added two stops, saw the pins land, left the
+     * trip, came back — and the route list showed From and To with nothing
+     * between them, because the list only ever described things it had made
+     * itself.
+     *
+     * With an id on the row, the list is the route: seeded from what the trip
+     * has, and committed as a difference against it rather than as a pile of
+     * fresh POSTs.
+     */
+    val savedId: Long? = null,
+    /**
+     * Which rider added it, for a stop that is already saved.
+     *
+     * Kept because it decides who may take it away again — the server allows
+     * the trip's owner or the member who added it, and a list that offered a
+     * cross to everybody would be handing out 403s.
+     */
+    val addedBy: Long? = null,
+) {
+    /** Whether the server already has this one. */
+    val isSaved: Boolean get() = savedId != null
+}
 
 /**
  * A route being set up, before anybody has confirmed it.
@@ -132,9 +164,30 @@ object RouteSetupRules {
      * re-entering both. It is also what makes editing after confirming work:
      * the entry point changed, the mechanism did not.
      */
-    fun fromTrip(origin: TripEndpoint?, destination: TripEndpoint?): RouteDraft = RouteDraft(
+    fun fromTrip(
+        origin: TripEndpoint?,
+        destination: TripEndpoint?,
+        saved: List<Waypoint> = emptyList(),
+    ): RouteDraft = RouteDraft(
         from = origin?.let { RoutePoint(LatLng(it.lat, it.lng), it.label.orEmpty()) },
         to = destination?.let { RoutePoint(LatLng(it.lat, it.lng), it.label.orEmpty()) },
+        // Every planned stop the trip already has, in the order the server
+        // gave them — which is `order_index`, ties broken by id. Without this
+        // the list was a sketch that forgot itself the moment a rider left the
+        // screen; with it the list is the route, and a re-order is an edit to
+        // something real.
+        //
+        // Live waypoints are deliberately not here. They are dropped while
+        // riding, they are chronological rather than ordered, and they are not
+        // part of the road anybody planned.
+        stops = saved.filter { it.isPlanned }.map {
+            RoutePoint(
+                point = LatLng(it.lat, it.lng),
+                label = it.name,
+                savedId = it.id,
+                addedBy = it.addedBy,
+            )
+        },
     )
 
     /** The draft with [picked] in [field] — replacing an end, appending a stop. */
@@ -248,11 +301,19 @@ object RouteSetupRules {
     /**
      * Which rows this rider may drag between.
      *
-     * The ends are in it only for a rider who may set them: `PATCH /trips/:id`
-     * is owner-only, so letting anybody else drag a stop into the start would
-     * offer them a re-order whose save comes back 403 — which reads as a
-     * broken app rather than as a rule. A member who may only add stops can
-     * still order their own stops.
+     * ## Owner only, now that a drag is written
+     *
+     * This used to let a member re-order their own stops, which was harmless
+     * while the order lived on the phone. It is not harmless now: moving one
+     * stop renumbers the ones around it, so a member dragging their own stop
+     * up two places has to rewrite two stops that are not theirs. The server
+     * refuses those — `PATCH /trips/:id/waypoints/:wpId` is owner-only for
+     * exactly this reason — and a rider would be left with a route half
+     * renumbered and no way to tell which half.
+     *
+     * So the order of the route belongs to whoever owns the route, the same
+     * way its two ends already did. A member adds stops and removes their own;
+     * where those stops sit in the ride is the owner's call.
      *
      * Empty when there is nothing to drag, which a caller has to handle: one
      * row cannot be re-ordered against itself, and a route with an end still
@@ -261,10 +322,10 @@ object RouteSetupRules {
      * draft.
      */
     fun movableRows(draft: RouteDraft, canEditEnds: Boolean): IntRange {
+        if (!canEditEnds) return IntRange.EMPTY
         if (ordered(draft) == null) return IntRange.EMPTY
         val last = rowCount(draft) - 1
-        val range = if (canEditEnds) 0..last else 1 until last
-        return if (range.first >= range.last) IntRange.EMPTY else range
+        return if (last <= 0) IntRange.EMPTY else 0..last
     }
 
     /** Whether row [index] can be dragged at all. */
@@ -299,13 +360,30 @@ object RouteSetupRules {
         index: Int,
         canEditEnds: Boolean,
         canAddStops: Boolean,
+        /** Whoever is signed in, for the author half of the waypoint rule. */
+        currentUserId: Long? = null,
     ): Boolean {
-        if (pointAtRow(draft, index) == null) return false
+        val picked = pointAtRow(draft, index) ?: return false
         return when (fieldAtRow(draft, index)) {
             RouteField.FROM, RouteField.TO -> canEditEnds
-            RouteField.STOP -> canAddStops
+            RouteField.STOP -> canAddStops && canRemoveStop(picked, canEditEnds, currentUserId)
             null -> false
         }
+    }
+
+    /**
+     * Whether this rider may take this stop off the route.
+     *
+     * A stop that is not saved yet is nobody's but the rider's own — nothing
+     * was sent, so removing it is an edit to a draft and needs no permission.
+     * A saved one follows `DELETE /trips/:id/waypoints/:wpId`: the trip's
+     * owner, or whoever added it. Offering a cross to anybody else would be
+     * handing out 403s.
+     */
+    fun canRemoveStop(stop: RoutePoint, isOwner: Boolean, currentUserId: Long?): Boolean {
+        if (!stop.isSaved) return true
+        if (isOwner) return true
+        return stop.addedBy != null && stop.addedBy == currentUserId
     }
 
     /** What is already in a field, so re-picking it opens on what is there. */
@@ -318,22 +396,20 @@ object RouteSetupRules {
     /**
      * The whole route a draft describes, in the order confirming would write it.
      *
-     * Its two ends, threading the stops the trip already has and *then* the
-     * ones only the draft holds — which is exactly the order
-     * [nextOrderIndex] gives them, so the road quoted in the summary sheet is
-     * the road the confirm button is about to save.
+     * Just the draft now. It used to be the trip's saved stops *and then* the
+     * draft's, threaded together, because the draft only ever held stops it
+     * had made itself — which is the same reason a reopened route list came
+     * back empty. Seeding fixed both: [fromTrip] puts the saved stops into the
+     * draft, so the draft is the route and there is nothing left to thread.
      *
-     * [saved] is the trip's waypoints; only the planned ones end up on the
-     * route. See [RoutePlans.via].
+     * That also makes a re-order mean something here. Under the old shape a
+     * saved stop could never move relative to a new one, because they lived in
+     * different lists and one always came first.
      */
-    fun plan(draft: RouteDraft, saved: List<Waypoint>): RoutePlan? {
+    fun plan(draft: RouteDraft): RoutePlan? {
         val from = draft.from?.point ?: return null
         val to = draft.to?.point ?: return null
-        return RoutePlan(
-            from = from,
-            via = RoutePlans.via(saved) + draft.stops.map { it.point },
-            to = to,
-        )
+        return RoutePlan(from = from, via = draft.stops.map { it.point }, to = to)
     }
 
     /**
@@ -360,7 +436,7 @@ object RouteSetupRules {
         origin: TripEndpoint?,
         destination: TripEndpoint?,
     ): Boolean {
-        val wanted = plan(draft, saved) ?: return false
+        val wanted = plan(draft) ?: return false
         val trip = RoutePlans.of(
             from = origin?.let { LatLng(it.lat, it.lng) },
             to = destination?.let { LatLng(it.lat, it.lng) },
@@ -400,11 +476,14 @@ object RouteSetupRules {
      *
      * What the naming dialog prefills, so a rider dropping a stop on the map
      * can confirm without typing anything and still get a row that is not
-     * identical to every other row. Counts the trip's saved stops and the
-     * draft's together, because on the route they are one sequence.
+     * identical to every other row.
+     *
+     * The draft's own length is the whole count now: since [fromTrip] seeds it
+     * with the trip's saved stops, they are already in there. Adding the
+     * trip's count on top — which is what this did — numbered the fourth stop
+     * on a route of three as "Stop 7".
      */
-    fun nextStopNumber(saved: List<Waypoint>, draft: RouteDraft): Int =
-        nextOrderIndex(saved.filter { it.isPlanned }) + draft.stops.size + 1
+    fun nextStopNumber(draft: RouteDraft): Int = draft.stops.size + 1
 
     /**
      * Whether a stop can be saved under this name.
@@ -421,10 +500,15 @@ object RouteSetupRules {
      * The draft's stops as the map can draw them.
      *
      * Real [Waypoint]s with made-up negative ids, so the map's existing
-     * waypoint layer draws them with no idea they are not saved yet — and so a
-     * tap can tell one apart from a stop that is really on the trip, which is
-     * the difference between removing it from a list and asking the server to
-     * delete it. Nothing negative can collide: the server's ids are rowids.
+     * waypoint layer draws them with no idea what they are.
+     *
+     * The id is the row's position, not the stop's own — deliberately, even
+     * for a stop the server already knows. While the route list is open the
+     * map draws the draft and only the draft, so a tap on a pin means "take
+     * this row off the list I am editing" whether or not that row has been
+     * saved before; the server hears about it when the rider confirms, like
+     * every other edit on this card. Nothing negative can collide with a real
+     * id: the server's are rowids.
      */
     fun draftWaypoints(draft: RouteDraft): List<Waypoint> =
         draft.stops.mapIndexed { index, stop ->
@@ -438,6 +522,68 @@ object RouteSetupRules {
             )
         }
 
+    /**
+     * What has to be written to make the trip's stops match this list.
+     *
+     * ## Why a difference and not a rewrite
+     *
+     * Confirming used to be one POST per stop the draft held, which was right
+     * while a draft could only ever hold new stops. Now that the list is
+     * seeded from the trip, posting it again would duplicate every stop that
+     * was already there — so the commit has to say what *changed*.
+     *
+     * Three kinds of change, and the order they come back in is the order they
+     * are safe to apply:
+     *
+     *  - [WaypointEdit.Remove] first, for a saved stop the rider crossed off.
+     *    Before the rest, so a route that shrank never briefly holds more
+     *    stops than the rider is looking at.
+     *  - [WaypointEdit.Move] for a saved stop whose position or name changed.
+     *    Position is the row's index, so the numbers come out 0..n-1 with no
+     *    gaps however arbitrary the ones on the server were.
+     *  - [WaypointEdit.Add] for a row that has never been saved.
+     *
+     * A stop that did not move and was not renamed produces nothing at all,
+     * which is the common case of opening the list to change one end.
+     *
+     * [saved] is the trip's waypoints; only the planned ones are considered.
+     * A live waypoint is not on this list and must not be touched by it.
+     */
+    fun waypointEdits(saved: List<Waypoint>, stops: List<RoutePoint>): List<WaypointEdit> {
+        val planned = saved.filter { it.isPlanned }
+        val keptIds = stops.mapNotNull { it.savedId }.toSet()
+
+        val removals = planned
+            .filter { it.id !in keptIds }
+            .map { WaypointEdit.Remove(it.id) }
+
+        val byId = planned.associateBy { it.id }
+        val rest = stops.mapIndexedNotNull { index, stop ->
+            val id = stop.savedId
+            val name = stop.label.trim()
+            if (id == null) {
+                // The server refuses an unnamed waypoint, so an unnamed one is
+                // never sent. The picker will not produce one; this is the
+                // guard behind that.
+                if (!isStopNameValid(name)) null
+                else WaypointEdit.Add(stop.copy(label = name), index)
+            } else {
+                val before = byId[id]
+                // A row whose id the trip has never heard of — the stop was
+                // deleted by somebody else while this list was open. Adding it
+                // back would resurrect it behind their back, so it is dropped.
+                when {
+                    before == null -> null
+                    before.orderIndex != index || before.name != name ->
+                        if (isStopNameValid(name)) WaypointEdit.Move(id, index, name) else null
+                    else -> null
+                }
+            }
+        }
+
+        return removals + rest
+    }
+
     /** The id a stop held only in the draft is drawn under. */
     fun draftId(index: Int): Long = -(index + 1L)
 
@@ -446,6 +592,25 @@ object RouteSetupRules {
 
     /** Which draft stop [id] refers to, or null when it is a saved one. */
     fun draftIndex(id: Long): Int? = if (isDraftId(id)) (-id - 1).toInt() else null
+}
+
+/**
+ * One write that has to happen for the trip's stops to match the route list.
+ *
+ * A type rather than three lambdas so the difference can be computed without a
+ * network and asserted in a test — the whole risk of a sync is that it writes
+ * the wrong thing, and that is a question about a list, not about HTTP. See
+ * [RouteSetupRules.waypointEdits].
+ */
+sealed interface WaypointEdit {
+    /** A saved stop the rider crossed off. `DELETE .../waypoints/:id`. */
+    data class Remove(val id: Long) : WaypointEdit
+
+    /** A saved stop that moved, was renamed, or both. `PATCH .../waypoints/:id`. */
+    data class Move(val id: Long, val orderIndex: Int, val name: String) : WaypointEdit
+
+    /** A stop that has never been saved. `POST .../waypoints`. */
+    data class Add(val stop: RoutePoint, val orderIndex: Int) : WaypointEdit
 }
 
 /**

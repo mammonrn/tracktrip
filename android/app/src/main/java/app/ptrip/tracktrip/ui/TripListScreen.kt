@@ -34,6 +34,7 @@ import app.ptrip.tracktrip.ui.theme.HudGearIcon
 import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudPrimaryButton
+import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudScanIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSectionHeader
@@ -57,6 +58,16 @@ fun TripListScreen(
     onAcceptInvite: (Invite) -> Unit,
     onRefresh: () -> Unit,
     onScanQr: () -> Unit,
+    /**
+     * The map with no trip behind it — for looking a place up, and for writing
+     * one down, without first having a ride to attach it to.
+     *
+     * On this screen rather than inside a trip because that is when a rider
+     * has the thought: the petrol station they could not find last weekend is
+     * worth writing down on a Tuesday evening, and until now the only way in
+     * was to open a ride and pretend to plan it.
+     */
+    onOpenMap: () -> Unit,
     onOpenSettings: () -> Unit,
     /**
      * Whether to offer the "every trip" switch. True only for a super user —
@@ -74,6 +85,11 @@ fun TripListScreen(
             subtitle = displayName?.let { stringResource(R.string.signed_in_as, it) }
                 ?: stringResource(R.string.signed_in),
         ) {
+            HudIconButton(
+                onClick = onOpenMap,
+                contentDescription = stringResource(R.string.places_title),
+                icon = { HudPinIcon() },
+            )
             HudIconButton(
                 onClick = onScanQr,
                 contentDescription = stringResource(R.string.qr_scan_title),
@@ -280,6 +296,7 @@ private fun TripListPreview() {
             onAcceptInvite = {},
             onRefresh = {},
             onScanQr = {},
+            onOpenMap = {},
             onOpenSettings = {},
         )
     }

@@ -18,6 +18,15 @@ sealed interface Screen {
     data object Settings : Screen
     data object Profile : Screen
     data object ScanQr : Screen
+
+    /**
+     * The map with no trip behind it.
+     *
+     * A place to look things up and to write places down, reachable from the
+     * trip list rather than from inside a ride. It carries no id because it is
+     * about nothing but the map: no riders, no positions, no route.
+     */
+    data object Places : Screen
     data class TripDetail(val tripId: Long) : Screen
     data class TripQr(val tripId: Long) : Screen
     data class TripMap(val tripId: Long) : Screen
@@ -44,6 +53,7 @@ internal fun screenToken(screen: Screen): String = when (screen) {
     Screen.Settings -> "settings"
     Screen.Profile -> "profile"
     Screen.ScanQr -> "scanQr"
+    Screen.Places -> "places"
     is Screen.TripDetail -> "tripDetail:${screen.tripId}"
     is Screen.TripQr -> "tripQr:${screen.tripId}"
     is Screen.TripMap -> "tripMap:${screen.tripId}"
@@ -67,6 +77,7 @@ internal fun screenFromToken(token: String): Screen? {
         "settings" -> Screen.Settings
         "profile" -> Screen.Profile
         "scanQr" -> Screen.ScanQr
+        "places" -> Screen.Places
         "tripDetail" -> argument.toLongOrNull()?.let { Screen.TripDetail(it) }
         "tripQr" -> argument.toLongOrNull()?.let { Screen.TripQr(it) }
         "tripMap" -> argument.toLongOrNull()?.let { Screen.TripMap(it) }
