@@ -26,17 +26,18 @@ inline message rather than crashing.
 | Screen | Backend it talks to |
 |---|---|
 | Sign-in | `POST /auth/google` |
-| Trip list, with pending invitations above it | `GET /trips`, `GET /invites`, `POST /invites/:id/accept` |
+| Trip list — the newest three, an archive for the rest, a podium on each card | `GET /trips`, `GET /invites`, `POST /invites/:id/accept`, `GET /trips/:id/positions` |
 | Create trip | `POST /trips` |
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
-| Settings — profile, language, sharing default, sharing toggles, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop` |
+| Settings — profile, language, sharing default, sharing toggles, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
 | Live map — everyone's position, with the member list under it and the route card over it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId`, `GET /geocode/search`, `GET /directions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
 | Scan to join — the camera | `POST /trips/join` |
 
-Settings is reached by the gear in the trip list's header, and the scanner by
-the viewfinder icon beside it. Signing out lives in settings, not on the trip
+Settings is reached by the gear in the trip list's header — and by the gear on
+Map & places, which is where the list of a rider's own places lives — and the
+scanner by the viewfinder icon beside it. Signing out lives in settings, not on the trip
 list: it is the app's one destructive control, it belongs behind a screen the
 rider opens deliberately, and it asks for confirmation before it runs.
 
@@ -147,6 +148,87 @@ process, and two `ApiClient`s would mean two refresh mutexes — enough for a
 401 in each to rotate the refresh token twice, which the backend treats as
 theft and answers by revoking every token the rider has.
 
+## The trip list
+
+The first screen after signing in, and the one the app is judged on: its job is
+"get me into the ride I am about to do".
+
+**The newest three, and an archive for the rest.** It used to draw every trip a
+rider had ever been on, so somebody who rides most weekends had forty of them
+and scrolled past thirty-seven every time they opened the app.
+[`ui/TripListRules.kt`](app/src/main/java/app/ptrip/tracktrip/ui/TripListRules.kt)
+splits the list; the archive is one chip that says how many are in it, and it
+sits above the trips it opens so the control a rider just pressed is still
+under their thumb. Nothing is hidden and nothing is fetched twice: `GET /trips`
+already returns the whole list, and the chip only decides how much is drawn.
+
+"Newest three" is the *first* three, because `GET /trips` orders by
+`created_at DESC, id DESC` for every caller — which is just as well, since the
+Android `Trip` carries no `created_at`. That pairing is written down in
+`TripListRules` for the same reason `ReportCadence` writes down the backend's
+rate limit: if the server's ordering changed, this would quietly start calling
+the wrong three trips recent rather than failing.
+
+**A podium on each card.** The first three riders to reach the trip's
+destination, as three faces at the end of the row the card already had — 26dp,
+shorter than the two lines of text beside them, so the card is exactly the
+height it was. That constraint is the point: a podium that grew every card
+would spend precisely what the archive just bought. A trip nobody has finished
+shows nothing at all rather than an empty podium; most trips in an old archive
+never had a destination set, and a row of grey placeholders on forty cards
+would be the app filling space with what it does not know.
+
+[`map/ArrivalBoard.kt`](app/src/main/java/app/ptrip/tracktrip/map/ArrivalBoard.kt)
+is honest about being an estimate, in the same terms `RideOrder` is. Nothing
+tells this app when anybody arrived anywhere; what it can read is one
+last-known fix per rider and the time it was recorded. So arriving is
+geometric — within 300 m of the destination, which covers a car park and
+excludes the bypass — and the order is the order of those last reports, oldest
+first. Read plainly that ranks riders by how long they have been at the finish
+without reporting since, which on the trips this is actually looked at is the
+same list as who got there first: a rider who arrives stops sharing, or their
+session lapses, and their last fix freezes near the moment they arrived. It is
+weaker on a trip still under way with everybody parked and still reporting, and
+it is never *unstable* — the user id breaks every tie the clock cannot, so the
+podium does not reshuffle on each poll.
+
+The cost is one `GET /trips/:id/positions` per trip, because `GET /trips` says
+nothing about who is where and should not: a trip list has no business paying
+for eight riders' coordinates on every trip a rider has ever been on. So the
+number is kept small — only the trips being drawn, only those with a
+destination, only those not already answered, and never more than eight in one
+pass, so a rider with forty archived trips opening the archive is a handful of
+small reads rather than forty. Failures are swallowed whole: a podium that did
+not load is a card exactly as it looked before the feature existed.
+
+## Inviting a rider
+
+Three ways onto a trip, all owner-only because the backend is: a **QR code**
+for somebody standing next to you, a **share link** for a chat window, and a
+**Google address** typed from memory.
+
+The third is the fallback, and it used to take up more of the panel than the
+other two together — a field, an Invite button and two lines about what an
+invite actually does, sitting open whether or not anybody was going to type. It
+is behind an **"Add by email"** button now. Nothing about the invite changed:
+the same field, the same `POST /trips/:id/invites`, the same rule about when it
+can be pressed. The suggestion chips — riders you have ridden with before,
+ordered by how often — stay out on the panel and still fill the address in;
+they open the dialog on it, which is what the chip was always shorthand for.
+
+Two things had to follow the field into the dialog or be lost by it. The
+**reason a send failed** is drawn inside the dialog, because a dialog covers
+the screen's own error line and a refused invite would otherwise fail in
+silence. The **confirmation** stays on the panel, because the dialog closes on
+the server's answer and the answer has to outlive it — and it closes on
+`inviteSentTo` changing rather than on a flag flipped inside the press, so a
+failed send leaves the rider in front of what they typed.
+
+A text field inside a dialog window never lets a Compose test reach idle under
+Robolectric, so the dialog is split: `InviteByEmailDialog` is placement and
+nothing else, and everything with behaviour in it — `InviteByEmailForm` and
+`InviteRules.canSend` — lives where a test can reach it.
+
 ## The map
 
 OpenStreetMap tiles through **osmdroid**, chosen over the Maps SDK for one
@@ -253,6 +335,21 @@ the five-minute wait is up.
 
 **Editing after confirming is the same list.** It opens seeded from the trip, so
 changing one end is one tap.
+
+**There are two confirms, because there are two screens.** Over the map the
+route list is a card that closes on confirm, and the draft has to go with it: a
+draft left on the shared view model outranks the trip's own stops in
+`TripMapUiState.drawnWaypoints`, so the map would fly a rider's abandoned pins
+for the rest of the ride. That is `confirmRouteAndClose`.
+
+On Edit trip the list *is* the screen. Nothing closes, so clearing the draft
+tidies nothing away — it blanks the rows the rider just pressed Confirm on,
+straight back to "Choose a starting point". One call doing both jobs was
+reported as the route vanishing on confirm, which is the same shape of bug as
+the name's Save sharing an exit with the back arrow one release earlier.
+`confirmRoute` is the other half: it writes, then re-seeds the draft from what
+came back, through the same `RouteSetupRules.reseeded` guard `openRouteSetup`
+uses, so a rider who started another edit while the write was out keeps it.
 
 **The list is the trip's real route.** It is seeded from `GET /trips/:id/waypoints`,
 so re-opening a trip shows the stops it actually has, each carrying the
@@ -406,14 +503,22 @@ What it shares is shared as pieces rather than as a mode: the same `RiderMap`,
 the same full-screen picker, the same save dialog, the same long press. A rider
 who learned the gesture on one screen already knows it on the other.
 
-Under the map are the rider's own places in two headed sections — **"Only you"**
-and **"Shared with everyone"** — because a rider tidying up needs to know which
-is which without tapping anything. Tapping a row moves the map to it; the cross
-removes it, behind a confirmation. The shared half is the whole shared list
-filtered to this rider's own rows on the phone: the server has no "mine" filter
-and should not grow one, since a shared list is shared and an endpoint answering
-"just yours" would be a second way to ask a question it deliberately does not
-care about.
+The rider's own places used to be printed under the map, in two headed sections
+with a cross at the end of every row — an inch below a full-bleed map that a
+thumb is already panning and pinching. The report was places disappearing, and
+the cause was a finger landing where it was not aimed. The list is on **Settings**
+now ([`ui/MyPlaces.kt`](app/src/main/java/app/ptrip/tracktrip/ui/MyPlaces.kt)),
+reached from the gear in this screen's own header, and unchanged in every other
+respect: the same two sections — **"Only you"** and **"Shared with everyone"**,
+because a rider tidying up needs to know which is which without tapping
+anything — and the same confirmation in front of every removal. The places
+themselves did not leave the map; they are still pins on it, and tapping a pin
+still offers to remove it, which is aiming rather than brushing past.
+
+The shared half is the whole shared list filtered to this rider's own rows on
+the phone: the server has no "mine" filter and should not grow one, since a
+shared list is shared and an endpoint answering "just yours" would be a second
+way to ask a question it deliberately does not care about.
 
 Pins for both lists are drawn on one map, so the id has to say which list a tap
 came from: a shared place keeps its own rowid, which is positive, and a private
@@ -626,7 +731,19 @@ pocket, and it is not enough on its own: Doze and app-standby still throttle a
 backgrounded app, and a 10-second reporting loop quietly becomes a several-
 minute one. The app asks for Android's standard battery-optimisation exemption
 once, at the moment sharing first starts, and leaves a row in settings for
-anyone who said no or wants to check. On top of that, Settings shows the
+anyone who said no or wants to check.
+
+Where that row *goes* depends on where the rider already stands, and getting
+that wrong made it a dead button. `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
+is a dialog only while the app is being optimised; launched by a rider who is
+already exempt, the system activity finds nothing to grant and finishes without
+drawing a pixel — so on exactly the phones whose row read "Unrestricted",
+pressing it did nothing. `BatteryExemption.destinations` picks now: exempt goes
+to the app's own page in Android's settings, where "Battery" is one tap in and
+the choice is theirs either way; optimised still leads with the one-tap dialog.
+It hands back an ordered list rather than an answer, because any one of those
+activities can be missing on a given build, and the press has to land somewhere
+rather than nowhere. On top of that, Settings shows the
 **manufacturer's own** killer where there is one — Samsung's sleeping apps,
 Xiaomi's autostart, Oppo/Realme/Vivo's background permissions, OnePlus's deep
 optimisation, Huawei's app launch — because Android's exemption tells those
