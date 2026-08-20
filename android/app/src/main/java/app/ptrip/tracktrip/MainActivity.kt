@@ -412,7 +412,7 @@ private fun SignedInNavigation(
                     mapPermission = LocationFix.hasPermission(context)
                     val fix = if (mapPermission) {
                         LocationFix.lastKnown(context)
-                            ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                            ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
                     } else {
                         null
                     }
@@ -640,7 +640,7 @@ private fun SignedInNavigation(
                 routePermission = LocationFix.hasPermission(context)
                 if (routePermission) {
                     val fix = LocationFix.lastKnown(context)
-                        ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                        ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
                     routeLocation = fix?.let { LatLng(it.latitude, it.longitude) }
                     mapViewModel.placeSearch.near = routeLocation
                 }
@@ -801,7 +801,7 @@ private fun SignedInNavigation(
             fun centreOnMe() {
                 scope.launch {
                     val cached = LocationFix.lastKnown(context)
-                    val fix = cached ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                    val fix = cached ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
                     val fallback = mapState.members
                         .firstOrNull { it.userId == profile?.id && it.hasPosition }
 

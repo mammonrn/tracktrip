@@ -9,7 +9,12 @@ import androidx.core.location.LocationManagerCompat
 import androidx.core.location.LocationRequestCompat
 import androidx.core.os.CancellationSignal
 import androidx.core.location.LocationListenerCompat
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -71,24 +76,90 @@ object LocationFix {
             else -> return null
         }
 
+        return withTimeoutOrNull(timeoutMs) { oneShot(manager, provider) }
+    }
+
+    /**
+     * A fix from whichever provider answers first, or null before [timeoutMs].
+     *
+     * ## Why this is not [current]
+     *
+     * [current] asks **one** provider: GPS if the phone has one at all, and
+     * the network provider only if it does not. That is the right trade for
+     * the ride — a reported position is drawn on somebody else's map and read
+     * as "where they are", so it is worth waiting a minute of
+     * [DEFAULT_TIMEOUT_MS] for the accurate one — and the wrong trade for a
+     * button. A phone with a GPS that exists but cannot fix, which is every
+     * phone indoors or in a covered car park, spends the whole timeout on a
+     * provider that was never going to answer while the network provider,
+     * sitting right there, would have said "this street" in a second. The
+     * rider pressed a button and got fifteen seconds of nothing.
+     *
+     * So this asks both at once and takes whichever comes back first. Accuracy
+     * is not the point of a map that is already showing a rider their own
+     * street; arriving is. The loser is cancelled the moment the winner lands,
+     * so nothing is left running behind the screen.
+     *
+     * Deliberately a second function rather than a flag on [current]: the
+     * reporting service's provider choice and cadence are not this button's to
+     * change, and a parameter is exactly how they would come to be changed by
+     * accident.
+     */
+    suspend fun fastest(context: Context, timeoutMs: Long = QUICK_TIMEOUT_MS): Location? {
+        if (!hasPermission(context)) return null
+
+        val manager = ContextCompat.getSystemService(context, LocationManager::class.java)
+            ?: return null
+
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { LocationManagerCompat.hasProvider(manager, it) }
+        if (providers.isEmpty()) return null
+
         return withTimeoutOrNull(timeoutMs) {
-            suspendCancellableCoroutine { continuation ->
-                val cancellation = CancellationSignal()
-                try {
-                    LocationManagerCompat.getCurrentLocation(
-                        manager,
-                        provider,
-                        cancellation,
-                        Executor { runnable -> runnable.run() },
-                    ) { location: Location? -> continuation.resume(location) }
-                } catch (e: SecurityException) {
-                    // Permission revoked between the check above and here.
-                    continuation.resume(null)
+            coroutineScope {
+                val answer = CompletableDeferred<Location?>()
+                val asked = providers.map { provider ->
+                    launch { oneShot(manager, provider)?.let { answer.complete(it) } }
                 }
-                continuation.invokeOnCancellation { cancellation.cancel() }
+                // Nobody completes `answer` when every provider comes back
+                // empty — a phone with location switched off answers null from
+                // both at once — and without this the button would sit on the
+                // timeout instead of saying so straight away.
+                launch {
+                    asked.joinAll()
+                    answer.complete(null)
+                }
+                val fix = answer.await()
+                coroutineContext.cancelChildren()
+                fix
             }
         }
     }
+
+    /**
+     * One provider, asked once. The shared half of [current] and [fastest].
+     *
+     * Suspends until that provider answers — with a fix or with null — or
+     * until the caller is cancelled, which cancels the request with it. It
+     * imposes no timeout of its own: how long a fix is worth waiting for is
+     * the caller's decision, and the two callers have opposite answers.
+     */
+    private suspend fun oneShot(manager: LocationManager, provider: String): Location? =
+        suspendCancellableCoroutine { continuation ->
+            val cancellation = CancellationSignal()
+            try {
+                LocationManagerCompat.getCurrentLocation(
+                    manager,
+                    provider,
+                    cancellation,
+                    Executor { runnable -> runnable.run() },
+                ) { location: Location? -> continuation.resume(location) }
+            } catch (e: SecurityException) {
+                // Permission revoked between the check above and here.
+                continuation.resume(null)
+            }
+            continuation.invokeOnCancellation { cancellation.cancel() }
+        }
 
     /**
      * The last fix any app on the phone obtained, without waiting for a new one.
