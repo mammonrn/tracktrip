@@ -73,6 +73,15 @@
     <string name="end_trip">End trip</string>
     <string name="end_trip_confirm">End trip? This stops location sharing for everyone in the group.</string>
     <string name="end_trip_yes">End trip</string>
+    <!--
+      A member's way off a trip, where the owner's End is. Not the same act
+      renamed: ending closes the ride for the group, leaving takes one rider
+      off it. The message says what it costs, because getting back on takes
+      the owner sending a fresh invitation.
+    -->
+    <string name="leave_trip">Leave trip</string>
+    <string name="leave_trip_confirm_title">Leave this trip?</string>
+    <string name="leave_trip_confirm_message">You\'ll stop sharing your location with the group and drop off their map. Getting back on needs a new invitation from the trip\'s owner.</string>
 
     <!-- Profile -->
     <string name="profile_title">Profile</string>

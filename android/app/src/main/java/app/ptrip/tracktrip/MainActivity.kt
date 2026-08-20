@@ -602,6 +602,16 @@ private fun SignedInNavigation(
                     // moment this one ends.
                     tripsViewModel.refresh()
                 },
+                onLeaveTrip = {
+                    detailViewModel.leaveTrip {
+                        // Back to the list rather than left looking at a trip
+                        // that is no longer theirs — every read on this screen
+                        // would answer 403 from here on. Refreshed because the
+                        // trip has gone from the list too.
+                        tripsViewModel.refresh()
+                        backStack.pop()
+                    }
+                },
                 // Quiet: a background poll must not raise the loading flag or
                 // clear an error the rider has not read. See
                 // TripDetailViewModel.refresh for why this screen polls at all.

@@ -45,6 +45,7 @@ import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudChip
+import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -88,6 +89,8 @@ fun TripDetailScreen(
      */
     onEditTrip: () -> Unit,
     onEndTrip: () -> Unit,
+    /** A member's way off the trip — see the button for why the owner has none. */
+    onLeaveTrip: () -> Unit = {},
     onBack: () -> Unit,
     /**
      * Re-read the trip and its members. Called on a slow beat while this
@@ -104,6 +107,7 @@ fun TripDetailScreen(
 ) {
     val trip = state.trip
     var confirmingEnd by remember { mutableStateOf(false) }
+    var confirmingLeave by rememberSaveable { mutableStateOf(false) }
 
     var choosingDuration by remember { mutableStateOf(false) }
 
@@ -323,9 +327,53 @@ fun TripDetailScreen(
                             }
                         }
                     }
+                } else if (trip.isActive) {
+                    // A member's way off the trip, where the owner's End is.
+                    //
+                    // The two are not the same control renamed. Ending closes
+                    // the ride for the whole group and only its owner may;
+                    // leaving takes one rider off it and the owner may not,
+                    // because a trip with no owner is one nobody can end,
+                    // invite to or rename.
+                    //
+                    // It is here at all because one active trip per rider made
+                    // it necessary: without a door of their own, a rider whose
+                    // host went home without pressing End could not start a
+                    // trip, could not accept another invitation, and had
+                    // nothing they could do about it.
+                    //
+                    // Not offered on a finished trip: nothing is holding them
+                    // there, and leaving would take them off a completed
+                    // ride's roster and off its podium.
+                    HudDivider(modifier = Modifier.padding(top = 4.dp))
+
+                    HudDangerButton(
+                        text = stringResource(R.string.leave_trip),
+                        onClick = { confirmingLeave = true },
+                        quiet = true,
+                        loading = state.leavePending,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
+    }
+
+    // A dialog rather than the inline confirm End uses, for the same reason
+    // signing out has one: this is the rider's own irreversible act, and
+    // getting back on takes somebody else issuing a fresh invitation.
+    if (confirmingLeave) {
+        HudConfirmDialog(
+            title = stringResource(R.string.leave_trip_confirm_title),
+            message = stringResource(R.string.leave_trip_confirm_message),
+            confirmText = stringResource(R.string.leave_trip),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                confirmingLeave = false
+                onLeaveTrip()
+            },
+            onDismiss = { confirmingLeave = false },
+        )
     }
 
     if (choosingDuration) {

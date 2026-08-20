@@ -37,6 +37,8 @@ data class TripDetailUiState(
      */
     val inviteSent: List<String> = emptyList(),
     val endPending: Boolean = false,
+    /** True while leaving is in flight, so its button alone shows a spinner. */
+    val leavePending: Boolean = false,
     val renamePending: Boolean = false,
     /**
      * Kept apart from [error] for the same reason [joinCodeError] is: a rename
@@ -373,6 +375,39 @@ class TripDetailViewModel(
     }
 
     /**
+     * Leaves this trip.
+     *
+     * The member's counterpart to [endTrip], and the reason it exists: one
+     * active trip per rider turned a host who forgets to press End into an
+     * indefinite lock on everybody else's account. Not offered to the owner —
+     * they have [endTrip], and a trip with no owner is one nobody can end.
+     *
+     * [onLeft] runs only on success, so navigation stays out of the view model
+     * and a refusal leaves the rider on the screen with the reason on it. The
+     * phone stops sharing the moment the server confirms, through the same
+     * [onTripEnded] the end of a trip goes through — the membership is gone, so
+     * the next report would be answered 403 and the notification in the rider's
+     * pocket would be claiming something untrue.
+     */
+    fun leaveTrip(onLeft: () -> Unit) {
+        if (_uiState.value.leavePending) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(leavePending = true, error = null) }
+            try {
+                tripApi.leaveTrip(tripId)
+                onTripEnded()
+                _uiState.update { it.copy(leavePending = false) }
+                onLeft()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(leavePending = false, error = e.message) }
+            }
+        }
+    }
+
+    /**
      * Issues a code and hands it back for the share sheet.
      *
      * A fresh one every time rather than reusing whatever the QR screen last
@@ -405,6 +440,11 @@ class TripDetailViewModel(
     /**
      * Ending a trip clears every rider's sharing session on the server, so the
      * phone must stop too rather than carry on reporting into a 409.
+     *
+     * [leaveTrip] goes through here as well, for the same reason in a narrower
+     * form: leaving deletes this rider's session and membership, so the next
+     * report would be answered 403 and the notification in their pocket would
+     * be claiming something untrue.
      */
     fun onTripEnded() {
         if (sharingController.active.value?.tripId == tripId) {

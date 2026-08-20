@@ -73,6 +73,9 @@
     <string name="end_trip">จบทริป</string>
     <string name="end_trip_confirm">จบทริปเลยไหม? ทุกคนในกลุ่มจะหยุดแชร์ตำแหน่งทันที</string>
     <string name="end_trip_yes">จบทริป</string>
+    <string name="leave_trip">ออกจากทริป</string>
+    <string name="leave_trip_confirm_title">ออกจากทริปนี้เลยไหม?</string>
+    <string name="leave_trip_confirm_message">คุณจะหยุดแชร์ตำแหน่งกับกลุ่มและหายไปจากแผนที่ของพวกเขา ถ้าจะกลับเข้ามาอีกต้องให้เจ้าของทริปส่งคำเชิญใหม่</string>
 
     <!-- Settings -->
     <string name="settings_title">ตั้งค่า</string>

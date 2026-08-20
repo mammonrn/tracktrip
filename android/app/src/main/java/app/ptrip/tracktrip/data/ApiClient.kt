@@ -59,6 +59,36 @@ class ActiveTripException(
  */
 class SessionExpiredException : ApiException("Your session expired. Please sign in again.", 401)
 
+/**
+ * Puts the verb on the request.
+ *
+ * A function of its own, and tested on its own, because the `when` it replaces
+ * had a hole in it: [ApiClient.delete] has existed since shared places did and
+ * there was no `"DELETE"` branch, so every removal — a shared place, a private
+ * place, a waypoint — fell through to the throw. `IllegalArgumentException` is
+ * not an `ApiException`, so no view model caught it either; the failure left
+ * the coroutine rather than the error line.
+ *
+ * Nothing about it needed a server to catch, only somewhere a test could reach
+ * without a `Context` and a socket — which is what this now is. Adding a verb
+ * to [ApiClient] without adding it here fails `ApiMethodsTest`.
+ *
+ * [body] is passed for every verb and used by the ones that carry one, so the
+ * caller does not have to know which those are.
+ */
+internal fun Request.Builder.applyMethod(method: String, body: RequestBody): Request.Builder =
+    when (method) {
+        "GET" -> get()
+        "POST" -> post(body)
+        "PATCH" -> patch(body)
+        // Explicitly bodyless: OkHttp's no-argument `delete()` attaches an
+        // empty one, and a DELETE carrying Content-Length: 0 is the shape some
+        // proxies are fussiest about. Nothing is sent and 204 comes back —
+        // see [ApiClient.delete].
+        "DELETE" -> delete(null)
+        else -> throw IllegalArgumentException("unsupported method $method")
+    }
+
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
 /**
@@ -156,12 +186,7 @@ class ApiClient(
         if (accessToken != null) {
             builder.header("Authorization", "Bearer $accessToken")
         }
-        when (method) {
-            "GET" -> builder.get()
-            "POST" -> builder.post(body ?: jsonBody(null))
-            "PATCH" -> builder.patch(body ?: jsonBody(null))
-            else -> throw IllegalArgumentException("unsupported method $method")
-        }
+        builder.applyMethod(method, body ?: jsonBody(null))
 
         val response = try {
             client.newCall(builder.build()).execute()

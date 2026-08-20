@@ -4,6 +4,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { requireTripMembership } from '../auth/tripMembership.js';
 import { requireTripOwner } from '../auth/tripOwnership.js';
 import { requireActiveTrip } from '../auth/tripStatus.js';
+import { requireTripParticipation } from '../auth/tripParticipation.js';
 import { ROLE_SUPERUSER, isSuperuser } from '../auth/roles.js';
 import { normalizeEmail } from '../trips/email.js';
 import {
@@ -634,6 +635,96 @@ export function createTripsRouter({ db, config }) {
     const ended = db.prepare('SELECT * FROM trips WHERE id = ?').get(req.trip.id);
     res.json(serializeTrip(ended, { role: 'owner' }));
   });
+
+  /**
+   * A member leaving a trip.
+   *
+   * ## Why this exists
+   *
+   * One active trip per rider is enforced now, and until this route there was
+   * exactly one way off a trip: its owner ending it. So a rider who accepted
+   * an invitation and whose host then went home without pressing End could not
+   * start a trip of their own, could not accept another invitation, and had
+   * nothing they could do about it — the rule turned somebody else's
+   * forgetfulness into an indefinite lock on their account. A constraint needs
+   * a door out that the person it constrains can open.
+   *
+   * ## What leaving takes with it
+   *
+   * One transaction, because half of it is not a state anybody should be in:
+   *
+   * - **The membership.** `GET /trips/:id/positions` is driven by
+   *   `trip_members`, so this alone takes the rider off the roster and off
+   *   everyone's map.
+   * - **The sharing session**, for the same reason ending a trip clears
+   *   everybody's: a session outliving the membership is a rider believing
+   *   they are still being tracked. Deleted rather than marked spent — the
+   *   "no row means sharing by default" reading in `share/stop` is about
+   *   *members*, and a rejoining rider should start as a new one.
+   * - **The last known position.** Not history, this: `member_positions` holds
+   *   one live row per rider and it is what the map draws. Left behind, it
+   *   would be an orphan today and a ghost tomorrow — a rider re-invited next
+   *   month would appear at the petrol station they left from, dated then and
+   *   drawn now.
+   * - **The accepted invitation**, back to `revoked`, which is the one state
+   *   `POST /trips/:id/invites` already knows how to reopen. Left `accepted`,
+   *   `UNIQUE (trip_id, email)` would mean re-inviting them answers "that
+   *   invite was already accepted" for ever, and a door out that cannot be
+   *   walked back through is half a door.
+   *
+   * `position_history` is deliberately kept. It is the record of a ride that
+   * genuinely happened, `cleanup-history.js` already ages it out, and leaving
+   * a trip afterwards is not grounds to rewrite where everybody went. Nor are
+   * waypoints touched: a route belongs to the trip, not to whoever added a
+   * stop to it.
+   *
+   * ## Who may
+   *
+   * A member, on a running trip. Not the owner — a trip with no owner is a
+   * trip nobody can end, invite to, or rename, and the owner already has the
+   * door marked `/end`. Not on a finished trip either: nothing is holding a
+   * rider there (the rule counts only active trips), and deleting the
+   * membership would take them out of a completed ride's roster and off its
+   * podium, which is rewriting history rather than leaving.
+   *
+   * A super user who is not on the trip is refused by
+   * `requireTripParticipation` — managing a trip has never meant being on it,
+   * and there is nothing for them to leave.
+   */
+  const leaveTrip = db.transaction((tripId, userId) => {
+    db.prepare('DELETE FROM trip_members WHERE trip_id = ? AND user_id = ?').run(tripId, userId);
+    db.prepare('DELETE FROM sharing_sessions WHERE trip_id = ? AND user_id = ?').run(
+      tripId,
+      userId
+    );
+    db.prepare('DELETE FROM member_positions WHERE trip_id = ? AND user_id = ?').run(
+      tripId,
+      userId
+    );
+    db.prepare(
+      `UPDATE trip_invites
+          SET status = 'revoked', accepted_at = NULL, accepted_by = NULL
+        WHERE trip_id = ? AND status = 'accepted' AND accepted_by = ?`
+    ).run(tripId, userId);
+  });
+
+  router.delete(
+    '/trips/:id/members/me',
+    auth,
+    requireTripMembership(db),
+    requireTripParticipation(),
+    requireActiveTrip(),
+    (req, res) => {
+      if (req.membership.role === 'owner') {
+        return res.status(409).json({
+          error: 'the owner cannot leave their own trip. End the trip instead.',
+        });
+      }
+
+      leaveTrip(req.trip.id, req.user.id);
+      res.status(204).end();
+    }
+  );
 
   return router;
 }

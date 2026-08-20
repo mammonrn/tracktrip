@@ -282,6 +282,23 @@ open class TripApi(private val client: ApiClient) {
         JSONObject(client.post("/trips/$tripId/end")).toTrip()
 
     /**
+     * Leaves a trip this rider is a member of.
+     *
+     * The way off a trip for everyone who is not its owner, and the reason one
+     * had to exist: one active trip per rider means a rider whose host went
+     * home without pressing End could not start a trip of their own, could not
+     * accept another invitation, and had nothing they could do about it.
+     *
+     * Answers 204, so there is nothing to read back — the caller re-reads the
+     * trip list, which is where the trip has now gone from. Refused for the
+     * owner (409, use [endTrip]) and on a finished trip (409, nothing is
+     * holding anybody there).
+     */
+    suspend fun leaveTrip(tripId: Long) {
+        client.delete("/trips/$tripId/members/me")
+    }
+
+    /**
      * Renames a trip.
      *
      * The same `PATCH /trips/:id` the two ends go through, and for the same

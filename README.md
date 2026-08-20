@@ -236,11 +236,19 @@ and only ever sets `ended` — but a constraint that holds only for the paths th
 application happens to use is a convention, not a constraint, and this repo
 documents reaching for `sqlite3` on the server.
 
-##### The way out is ending the trip
+##### The way out
 
-Which today only the **owner** can do (`POST /trips/:id/end`). There is no
-"leave trip" endpoint, so a rider who joins somebody else's trip cannot start
-one of their own until that owner ends theirs.
+Two doors, and they are not the same act renamed. The **owner** ends the trip
+(`POST /trips/:id/end`), which closes the ride for the whole group. Everybody
+else **leaves** it (`DELETE /trips/:id/members/me`), which takes one rider off
+it and leaves the trip running.
+
+The second door exists because of the first. With only `/end`, a rider who
+accepted an invitation and whose host then went home without pressing it could
+not start a trip of their own, could not accept another invitation, and had
+nothing they could do about it — the rule turned somebody else's
+forgetfulness into an indefinite lock on their account. A constraint needs a
+door the person it constrains can open.
 
 #### Where a trip starts and ends
 
@@ -366,6 +374,46 @@ without knowing their email address.
   A code is **not** consumed by being redeemed: one QR held up to four riders
   should add four riders. It stops working on expiry, and when the next code
   is issued.
+
+- `DELETE /trips/:id/members/me` — the caller leaves the trip. `204`, with
+  nothing to read back.
+
+  | Case | Response |
+  |---|---|
+  | A member, on a running trip | `204` |
+  | The **owner** | `409` — a trip with no owner is one nobody can end, invite to or rename. `/end` is their door |
+  | Not on the trip (a super user included) | `403` — managing a trip has never meant riding on it |
+  | Trip has ended | `409` — nothing is holding them there, and leaving would take them off a finished ride's roster and its podium |
+
+  One transaction, because half of it is not a state anybody should be in:
+
+  - the **membership**, which is what `GET /trips/:id/positions` is built from,
+    so this alone takes them off the roster and off everyone's map;
+  - the **sharing session**, for the same reason `/end` clears everybody's — a
+    session outliving the membership is a rider believing they are still being
+    tracked. Deleted rather than marked spent: the "no row means sharing by
+    default" reading is about *members*, and somebody rejoining should start as
+    a new one;
+  - the **last known position** — `member_positions`, one live row per rider
+    and what the map draws. Left behind it would be an orphan today and a ghost
+    tomorrow: re-invited next month, they would appear at the petrol station
+    they left from, dated then and drawn now;
+  - the **accepted invitation**, back to `revoked`, which is the one state
+    `POST /trips/:id/invites` already knows how to reopen. Left `accepted`,
+    `UNIQUE (trip_id, email)` would answer "that invite was already accepted"
+    for ever, and a door out that cannot be walked back through is half a door.
+
+  `position_history` is deliberately **kept**: it is the record of a ride that
+  happened, `cleanup-history.js` already ages it out, and leaving afterwards is
+  not grounds to rewrite where everybody went. Waypoints are untouched — a
+  route belongs to the trip, not to whoever added a stop to it.
+
+  One consequence worth knowing: "ridden with before"
+  (`/suggested-invitees`) is built by joining `trip_members` to itself, so a
+  trip somebody left is no longer a trip the two of them shared, and they stop
+  being offered as a shortcut. The owner can still invite them by address.
+  Keeping the shortcut would mean a soft delete and a `left_at` column for
+  every query in the app to remember, which is a large price for a chip.
 
 Once a trip has ended it is **read-only**: members can still read it, but
 every write to it — positions and live waypoint drops included — returns

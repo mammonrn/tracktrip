@@ -28,7 +28,7 @@ inline message rather than crashing.
 | Sign-in — the app's mark over its name, and the Google button | `POST /auth/google` |
 | Trip list — the newest three, an archive for the rest, a podium on each card | `GET /trips`, `GET /invites`, `POST /invites/:id/accept`, `GET /trips/:id/positions` |
 | Create trip | `POST /trips` |
-| Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
+| Trip detail — members, sharing, invite, end or leave the trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `DELETE /trips/:id/members/me`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
 | Settings — profile, language, sharing default, the sharing switch, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
 | Live map — everyone's position, with the member list under it and the route card over it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId`, `GET /geocode/search`, `GET /directions` |
@@ -185,6 +185,29 @@ those riders exist, and the switch has to do something sensible for them.
 `GET /trips` orders `created_at DESC, id DESC`, so the first is the most
 recently started: the one somebody with two open trips is actually riding.
 Deliberately not a picker; the picker is what this change removed.
+
+### Leaving a trip
+
+The member's counterpart to End, in the place End sits, and not the same
+control renamed: ending closes the ride for the whole group and is the
+owner's; leaving takes one rider off it and the owner may not, because a trip
+with no owner is one nobody can end, invite to or rename.
+
+It exists because of the rule above. With only `/end` — owner-only — a rider
+whose host went home without pressing it could not start a trip of their own,
+could not accept another invitation, and had nothing they could do about it.
+
+`DELETE /trips/:id/members/me`, offered to a non-owner on a **running** trip
+only: nothing holds a rider to a finished one, and leaving would take them off
+a completed ride's roster and off its podium. Behind `HudConfirmDialog` rather
+than the inline confirm End uses, for the same reason signing out has one —
+this is the rider's own irreversible act, and getting back on takes the owner
+sending a fresh invitation, which is what the dialog says.
+
+The phone stops sharing the moment the server confirms, through the same
+`onTripEnded` the end of a trip goes through: the membership is gone, so the
+next report would be answered 403 and the notification in the rider's pocket
+would be claiming something untrue.
 
 ### Being refused for being mid-ride
 
@@ -878,6 +901,27 @@ Refreshes are serialised behind a mutex. The backend rotates the refresh token
 on every use and treats a re-presented old one as theft — by revoking every
 token the user has — so two screens refreshing at once would sign the rider
 out rather than keep them in.
+
+### DELETE, which never worked
+
+`ApiClient.delete` has existed since shared places did, and the `when` that
+turned a method name into a request had no `"DELETE"` branch — so every
+removal fell through to `throw IllegalArgumentException`. Deleting a shared
+place, a private place or a waypoint could never have worked.
+
+It went unnoticed because of what it threw. `IllegalArgumentException` is not
+an `ApiException`, so the `catch (e: ApiException)` in every view model let it
+past: the failure left the coroutine instead of landing on the error line, and
+nothing on screen said the removal had not happened. And no test could see it,
+because the mapping sat in a private function that needed a `Context` and a
+socket to reach.
+
+The mapping is `applyMethod` now — a `Request.Builder` extension with no
+Android in it, which `ApiMethodsTest` walks verb by verb. Adding a verb to
+`ApiClient` without wiring it there fails the build. `DELETE` goes out
+explicitly bodyless: OkHttp's no-argument `delete()` attaches an empty body,
+and a DELETE carrying `Content-Length: 0` is the shape some proxies are
+fussiest about.
 
 ## Configuration — where the Client IDs live
 
