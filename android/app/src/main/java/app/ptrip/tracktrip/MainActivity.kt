@@ -46,6 +46,7 @@ import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
+import app.ptrip.tracktrip.ui.EditTripActions
 import app.ptrip.tracktrip.ui.EditTripScreen
 import app.ptrip.tracktrip.ui.JoinTripViewModel
 import app.ptrip.tracktrip.ui.joinCodeFrom
@@ -625,27 +626,28 @@ private fun SignedInNavigation(
                 }
             }
 
-            // Leaving throws the draft away rather than letting it sit on the
-            // view model: the map opens the list by seeding it from the trip,
-            // and a stale draft left here is what it would find.
-            val leave: () -> Unit = {
-                mapViewModel.closeRouteSetup()
-                mapViewModel.placeSearch.clear()
-                backStack.pop()
-            }
+            // The two exits, and the difference between them — which is the
+            // whole of [EditTripActions]. Saving the name is a write to one
+            // field and touches nothing else; *leaving* is what throws the
+            // route draft away, because the map seeds its route list from the
+            // trip and a draft left sitting here is what it would find.
+            val actions = EditTripActions(
+                rename = { name, done -> detailViewModel.rename(name, done) },
+                // The trip list shows every name, so it is stale the moment
+                // one changes.
+                onRenamed = tripsViewModel::refresh,
+                discardRouteDraft = {
+                    mapViewModel.closeRouteSetup()
+                    mapViewModel.placeSearch.clear()
+                },
+                goBack = { backStack.pop() },
+            )
 
             EditTripScreen(
                 trip = detailState.trip,
                 saving = detailState.renamePending,
                 error = detailState.renameError,
-                onSave = { name ->
-                    detailViewModel.rename(name) {
-                        // The trip list shows every name, so it is stale the
-                        // moment one changes.
-                        tripsViewModel.refresh()
-                        leave()
-                    }
-                },
+                onSave = actions::save,
                 routeDraft = mapState.routeDraft,
                 routePlan = mapState.summaryPlan,
                 routeLine = mapState.draftRoute,
@@ -662,7 +664,7 @@ private fun SignedInNavigation(
                 onRemoveRouteRow = mapViewModel::removeRouteRow,
                 onMoveRoutePoint = mapViewModel::moveRoutePoint,
                 onConfirmRoute = mapViewModel::confirmRoute,
-                onBack = leave,
+                onBack = actions::leave,
                 modifier = modifier,
             )
         }

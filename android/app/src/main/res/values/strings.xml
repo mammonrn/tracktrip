@@ -38,6 +38,7 @@
     <!-- Edit trip -->
     <string name="edit_trip">Edit trip</string>
     <string name="edit_trip_save">Save</string>
+    <string name="edit_trip_saved">Name saved</string>
 
     <!-- Trip detail -->
     <string name="members_title">Members</string>

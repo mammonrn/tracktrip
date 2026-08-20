@@ -33,6 +33,7 @@ import app.ptrip.tracktrip.data.RouteLine
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RoutePlan
+import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
@@ -174,6 +175,33 @@ fun EditTripScreen(
             var typed by remember(trip.name) { mutableStateOf(trip.name) }
             val trimmed = typed.trim()
 
+            /**
+             * The name the rider last pressed Save on, or null before they
+             * have.
+             *
+             * Save used to answer for itself by leaving the screen — that was
+             * the feedback, and it was also the bug: leaving threw the route
+             * draft away, so a rider who saved a name watched their route go
+             * back to two empty rows. Save stays put now, which leaves it with
+             * nothing to say unless the screen says it.
+             *
+             * Deliberately not a flag raised and lowered around [saving]. That
+             * only works if a composition happens to fall inside the window
+             * where the flag is up, and this app has already shipped one
+             * button whose whole feedback was invisible for exactly that
+             * reason — see `CentreOnMe`. This asks the question that has a
+             * lasting answer instead: the save landed when [trip] comes back
+             * carrying the name that was sent.
+             */
+            var submitted by remember(trip.id) { mutableStateOf<String?>(null) }
+
+            // Still true, rather than true once: the rider typing anything
+            // else makes it a claim about a name that is no longer in the box.
+            val savedAndUnchanged = submitted != null &&
+                submitted == trip.name &&
+                typed == trip.name &&
+                error == null
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -208,7 +236,10 @@ fun EditTripScreen(
                 ) {
                     HudPrimaryButton(
                         text = stringResource(R.string.edit_trip_save),
-                        onClick = { onSave(trimmed) },
+                        onClick = {
+                            submitted = trimmed
+                            onSave(trimmed)
+                        },
                         // Nothing typed, nothing changed, or a save already in
                         // flight: all three are requests whose answer is
                         // already known, and a pressable button that does
@@ -221,6 +252,15 @@ fun EditTripScreen(
                         text = stringResource(R.string.cancel),
                         onClick = onBack,
                         enabled = !saving,
+                    )
+                }
+
+                if (savedAndUnchanged) {
+                    Text(
+                        text = stringResource(R.string.edit_trip_saved),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = AppPrimary,
+                        modifier = Modifier.padding(top = 10.dp),
                     )
                 }
 
