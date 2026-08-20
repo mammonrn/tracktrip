@@ -275,15 +275,11 @@ private fun SignedInNavigation(
         }
     }
 
-    // A sharing action waiting on the permission dialog's answer: a toggle
-    // from settings, or a duration picked on the trip screen.
-    var pendingToggle by remember { mutableStateOf<Pair<Trip, Boolean>?>(null) }
-    var pendingDuration by remember { mutableStateOf<SharingDuration?>(null) }
-
-    // The device-wide switch, when moving it is about to start sending and so
-    // needs Android's answer first. Kept apart from [pendingToggle] because
-    // they are different sentences — this one is about the phone.
+    // A sharing action waiting on the permission dialog's answer. Two, because
+    // they are different sentences: the switch in settings is about this
+    // phone, and the duration on the trip screen is about this ride.
     var pendingDeviceSwitch by remember { mutableStateOf<Boolean?>(null) }
+    var pendingDuration by remember { mutableStateOf<SharingDuration?>(null) }
 
     BackHandler(enabled = backStack.canGoBack) { backStack.pop() }
 
@@ -330,7 +326,6 @@ private fun SignedInNavigation(
                         pendingDeviceSwitch = null
                         settingsViewModel.setShareFromThisPhone(on)
                     }
-                    pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) }
                 },
                 onDenied = settingsViewModel::onPermissionDenied,
                 askBatteryExemption = true,
@@ -343,6 +338,7 @@ private fun SignedInNavigation(
                 email = profile?.email ?: user.email,
                 photoUrl = profile?.photoUrl ?: user.photoUrl,
                 sharingTripId = sharing?.tripId,
+                sharingTripName = sharing?.tripName,
                 onOpenProfile = { backStack.push(Screen.Profile) },
                 onRemovePersonalPlace = placesViewModel::removePersonal,
                 onRemoveSharedPlace = placesViewModel::removeShared,
@@ -360,14 +356,6 @@ private fun SignedInNavigation(
                         requestSharingPermission()
                     } else {
                         settingsViewModel.setShareFromThisPhone(on)
-                    }
-                },
-                onToggleSharing = { trip, on ->
-                    if (on) {
-                        pendingToggle = trip to true
-                        requestSharingPermission()
-                    } else {
-                        settingsViewModel.toggleSharing(trip, false)
                     }
                 },
                 onSignOut = onSignOut,

@@ -120,16 +120,16 @@
     <string name="sharing_stop">Stop sharing</string>
     <string name="sharing_choose_duration">Share my location for…</string>
     <string name="sharing_until">Until %1$s</string>
-    <string name="sharing_no_active_trips">No trip is running to share to. Create one, or join a friend\'s — the switch above stays as you set it.</string>
     <string name="settings_sharing">Location sharing</string>
     <!--
-      The three states of the device-wide switch. "On" is permission rather
+      The three states of the one sharing switch. "On" is permission rather
       than transmission, so the middle one has to exist: a phone that is
-      willing to share and has nowhere to send is an ordinary state, and a
-      switch on its own cannot say so.
+      willing to share and has no trip to send to is an ordinary state, and a
+      switch on its own cannot say so. The first names the trip because the
+      screen no longer has a row that does.
     -->
-    <string name="settings_sharing_device_on">On. Your position is going out to the trip below.</string>
-    <string name="settings_sharing_device_idle">On. Nothing is being sent yet — pick a trip below, or start sharing from a trip.</string>
+    <string name="settings_sharing_device_on">On. Sharing your position with %1$s.</string>
+    <string name="settings_sharing_device_idle">On. No trip is running, so nothing is being sent yet.</string>
     <string name="settings_sharing_device_off">Off. This phone sends nothing, whatever trips are running.</string>
 
     <!-- Battery optimisation -->

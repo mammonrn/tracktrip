@@ -3,7 +3,6 @@ package app.ptrip.tracktrip.location
 import app.ptrip.tracktrip.data.Trip
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -17,6 +16,11 @@ import org.junit.Test
  * The first two cases below are that report, written down. They fail against
  * the old screen not because it computed the wrong answer but because it had
  * nowhere to compute one — every switch it drew was keyed on a trip.
+ *
+ * The fix that first landed kept both: a device switch above the per-trip
+ * rows. That was one question too many — a rider is on one ride at a time, and
+ * the phone is on one by construction — so the rows are gone and this is the
+ * whole of the decision now.
  */
 class DeviceSharingTest {
 
@@ -79,16 +83,21 @@ class DeviceSharingTest {
     }
 
     @Test
-    fun `on with several running trips starts nothing`() {
-        // Which trip is a second question, and the rows below ask it.
-        // Guessing would broadcast a rider's position to the wrong group.
+    fun `on with two somehow-running trips takes the newest rather than asking`() {
+        // A rider is on one ride at a time, so this should not arise — but
+        // nothing enforces it: `trips` has no such constraint, `POST /trips`
+        // no such guard, and `sharing_sessions` is keyed per trip *and* rider.
+        // `GET /trips` orders `created_at DESC, id DESC`, so the first is the
+        // most recently started, which is the one somebody with two open trips
+        // is riding. Deliberately not a picker — the picker is what this
+        // change removed.
         val effect = DeviceSharing.onSwitched(
             on = true,
             sharingTripId = null,
             running = listOf(running, alsoRunning),
         )
 
-        assertEquals(DeviceSharing.Effect.Remember, effect)
+        assertEquals(DeviceSharing.Effect.Start(running), effect)
     }
 
     @Test
@@ -99,21 +108,19 @@ class DeviceSharingTest {
         assertEquals(DeviceSharing.Status.ON_SHARING, DeviceSharing.status(on = true, sharingTripId = 1L))
     }
 
-    // --- what the trip rows may do ---------------------------------------
-
     @Test
-    fun `a trip row obeys the phone before it obeys the trip`() {
-        assertTrue(DeviceSharing.canShareOn(running, on = true))
-        assertFalse(DeviceSharing.canShareOn(running, on = false))
-    }
+    fun `an ended trip never reaches the decision`() {
+        // "On" now starts on the first trip it is handed without asking
+        // anything else about it, so the `isActive` filter that builds the
+        // list is the only thing keeping out a finished trip — which the
+        // server refuses a session on. Worth holding the two together.
+        val list = listOf(running, ended).filter { it.isActive }
 
-    @Test
-    fun `an ended trip cannot be shared on, switch or no switch`() {
-        // Not the same fact as the switch, and not the one the report was
-        // about: the server refuses a session on a finished trip, so a row
-        // offering it would be offering a 409.
-        assertFalse(DeviceSharing.canShareOn(ended, on = true))
-        assertFalse(DeviceSharing.canShareOn(ended, on = false))
+        assertFalse(ended in list)
+        assertEquals(
+            DeviceSharing.Effect.Start(running),
+            DeviceSharing.onSwitched(on = true, sharingTripId = null, running = list),
+        )
     }
 
     @Test

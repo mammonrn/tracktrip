@@ -29,7 +29,7 @@ inline message rather than crashing.
 | Trip list — the newest three, an archive for the rest, a podium on each card | `GET /trips`, `GET /invites`, `POST /invites/:id/accept`, `GET /trips/:id/positions` |
 | Create trip | `POST /trips` |
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
-| Settings — profile, language, sharing default, the phone's sharing switch and the trip it sends to, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
+| Settings — profile, language, sharing default, the sharing switch, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
 | Live map — everyone's position, with the member list under it and the route card over it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId`, `GET /geocode/search`, `GET /directions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
@@ -120,7 +120,7 @@ than in each screen that offers it:
 Stopping runs the other way — service down first, then the server — so a
 failed network call still leaves the phone silent.
 
-### The switch is the phone's, not a trip's
+### One switch, and why it is not two
 
 Settings used to ask "is this phone sharing?" once per running trip: a list
 built from `listTrips().filter { it.isActive }` with a `Switch` on each row.
@@ -136,84 +136,51 @@ session is per trip, the service reports to the trip it was started for,
 carry one out. The fifth — whether the phone may share at all — was the only
 statement about the phone, and the only one made out of trips.
 
-So the section asks two questions now. **May this phone share where it is?** is
-a switch at the top, backed by `AppSettings.shareLocationFromThisPhone` and
-always pressable: no trips, every trip finished, network down. **Which trip is
-a fix reported to?** is the same rows as before, underneath, greyed while the
-phone's answer is no.
+The first fix for that put the phone's switch above the trip rows and kept
+both. That was one question too many. **A rider is on one ride at a time**, and
+the phone is on one by construction: `SharingState` holds a single
+`ActiveSharing` and the service reports to the trip it was started for. Rows
+asking *which* trip were asking somebody to choose between things they cannot
+do at once, and two switches that can disagree about the same fact is the
+confusion this was meant to end rather than extend.
 
-[`location/DeviceSharing.kt`](
+So the section is **one switch and a sentence**, backed by
+`AppSettings.shareLocationFromThisPhone` and always pressable: no trips, every
+trip finished, network down. [`location/DeviceSharing.kt`](
 app/src/main/java/app/ptrip/tracktrip/location/DeviceSharing.kt) holds the
 decisions, with no Android in it, for the same reason `BatteryExemption` does:
 
 - **Off** stops whatever is live and never reads the trip list — the id comes
   from the service, so a session that outlived its trip stops all the same.
   That case is exactly what a trip-shaped control could not reach.
-- **On** starts sharing when there is one obvious trip to start on, which is
-  the gesture the per-trip toggle used to be. With none it records the choice;
-  with several, *which* is a second question and the rows below ask it, because
-  guessing would send a position to the wrong group.
+- **On** starts sharing on the running trip. With none there is nothing to
+  start and the choice is simply kept, which is the whole of the original
+  report.
 
 On while nothing is being sent is permission rather than transmission, and an
 ordinary state — the line under the switch says which of the three it is
-(`DeviceSharing.Status`). The preference defaults to **on**, matching the
-backend, where a rider who has never touched the controls already counts as
-sharing; defaulting it off would have silently stopped everyone who upgraded
-mid-tour. Starting from the trip screen turns it on, because picking a duration
-there is consenting. Android's location dialog is raised only when the switch
-is about to start sending, and never when turning it off — a kill switch that
-waits on a dialog is not a kill switch.
+(`DeviceSharing.Status`) and **names the trip** when there is one, because the
+screen no longer has a row that does. The preference defaults to **on**,
+matching the backend, where a rider who has never touched the controls already
+counts as sharing; defaulting it off would have silently stopped everyone who
+upgraded mid-tour. Starting from the trip screen turns it on, because picking a
+duration there is consenting. Android's location dialog is raised only when the
+switch is about to start sending, and never when turning it off — a kill switch
+that waits on a dialog is not a kill switch.
 
-The service reports every 10 seconds via `LocationManager` (not Play
-Services' fused provider: at that cadence the accuracy is not worth another
-dependency, and this keeps working on a phone whose Play Services are
-unhealthy, which is the phone that ends up on a mountain road).
+#### One active trip per rider is an assumption, not a constraint
 
-That was 45 seconds. Two things made 10 the right number now, and one of them
-is new. At 80 km/h, 45 seconds is about a kilometre between reports and 10 is
-about 220 metres — the difference between a friend's pin being a village
-behind them and a street behind them. And the old objection ("every report is
-a GPS acquisition") no longer applies while anybody is looking: since the live
-speed feed landed, the map screen holds a continuous 1 Hz location
-subscription for as long as it is composed, so a report on the map screen
-costs one HTTP POST and **zero** extra acquisitions. The cost that is real is
-screen-off — a phone in a tank bag now wakes the receiver 4.5× as often, less
-than 4.5× in practice because ten-second cycles keep the GNSS engine warm and
-a warm fix is far cheaper than the cold search a 45-second gap can fall into,
-but a long day in a pocket will show it.
+Nothing enforces it. `trips` has no such constraint, `POST /trips` no such
+guard, accepting an invite and redeeming a join code neither, and
+`sharing_sessions` is keyed `(trip_id, user_id)` — so the server would happily
+hold two live sessions for one rider. The **phone** is what makes it one:
+`SharingState` holds a single `ActiveSharing`.
 
-The backend's per-rider ceiling went from 10 to 30 reports a minute in the
-same change, so 6 a minute keeps the 5× headroom the old cadence had rather
-than brushing a limit whose whole job is to catch a runaway client.
-[`location/ReportCadence.kt`](
-app/src/main/java/app/ptrip/tracktrip/location/ReportCadence.kt) holds a copy
-of that ceiling and `ReportCadenceTest` fails when the two part company —
-which is the only thing connecting a Kotlin constant to a Node one.
-
-The **viewer's** poll deliberately did not move: `LiveCadence.POLL_MS` is
-still 20 seconds. The socket delivers every stored fix the moment it is
-stored, so a rider with a connection already gets the whole benefit; the poll
-is the fallback for a dropped socket, and on that path worst-case staleness
-just improved from about a minute to twenty seconds for free. Halving it
-would double every viewer's read traffic permanently to save at most ten
-seconds on a path that is already better than it was. It stops
-itself when the session lapses, when the rider stops it from the notification,
-and when a report comes back saying the trip has ended.
-
-**The service is the app's authority on whether this phone is sharing.**
-[`SharingState`](app/src/main/java/app/ptrip/tracktrip/location/SharingState.kt)
-publishes it and every screen reads from there. Deliberately *not* the server's
-`is_sharing`, which answers a different question — "would a report from this
-rider be accepted" — and is `true` on every running trip for a rider who has
-never touched the controls, since sharing is the default there. A toggle built
-on that would read ON while the phone sent nothing.
-
-This is also why [`AppContainer`](
-app/src/main/java/app/ptrip/tracktrip/data/AppContainer.kt) is a process
-singleton: the service and the UI are separate entry points into the same
-process, and two `ApiClient`s would mean two refresh mutexes — enough for a
-401 in each to rotate the refresh token twice, which the backend treats as
-theft and answers by revoking every token the rider has.
+`DeviceSharing.onSwitched` therefore takes the **first** running trip rather
+than asserting there is only one. `GET /trips` orders `created_at DESC, id DESC`,
+so that is the most recently started — the one somebody who has somehow left two
+trips open is actually riding. Deliberately not a picker: the picker is what
+this change removed.
 
 ## The trip list
 

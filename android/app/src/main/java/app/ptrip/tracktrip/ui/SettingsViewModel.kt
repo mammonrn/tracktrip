@@ -68,17 +68,24 @@ data class SettingsUiState(
     val shareFromThisPhone: Boolean = true,
     /** True while the switch's own start or stop is in flight. */
     val switchPending: Boolean = false,
-    /** Trips that could be shared on — running ones the rider belongs to. */
+    /**
+     * The trip the switch would share on — running, and this rider's.
+     *
+     * A list rather than a single trip because that is the shape `GET /trips`
+     * comes back in, and nothing in the schema or the API stops a rider being
+     * on two at once: `trips` has no such constraint, `POST /trips` no such
+     * guard, and `sharing_sessions` is keyed per trip *and* rider. In practice
+     * a rider is on one ride at a time, so [DeviceSharing.onSwitched] takes
+     * the first — `GET /trips` orders newest first — rather than asking.
+     */
     val activeTrips: List<Trip> = emptyList(),
     val loadingTrips: Boolean = true,
-    /** The trip whose toggle is mid-flight, so only its row shows a spinner. */
-    val pendingTripId: Long? = null,
     val error: String? = null,
 )
 
 /**
  * Everything on the settings screen: the two preferences, and the sharing
- * toggles.
+ * switch.
  *
  * Both preferences are persisted the moment they change — a setting that
  * forgets itself when the app is closed is not a setting.
@@ -128,15 +135,14 @@ class SettingsViewModel(
     }
 
     /**
-     * Loads the trips that can be shared on.
+     * Loads the trip the switch would share on.
      *
-     * Which of them is *being* shared on comes from [activeSharing] — the
+     * Whether one is *being* shared on comes from [activeSharing] — the
      * service's own state — not from the server. That is deliberate. The
      * server's `is_sharing` answers "would a report from this rider be
      * accepted", and for a rider who has never touched the controls the answer
      * is yes on every trip, because sharing is the default there. A toggle
-     * built on that would show ON for every running trip while the phone sent
-     * nothing at all.
+     * built on that would read ON while the phone sent nothing at all.
      *
      * What a rider means by "am I sharing?" is whether their phone is
      * transmitting, and the service is the only thing that knows.
@@ -206,7 +212,7 @@ class SettingsViewModel(
      * The screen asks before it asks Android: turning the switch on with no
      * trip running only records a preference, and putting the location
      * permission dialog in front of that would be demanding an answer to a
-     * question nothing is about to act on. The same decision as the toggle
+     * question nothing is about to act on. The same decision as the flip
      * itself, so it is the same function that makes it.
      */
     fun switchWouldStartSharing(on: Boolean): Boolean =
@@ -215,35 +221,6 @@ class SettingsViewModel(
             sharingTripId = sharingController.active.value?.tripId,
             running = _uiState.value.activeTrips,
         ) is DeviceSharing.Effect.Start
-
-    /**
-     * Turns sharing on or off for one trip.
-     *
-     * Starting uses whatever default duration the rider set, so the toggle
-     * stays a toggle — the duration picker lives on the trip screen, where
-     * someone about to ride is making a deliberate choice.
-     */
-    fun toggleSharing(trip: Trip, on: Boolean) {
-        if (_uiState.value.pendingTripId != null || _uiState.value.switchPending) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(pendingTripId = trip.id, error = null) }
-            try {
-                if (on) {
-                    sharingController.start(trip, settings.defaultSharingMinutes)
-                } else {
-                    sharingController.stop(trip.id)
-                }
-                // No local bookkeeping of what is on: the service publishes
-                // that, and the screen reads it from there.
-                _uiState.update { it.copy(pendingTripId = null) }
-            } catch (e: SessionExpiredException) {
-                onSessionExpired()
-            } catch (e: ApiException) {
-                _uiState.update { it.copy(pendingTripId = null, error = e.message) }
-            }
-        }
-    }
 
     fun onPermissionDenied(message: String) {
         _uiState.update { it.copy(error = message) }

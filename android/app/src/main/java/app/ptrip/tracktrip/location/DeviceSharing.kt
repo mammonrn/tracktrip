@@ -3,8 +3,7 @@ package app.ptrip.tracktrip.location
 import app.ptrip.tracktrip.data.Trip
 
 /**
- * The one switch that answers "does this phone share where it is?", kept apart
- * from "which trip is running".
+ * The one switch that answers "does this phone share where it is?"
  *
  * ## The bug this exists to end
  *
@@ -25,19 +24,27 @@ import app.ptrip.tracktrip.data.Trip
  *   control that matters most — stop sending — was the one that could go
  *   missing exactly when a session had outlived the trip that started it.
  *
- * Two concerns had been folded into one row. They are separated here:
+ * ## Why it is one switch and not two
  *
- * | | what it means | where it lives |
- * |---|---|---|
- * | **this** | may this phone share at all | `AppSettings.shareLocationFromThisPhone`, a device preference |
- * | the trip rows | which trip a fix is reported to | the service, via [SharingState] |
+ * The first fix for that put a device switch above the per-trip rows and kept
+ * both: the phone's answer, then which trip it applied to. That was one
+ * question too many. **A rider is on one ride at a time.** The phone is on one
+ * ride at a time by construction — [SharingState] holds a single
+ * [ActiveSharing] and the service reports to the trip it was started for — so
+ * a row asking *which* trip was asking a rider to choose between things they
+ * cannot be doing at once, and it re-introduced the confusion it was meant to
+ * settle: two switches that can disagree about the same fact.
+ *
+ * So: one switch. On is "share where I am", off is "send nothing", and the
+ * trip is whichever one is running. What used to be two rows is now this file
+ * and a line of text.
  *
  * ## What ON means when nothing is being sent
  *
  * Consent, not transmission. A phone can be willing to share and have nowhere
  * to send — no trip running, or the only one just ended — and that is an
  * ordinary state rather than an error, so the switch sits in it happily and
- * the row underneath says which of the two it is ([Status]).
+ * the line underneath says which of the two it is ([Status]).
  *
  * The default is on, matching the backend, where a rider who has never touched
  * the controls is already `is_sharing`. Defaulting the new switch off would
@@ -49,15 +56,15 @@ import app.ptrip.tracktrip.data.Trip
  */
 object DeviceSharing {
 
-    /** What the switch is doing right now, in the terms the row explains it. */
+    /** What the switch is doing right now, in the terms the line explains it. */
     enum class Status {
         /** Off. This phone sends nothing, whatever is running. */
         OFF,
 
-        /** On, and there is nowhere to send: no running trip, or none picked. */
+        /** On, and there is nowhere to send: no trip is running. */
         ON_IDLE,
 
-        /** On, and a fix is going out to a trip. */
+        /** On, and a fix is going out to the trip that is running. */
         ON_SHARING,
     }
 
@@ -81,7 +88,7 @@ object DeviceSharing {
         /** "Stop sending" — the kill switch half, and the one that must never fail. */
         data class Stop(val tripId: Long) : Effect
 
-        /** "Start sending, on the obvious trip" — see [onSwitched]. */
+        /** "Start sending, on the ride I am on" — see [onSwitched]. */
         data class Start(val trip: Trip) : Effect
     }
 
@@ -94,13 +101,20 @@ object DeviceSharing {
      * and the id to stop comes from the service rather than from a list that
      * may no longer contain it.
      *
-     * **On** starts sharing when, and only when, there is one obvious trip to
-     * start on. One running trip is the ordinary case and the switch is then
-     * the whole gesture, the way the per-trip toggle used to be. With none,
-     * there is nothing to start and the choice is simply kept. With several,
-     * *which* is a second question and the rows below ask it — guessing would
-     * broadcast a rider's position to the wrong group, which is the one
-     * mistake this feature cannot make.
+     * **On** starts sharing on the running trip, if there is one. With none
+     * there is nothing to start and the choice is simply kept — which is the
+     * whole of the original report, and the reason this cannot consult the
+     * trip list to decide whether the rider is *allowed* to press.
+     *
+     * [running] is expected to hold at most one trip, because a rider is on
+     * one ride at a time. Nothing in the schema or the API enforces that
+     * (`trips` has no such constraint, `POST /trips` no such guard, and
+     * `sharing_sessions` is keyed per trip *and* rider) — so rather than
+     * assert it and crash a rider who has somehow ended up on two, this takes
+     * the **first**, which `GET /trips` orders `created_at DESC, id DESC`:
+     * the most recently started of them, which is the one somebody with two
+     * open trips is riding. Deliberately not a picker. The old picker is what
+     * this change removed.
      *
      * @param sharingTripId the trip the service is reporting to, from
      *   [SharingState], or null when it is not running.
@@ -110,16 +124,6 @@ object DeviceSharing {
     fun onSwitched(on: Boolean, sharingTripId: Long?, running: List<Trip>): Effect = when {
         !on -> sharingTripId?.let { Effect.Stop(it) } ?: Effect.Remember
         sharingTripId != null -> Effect.Remember
-        else -> running.singleOrNull()?.let { Effect.Start(it) } ?: Effect.Remember
+        else -> running.firstOrNull()?.let { Effect.Start(it) } ?: Effect.Remember
     }
-
-    /**
-     * Whether sharing can start on [trip] at all.
-     *
-     * Both halves, in one place, because the trip screen and the settings rows
-     * both have to ask and had been asking differently: the phone must be
-     * willing, and the trip must be running — the server refuses a session on
-     * an ended one, so offering it would be offering a 409.
-     */
-    fun canShareOn(trip: Trip, on: Boolean): Boolean = on && trip.isActive
 }

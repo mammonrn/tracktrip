@@ -1,7 +1,6 @@
 package app.ptrip.tracktrip.ui
 
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,7 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * That Settings has a switch for *this phone*, reachable when no trip is.
+ * That Settings has one switch for sharing, reachable when no trip is.
  *
  * ## The report
  *
@@ -30,12 +29,16 @@ import org.robolectric.annotation.Config
  * instead was "Sharing needs a running trip", where a privacy setting should
  * have been.
  *
- * The section answers two questions now, and these hold the line between them:
- * the switch at the top is the phone's own answer and is always pressable;
- * the rows below are which trip a fix goes to, and are subordinate to it.
+ * ## And why there is only one switch
  *
- * `DeviceSharingTest` holds the decisions; this holds that the control exists
- * and is reachable in the state the report was made in.
+ * The first fix put the phone's switch above those rows and kept them both.
+ * That is one question too many — a rider is on one ride at a time, and the
+ * phone is on one by construction, since the service reports to the trip it
+ * was started for. The rows are gone; the switch says what it is doing in a
+ * line instead, and names the trip when there is one.
+ *
+ * `DeviceSharingTest` holds the decisions; this holds that the control exists,
+ * is reachable in the state the report was made in, and is the only one there.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xhdpi")
@@ -45,13 +48,15 @@ class SharingSwitchTest {
     val compose = createComposeRule()
 
     private val switched = mutableListOf<Boolean>()
-    private val toggled = mutableListOf<Pair<Long, Boolean>>()
 
     private val running = Trip(1L, "Chiang Mai loop", 1L, Trip.STATUS_ACTIVE, Trip.ROLE_OWNER)
 
-    private fun settings(state: SettingsUiState) {
+    private fun settings(
+        state: SettingsUiState,
+        sharingTripId: Long? = null,
+        sharingTripName: String? = null,
+    ) {
         switched.clear()
-        toggled.clear()
         compose.setContent {
             TracktripTheme {
                 SettingsScreen(
@@ -60,14 +65,14 @@ class SharingSwitchTest {
                     displayName = "Poom",
                     email = "rider@gmail.com",
                     photoUrl = null,
-                    sharingTripId = null,
+                    sharingTripId = sharingTripId,
+                    sharingTripName = sharingTripName,
                     onOpenProfile = {},
                     onRemovePersonalPlace = {},
                     onRemoveSharedPlace = {},
                     onLanguageChange = {},
                     onSharingDurationChange = {},
                     onShareFromThisPhoneChange = { switched += it },
-                    onToggleSharing = { trip, on -> toggled += trip.id to on },
                     onSignOut = {},
                     onBack = {},
                 )
@@ -75,8 +80,8 @@ class SharingSwitchTest {
         }
     }
 
-    /** The section's own switch: the first toggleable thing on the screen. */
-    private fun deviceSwitch() = compose.onAllNodes(isToggleable())[0]
+    /** The section's own switch: the only toggleable thing on the screen. */
+    private fun theSwitch() = compose.onNode(isToggleable())
 
     @Test
     fun `the switch is there and pressable with every trip finished`() {
@@ -85,7 +90,7 @@ class SharingSwitchTest {
         // about their own phone.
         settings(SettingsUiState(loadingTrips = false, activeTrips = emptyList()))
 
-        deviceSwitch().performScrollTo().assertIsEnabled().assertIsOn().performClick()
+        theSwitch().performScrollTo().assertIsEnabled().assertIsOn().performClick()
 
         assertEquals(listOf(false), switched)
     }
@@ -100,22 +105,47 @@ class SharingSwitchTest {
             )
         )
 
-        deviceSwitch().performScrollTo().assertIsEnabled().assertIsOff().performClick()
+        theSwitch().performScrollTo().assertIsEnabled().assertIsOff().performClick()
 
         assertEquals(listOf(true), switched)
     }
 
     @Test
+    fun `there is exactly one switch, even with a trip running`() {
+        // The whole of this change: no second control asking which trip. A
+        // rider is on one ride at a time, and `onNode` fails outright if a
+        // second toggleable thing appears.
+        settings(SettingsUiState(loadingTrips = false, activeTrips = listOf(running)))
+
+        theSwitch().performScrollTo().assertIsEnabled().assertIsOn()
+        // The trip is named in the line when it is being shared with, not
+        // offered as a row of its own to switch.
+        compose.onNodeWithText("Chiang Mai loop").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sharing names the trip it is sharing with`() {
+        settings(
+            SettingsUiState(loadingTrips = false, activeTrips = listOf(running)),
+            sharingTripId = running.id,
+            sharingTripName = running.name,
+        )
+
+        compose
+            .onNodeWithText("On. Sharing your position with Chiang Mai loop.")
+            .performScrollTo()
+            .assertExists()
+    }
+
+    @Test
     fun `on with nowhere to send says so, rather than reading as sharing`() {
         // "On" is permission, not transmission, so the middle state has to be
-        // sayable: willing, with nowhere to send. A switch alone cannot tell a
-        // rider which of the two they are looking at.
+        // sayable: willing, with no trip to send to. A switch alone cannot
+        // tell a rider which of the two they are looking at.
         settings(SettingsUiState(loadingTrips = false, activeTrips = emptyList()))
 
         compose
-            .onNodeWithText(
-                "On. Nothing is being sent yet — pick a trip below, or start sharing from a trip."
-            )
+            .onNodeWithText("On. No trip is running, so nothing is being sent yet.")
             .performScrollTo()
             .assertExists()
     }
@@ -125,7 +155,7 @@ class SharingSwitchTest {
         settings(
             SettingsUiState(
                 loadingTrips = false,
-                activeTrips = emptyList(),
+                activeTrips = listOf(running),
                 shareFromThisPhone = false,
             )
         )
@@ -134,47 +164,5 @@ class SharingSwitchTest {
             .onNodeWithText("Off. This phone sends nothing, whatever trips are running.")
             .performScrollTo()
             .assertExists()
-    }
-
-    @Test
-    fun `the no-trips line no longer stands where the control should be`() {
-        settings(SettingsUiState(loadingTrips = false, activeTrips = emptyList()))
-
-        // Still said, because it is true and useful — but as an explanation
-        // sitting under a switch the rider has just used, not as the screen's
-        // whole answer to "turn sharing on".
-        compose
-            .onNodeWithText(
-                "No trip is running to share to. Create one, or join a friend's — " +
-                    "the switch above stays as you set it."
-            )
-            .performScrollTo()
-            .assertExists()
-    }
-
-    @Test
-    fun `a trip row is greyed while the phone's answer is no`() {
-        settings(
-            SettingsUiState(
-                loadingTrips = false,
-                activeTrips = listOf(running),
-                shareFromThisPhone = false,
-            )
-        )
-
-        compose.onNodeWithText("Chiang Mai loop").performScrollTo().assertExists()
-        // The phone outranks the trip. A trip switch that could contradict the
-        // one above it is how the two concerns got confused in the first place.
-        compose.onAllNodes(isToggleable())[1].assertIsNotEnabled()
-        assertEquals(emptyList<Pair<Long, Boolean>>(), toggled)
-    }
-
-    @Test
-    fun `a trip row still picks its trip while the phone's answer is yes`() {
-        settings(SettingsUiState(loadingTrips = false, activeTrips = listOf(running)))
-
-        compose.onAllNodes(isToggleable())[1].performScrollTo().assertIsEnabled().performClick()
-
-        assertEquals(listOf(1L to true), toggled)
     }
 }

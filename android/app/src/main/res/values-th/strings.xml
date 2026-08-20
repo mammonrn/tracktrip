@@ -128,8 +128,8 @@
 
     <!-- Location sharing -->
     <string name="settings_sharing">แชร์ตำแหน่ง</string>
-    <string name="settings_sharing_device_on">เปิดอยู่ กำลังส่งตำแหน่งไปยังทริปด้านล่าง</string>
-    <string name="settings_sharing_device_idle">เปิดอยู่ แต่ยังไม่ได้ส่งอะไร เลือกทริปด้านล่าง หรือเริ่มแชร์จากหน้าทริป</string>
+    <string name="settings_sharing_device_on">เปิดอยู่ กำลังแชร์ตำแหน่งกับ %1$s</string>
+    <string name="settings_sharing_device_idle">เปิดอยู่ แต่ยังไม่มีทริปที่กำลังเดินทาง จึงยังไม่ได้ส่งอะไร</string>
     <string name="settings_sharing_device_off">ปิดอยู่ เครื่องนี้จะไม่ส่งตำแหน่งไม่ว่าจะมีทริปไหนกำลังเดินทางก็ตาม</string>
     <string name="sharing_on">กำลังแชร์ตำแหน่ง</string>
     <string name="sharing_off">ไม่ได้แชร์</string>
@@ -138,7 +138,6 @@
     <string name="sharing_stop">หยุดแชร์</string>
     <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
     <string name="sharing_until">ถึง %1$s</string>
-    <string name="sharing_no_active_trips">ยังไม่มีทริปที่กำลังเดินทางให้แชร์ สร้างทริปใหม่ หรือเข้าร่วมทริปของเพื่อน สวิตช์ด้านบนยังคงค่าที่ตั้งไว้</string>
 
     <!-- Map -->
     <string name="map_title">แผนที่สด</string>
