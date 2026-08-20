@@ -77,6 +77,8 @@ fun TripListScreen(
      */
     isSuperuser: Boolean = false,
     onShowAllTrips: (Boolean) -> Unit = {},
+    /** Opens or closes everything older than the newest [TripListRules.RECENT]. */
+    onToggleArchive: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -168,6 +170,11 @@ fun TripListScreen(
                 }
             }
 
+            // The newest few, and everything else behind one tap. See
+            // [TripListRules] for why the first screen of the app answers
+            // "what am I riding" before "what have I ridden".
+            val archived = TripListRules.archived(state.trips)
+
             when {
                 state.loading && state.trips.isEmpty() -> item { HudLoading() }
                 state.trips.isEmpty() -> item {
@@ -179,8 +186,34 @@ fun TripListScreen(
                         }
                     )
                 }
-                else -> items(state.trips, key = { "trip-${it.id}" }) { trip ->
+                else -> items(
+                    TripListRules.recent(state.trips),
+                    key = { "trip-${it.id}" },
+                ) { trip ->
                     TripCard(trip = trip, onClick = { onOpenTrip(trip) })
+                }
+            }
+
+            if (archived.isNotEmpty()) {
+                // Above the trips it opens rather than below them, so the
+                // control a rider just pressed is still under their thumb
+                // afterwards instead of seven cards up the screen.
+                item {
+                    HudChip(
+                        text = if (state.archiveOpen) {
+                            stringResource(R.string.trips_archive_hide)
+                        } else {
+                            stringResource(R.string.trips_archive_show, archived.size)
+                        },
+                        onClick = { onToggleArchive(!state.archiveOpen) },
+                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    )
+                }
+
+                if (state.archiveOpen) {
+                    items(archived, key = { "trip-${it.id}" }) { trip ->
+                        TripCard(trip = trip, onClick = { onOpenTrip(trip) })
+                    }
                 }
             }
         }

@@ -17,6 +17,13 @@
     <string name="all_trips_title">All trips</string>
     <string name="trips_show_all">Show every trip</string>
     <string name="trips_show_mine">Show only mine</string>
+    <!--
+      The archive: everything older than the newest few. The count is on the
+      label because "how much is in there" is the whole of what a rider needs
+      to decide whether to open it.
+    -->
+    <string name="trips_archive_show">Archived trips (%1$d)</string>
+    <string name="trips_archive_hide">Show recent only</string>
     <string name="no_trips_at_all">There are no trips on this server yet.</string>
     <string name="no_trips_yet">No trips yet. Create one, or wait to be invited.</string>
     <string name="new_trip">New trip</string>

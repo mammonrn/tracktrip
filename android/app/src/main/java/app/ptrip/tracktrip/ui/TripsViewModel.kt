@@ -28,6 +28,21 @@ data class TripsUiState(
      * trips, not with a refusal.
      */
     val showingAllTrips: Boolean = false,
+    /**
+     * Whether the trips older than the newest [TripListRules.RECENT] are on
+     * screen.
+     *
+     * Here rather than in the composable because it is not only a question
+     * about pixels: it decides which trips are *shown*, and the view model
+     * reads leaderboards for the trips that are shown. A `rememberSaveable`
+     * on the screen would leave those two able to disagree.
+     *
+     * Closed every time the screen is built, like [showingAllTrips]: opening
+     * the app is the moment "what am I riding" matters most, and a rider who
+     * went looking through their history last night has not asked for it to
+     * still be open this morning.
+     */
+    val archiveOpen: Boolean = false,
 )
 
 /**
@@ -101,6 +116,18 @@ class TripsViewModel(
         if (_uiState.value.showingAllTrips == showAll) return
         _uiState.update { it.copy(showingAllTrips = showAll) }
         refresh()
+    }
+
+    /**
+     * Opens or closes the archive — everything older than the newest three.
+     *
+     * No reload: the list is already here in full, and this only decides how
+     * much of it is drawn. What the archive costs is on the screen, not on the
+     * wire.
+     */
+    fun setArchiveOpen(open: Boolean) {
+        if (_uiState.value.archiveOpen == open) return
+        _uiState.update { it.copy(archiveOpen = open) }
     }
 
     fun dismissError() {

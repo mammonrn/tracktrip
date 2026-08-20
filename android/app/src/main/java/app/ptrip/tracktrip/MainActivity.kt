@@ -296,6 +296,7 @@ private fun SignedInNavigation(
             onOpenSettings = { backStack.push(Screen.Settings) },
             isSuperuser = profile?.isSuperuser == true,
             onShowAllTrips = tripsViewModel::setShowAllTrips,
+            onToggleArchive = tripsViewModel::setArchiveOpen,
             modifier = modifier,
         )
 
