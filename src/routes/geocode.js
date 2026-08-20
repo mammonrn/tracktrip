@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../auth/middleware.js';
 import {
   GeocodeError,
+  normalizeBias,
   normalizeLimit,
   normalizeQuery,
   MAX_QUERY_LENGTH,
@@ -94,9 +95,22 @@ export function createGeocodeRouter({
         return res.status(400).json({ error: 'limit must be a positive integer' });
       }
 
+      // Where the rider is, so a place name is ranked against the region they
+      // are riding in rather than against the planet. Optional and rounded —
+      // see normalizeBias. A caller that sends nothing searches unbiased,
+      // exactly as every caller did before this existed.
+      const bias = normalizeBias(req.query.near);
+
       // Case-folded so "Pai" and "pai" are one entry. The upstream is not
       // case-sensitive either, so this changes no answer.
-      const cacheKey = `${limit}:${query.toLowerCase()}`;
+      //
+      // The bias is in the key because it is part of the answer: two riders in
+      // different provinces asking the same question get different orderings,
+      // and serving one the other's would be the wrong answer served fast. It
+      // is rounded to about eleven kilometres first, so a group riding
+      // together still shares one entry and one upstream request.
+      const biasKey = bias ? `${bias.lat},${bias.lng}` : '';
+      const cacheKey = `${limit}:${biasKey}:${query.toLowerCase()}`;
       const cached = cache.get(cacheKey);
       if (cached) {
         logSearch(logger.log, 'cache', query, `${cached.length} result(s)`);
@@ -112,7 +126,7 @@ export function createGeocodeRouter({
 
       let results;
       try {
-        results = await search(query, { limit });
+        results = await search(query, { limit, bias });
       } catch (e) {
         if (e instanceof GeocodeError) {
           logSearch(logger.warn, 'failed', query, `${e.status} ${e.message}`);

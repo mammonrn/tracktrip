@@ -88,6 +88,7 @@ import app.ptrip.tracktrip.map.MarkerMotion
 import app.ptrip.tracktrip.map.RiderMarker
 import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
+import app.ptrip.tracktrip.map.TrailStatus
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
@@ -104,6 +105,7 @@ import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.AppDanger
 import app.ptrip.tracktrip.ui.theme.RankIcon
 import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
@@ -394,6 +396,19 @@ fun TripMapScreen(
         isTripActive = state.trip?.isActive == true,
     )
 
+    // Whether a press and hold on the map means "drop a stop here" outright.
+    //
+    // The summary sheet is up, so the two ends are already set and the only
+    // point left to add is a stop — which is what the gesture almost always
+    // means at that moment. Without this a rider had to open the search panel
+    // they were not going to use, *then* press and hold: two screens and four
+    // taps for a spot their finger was already on.
+    val longPressDropsStop = routeSetupOpen &&
+        canSetUpRoute &&
+        picking == null &&
+        state.routeDraft.isComplete &&
+        RouteSetupRules.canAddStops(state.trip?.isActive == true)
+
     // Everything a picked point does, wherever it was picked from: move the
     // map to it so the rider can see what they chose, put it in the field that
     // asked for it, and close the picker.
@@ -472,11 +487,16 @@ fun TripMapScreen(
                             // has said where, and the field they tapped to open
                             // the picker already said what for.
                             field != null -> takePicked(field, RoutePoint(point))
-                            // With no field waiting, the gesture means what it
-                            // has always meant. Nothing to offer means nothing
-                            // to open: a member looking at a finished ride can
-                            // place neither end nor a stop, and a dialog with
-                            // no buttons is worse than no dialog.
+                            // Route set, sheet up: the gesture is a stop, and
+                            // it goes straight to the one question a stop
+                            // still has to answer.
+                            longPressDropsStop -> takePicked(RouteField.STOP, RoutePoint(point))
+                            // With no field waiting and no route being set up,
+                            // the gesture means what it has always meant.
+                            // Nothing to offer means nothing to open: a member
+                            // looking at a finished ride can place neither end
+                            // nor a stop, and a dialog with no buttons is
+                            // worse than no dialog.
                             placementsAllowed(state.trip).isNotEmpty() ->
                                 placing = PendingPlacement(point)
                         }
@@ -635,6 +655,11 @@ fun TripMapScreen(
 
             HudDivider()
 
+            // Resolved out here rather than inside the list: a LazyColumn's
+            // item scope is not a composable one, so a string it has to look
+            // up has to be looked up before it.
+            val trailNote = trailMessage(state.trailStatus, state.trailError)
+
             if (state.loading && state.members.isEmpty()) {
                 HudLoading()
             } else {
@@ -666,17 +691,18 @@ fun TripMapScreen(
 
                     // A trail switched on with nothing to draw looks exactly
                     // like a broken button, and that is what it looked like on
-                    // a real device: the control works, the fetch works, and
-                    // the trip simply had no history — nothing is recorded
-                    // until somebody shares their position. So the row says so
-                    // rather than leaving the rider to guess which of the two
-                    // it was.
-                    if (state.trailsVisible && state.trailsEmpty) {
+                    // a real device — twice, for two different reasons. The
+                    // first time the trip simply had no history; the second
+                    // time the fetch failed and said nothing. Every state the
+                    // trail can be in now puts a row here, so the control can
+                    // never again be indistinguishable from a dead one.
+                    trailNote?.let { message ->
                         item {
                             Text(
-                                text = stringResource(R.string.map_trails_none_yet),
+                                text = message,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = AppTextMuted,
+                                color = if (state.trailStatus == TrailStatus.FAILED) AppDanger
+                                        else AppTextMuted,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
@@ -846,6 +872,10 @@ fun TripMapScreen(
     namingStop?.let { stop ->
         StopNameDialog(
             point = stop.point,
+            suggestedName = stringResource(
+                R.string.map_route_stop_default_name,
+                RouteSetupRules.nextStopNumber(state.waypoints.all, state.routeDraft),
+            ),
             onName = { name ->
                 onPickRoutePoint(RouteField.STOP, stop.copy(label = name.trim()))
                 namingStop = null
@@ -1169,6 +1199,18 @@ private fun RouteSummarySheet(
             }
         }
 
+        if (canAddStops) {
+            // The gesture has nothing on screen to suggest it, so the sheet
+            // says so — beside the button that does the same job the long way,
+            // for a rider who would rather search than point.
+            Text(
+                text = stringResource(R.string.map_route_stop_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+
         Row(modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
             if (canAddStops) {
                 HudSecondaryButton(
@@ -1237,10 +1279,20 @@ private fun routeDurationText(route: RouteLine?): String? {
 @Composable
 private fun StopNameDialog(
     point: LatLng,
+    /**
+     * What the field starts with, so confirming takes no typing at all.
+     *
+     * "Stop 3" rather than empty: the server refuses an unnamed waypoint, and
+     * a rider who pressed and held a spot on the map has already said the only
+     * thing they wanted to say. A number is a poor name and a fine label — it
+     * is ordinal, it tells two rows apart, and it is selected for overtyping
+     * by anybody who has something better.
+     */
+    suggestedName: String,
     onName: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var name by rememberSaveable(point) { mutableStateOf("") }
+    var name by rememberSaveable(point) { mutableStateOf(suggestedName) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1564,6 +1616,27 @@ private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/**
+ * What the row under the map says about the trail, or null when it says
+ * nothing.
+ *
+ * Silent in the two states that speak for themselves: switched off, where the
+ * grey icon is the message, and drawn, where the lines are. Everything else
+ * gets a sentence — including the failure, which used to get nothing at all
+ * and is the reason this is a function rather than an `if`.
+ */
+@Composable
+private fun trailMessage(status: TrailStatus, error: String?): String? = when (status) {
+    TrailStatus.OFF, TrailStatus.DRAWN -> null
+    TrailStatus.LOADING -> stringResource(R.string.map_trails_loading)
+    TrailStatus.EMPTY -> stringResource(R.string.map_trails_none_yet)
+    // The server's own sentence when it gave one — "can't reach the server"
+    // and "your session expired" are different things for a rider to do about.
+    TrailStatus.FAILED ->
+        error?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.map_trails_failed_reason, it) }
+            ?: stringResource(R.string.map_trails_failed)
 }
 
 /**

@@ -137,6 +137,9 @@
     <string name="map_trails_show">แสดงเส้นทางที่ผ่านมา</string>
     <string name="map_trails_hide">ซ่อนเส้นทางที่ผ่านมา</string>
     <string name="map_trails_none_yet">ยังไม่มีเส้นทางย้อนหลัง — เส้นนี้วาดจากตำแหน่งที่มีคนแชร์ไว้</string>
+    <string name="map_trails_loading">กำลังโหลดเส้นทางย้อนหลัง…</string>
+    <string name="map_trails_failed">โหลดเส้นทางย้อนหลังไม่สำเร็จในตอนนี้</string>
+    <string name="map_trails_failed_reason">โหลดเส้นทางย้อนหลังไม่สำเร็จ: %1$s</string>
     <string name="map_no_position">ยังไม่มีตำแหน่ง</string>
     <string name="map_last_seen">ตำแหน่งล่าสุดที่ทราบ</string>
     <string name="map_you">%1$s (คุณ)</string>
@@ -202,6 +205,8 @@
     <string name="map_route_stops">จุดแวะ</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">ตั้งชื่อจุดแวะนี้</string>
+    <string name="map_route_stop_default_name">จุดแวะ %1$d</string>
+    <string name="map_route_stop_hint">หรือกดค้างบนแผนที่ตรงจุดที่ต้องการเพื่อหย่อนจุดแวะ</string>
     <string name="map_route_stop_add">เพิ่มจุดแวะ</string>
 
     <!-- Location permission -->

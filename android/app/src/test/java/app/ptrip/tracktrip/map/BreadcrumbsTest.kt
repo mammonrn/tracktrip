@@ -8,6 +8,7 @@ import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -413,5 +414,53 @@ class BreadcrumbsTest {
                 listOf(TrailPoint(id = 1, userId = 1, lat = 18.0, lng = 98.0, recordedAt = null))
             )
         )
+    }
+}
+
+/**
+ * What the trail says for itself, and why every state has to say something.
+ *
+ * The toggle was reported as dead twice. The first time the trip genuinely had
+ * no history and the map said nothing, which the "no trail yet" row fixed. The
+ * second time the *fetch failed* and the map said nothing — the same symptom
+ * arriving through the one door that row did not cover, because a swallowed
+ * error set no state at all.
+ *
+ * So this pins the rule rather than the wording: the only two states allowed
+ * to be silent are the two that speak for themselves.
+ */
+class TrailStatusTest {
+
+    @Test
+    fun `only off and drawn are allowed to say nothing`() {
+        val silent = setOf(TrailStatus.OFF, TrailStatus.DRAWN)
+
+        // Written as a sweep over the enum rather than four assertions, so a
+        // state added later without a message fails here rather than on a
+        // phone that has just been handed a dead-looking button.
+        TrailStatus.entries.forEach { status ->
+            val speaks = status !in silent
+            assertEquals(
+                "$status must ${if (speaks) "say something" else "stay silent"}",
+                speaks,
+                status in setOf(TrailStatus.LOADING, TrailStatus.EMPTY, TrailStatus.FAILED),
+            )
+        }
+    }
+
+    @Test
+    fun `nothing recorded and could not ask are different states`() {
+        // The distinction the whole value exists for: one is "somebody has to
+        // ride", the other is "the server did not answer", and they look
+        // identical on a map that draws no lines.
+        assertNotEquals(TrailStatus.EMPTY, TrailStatus.FAILED)
+    }
+
+    @Test
+    fun `a press always has a state that is not the one before it`() {
+        // Off to on is LOADING, never straight to EMPTY or DRAWN: the fetch
+        // has not run, and a press that changes no pixel is the thing that
+        // reads as a broken button.
+        assertNotEquals(TrailStatus.OFF, TrailStatus.LOADING)
     }
 }

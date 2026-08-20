@@ -151,6 +151,15 @@
       trail that is broken — which is exactly how it read on a real ride.
     -->
     <string name="map_trails_none_yet">No trail yet — trails are drawn from positions riders have shared</string>
+    <!--
+      The two states the "no trail yet" message did not cover. A fetch that
+      failed used to set nothing at all, so the map drew no trail and gave no
+      reason, which is indistinguishable from a button that does not work —
+      and is what one was reported as.
+    -->
+    <string name="map_trails_loading">Loading trails…</string>
+    <string name="map_trails_failed">Couldn\'t load the trail just now.</string>
+    <string name="map_trails_failed_reason">Couldn\'t load the trail: %1$s</string>
     <string name="map_no_position">No position yet</string>
     <string name="map_last_seen">Last known position</string>
     <string name="map_you">%1$s (you)</string>
@@ -268,6 +277,14 @@
     <string name="map_route_stops">Stops</string>
     <string name="map_route_stop_number">%1$d.</string>
     <string name="map_route_stop_name_title">Name this stop</string>
+    <!--
+      Prefilled in the naming dialog so a stop dropped by pressing and
+      holding the map can be confirmed without typing. A number is a poor
+      name and a fine label: it tells two rows apart, and anybody with a
+      better one types over it.
+    -->
+    <string name="map_route_stop_default_name">Stop %1$d</string>
+    <string name="map_route_stop_hint">Or press and hold the map to drop a stop where you are pointing.</string>
     <string name="map_route_stop_add">Add stop</string>
 
     <!-- Location permission -->

@@ -208,6 +208,14 @@ the time from `GET /directions`, and three things to do with it:
   re-ordering: stops go in the order they were added. The sheet's distance and
   time re-route as each one lands, so the figures above the confirm button are
   the ride the button is about to save.
+
+  **While the sheet is up, pressing and holding the map is the short way in.**
+  The two ends are already set at that point, so the only point left to add is
+  a stop, and the gesture drops one where the finger is — straight to the
+  naming dialog, which prefills "Stop 3" so confirming takes no typing. That is
+  a hold and a tap, against opening a search panel nobody was going to use and
+  then holding: the sheet says so, because a gesture with nothing on screen to
+  suggest it is a gesture nobody finds.
 - **Close** — throws the draft away. Nothing in it was ever sent.
 
 **Nothing is written until Confirm.** That is the point of holding a draft
@@ -300,6 +308,23 @@ the map when there is no road route: an invented straight line between two
 towns is not a road, and drawing one would make a claim the app cannot back.
 
 ### Trails
+
+**Every state the trail can be in says something.** The toggle was reported as
+doing nothing twice, for two different reasons, and only the first was covered:
+the trip genuinely had no history, which the "no trail yet" row answers. The
+second time the *fetch* failed — and a swallowed `ApiException` set no state at
+all, so the map drew no lines and gave no reason, which from the rider's side
+is a dead button. [`map/Breadcrumbs.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt)'s `TrailStatus` is
+the fix: `OFF`, `LOADING`, `DRAWN`, `EMPTY`, `FAILED`, and only the two that
+speak for themselves — off, where the grey icon is the message, and drawn,
+where the lines are — are allowed to be silent. `TrailStatusTest` holds that as
+a sweep over the enum, so a state added later without a message fails on a
+laptop rather than on a phone.
+
+`LOADING` is only entered when nothing is drawn yet, so a top-up behind a trail
+already on screen does not flicker a message every thirty seconds.
+
 
 Each rider's recent breadcrumbs are drawn behind them in their own colour,
 from `GET /trips/:id/positions/history`. The rules are in [`map/Breadcrumbs.kt`](

@@ -759,6 +759,22 @@ token on a free tier of 5,000 requests a day for the whole server. A token
 shipped inside the APK is one `unzip` away from being read and spent by
 somebody else, so the phone asks this server and the server holds the token.
 
+**`near=<lat,lng>` biases results towards the rider**, and never filters by
+them. The app sends the phone's own position; the server turns it into a
+`viewbox` of `SEARCH_BIAS_KM` (200 km) a side with `bounded=0`, so somewhere
+across the country is still found — just ranked below somewhere down the road.
+Without it a place name typed in Thai competes with the whole planet on string
+relevance alone, and a well-known local landmark can lose to a better match six
+thousand kilometres away.
+
+The bias is part of the cache key, because it is part of the answer: two riders
+in different provinces asking the same question get different orderings, and
+serving one the other's would be the wrong answer served fast. It is rounded to
+one decimal place (about 11 km) first, so a group riding together still shares
+one entry and one upstream request. A caller that sends no `near`, or an
+unusable one, searches unbiased and is never refused — a missing hint is not an
+error.
+
 **Three things defend that quota**, and each covers a case the others do not:
 
 - the app waits for typing to stop before it asks (450 ms), so a nine-letter

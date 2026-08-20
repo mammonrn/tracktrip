@@ -3,6 +3,7 @@ package app.ptrip.tracktrip.ui
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.Place
 import app.ptrip.tracktrip.data.PlaceLookup
+import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.data.SessionExpiredException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,8 +37,13 @@ class PlaceSearchTest {
         private val answer: suspend (String) -> List<Place> = { emptyList() },
     ) : PlaceLookup {
         val queries = mutableListOf<String>()
-        override suspend fun search(query: String, limit: Int): List<Place> {
+
+        /** The bias each search went out with, so a test can pin it. */
+        val biases = mutableListOf<LatLng?>()
+
+        override suspend fun search(query: String, limit: Int, near: LatLng?): List<Place> {
             queries += query
+            biases += near
             return answer(query)
         }
     }
@@ -219,7 +225,7 @@ class PlaceSearchTest {
 
     /** A lookup that fails the way the real one does, with a status. */
     private fun failingWith(status: Int?, message: String = "boom") = object : PlaceLookup {
-        override suspend fun search(query: String, limit: Int): List<Place> =
+        override suspend fun search(query: String, limit: Int, near: LatLng?): List<Place> =
             throw ApiException(message, status)
     }
 
@@ -291,7 +297,7 @@ class PlaceSearchTest {
     fun `a failure clears when the next search succeeds`() = runTest {
         var fail = true
         val controller = PlaceSearchController(this, object : PlaceLookup {
-            override suspend fun search(query: String, limit: Int): List<Place> {
+            override suspend fun search(query: String, limit: Int, near: LatLng?): List<Place> {
                 if (fail) throw ApiException("boom", 502)
                 return listOf(pai)
             }
@@ -316,7 +322,7 @@ class PlaceSearchTest {
         val controller = PlaceSearchController(
             scope = this,
             api = object : PlaceLookup {
-                override suspend fun search(query: String, limit: Int): List<Place> =
+                override suspend fun search(query: String, limit: Int, near: LatLng?): List<Place> =
                     throw SessionExpiredException()
             },
             onSessionExpired = { expired = true },
@@ -357,4 +363,66 @@ class PlaceSearchTest {
         assertFalse(controller.state.value.hasPanel)
         assertEquals(emptyList<String>(), api.queries)
     }
+    // --- biasing towards the rider ---------------------------------------
+
+    @Test
+    fun `a search carries the rider's position when there is one`() = runTest {
+        val api = Recorder()
+        val controller = PlaceSearchController(this, api)
+        controller.near = LatLng(18.7883, 98.9853)
+
+        controller.onQueryChanged("วัดร่องขุ่น")
+        advanceUntilIdle()
+
+        // Thai reaches the controller intact — nothing here trims, truncates
+        // or re-encodes it — and the bias rides along with it.
+        assertEquals(listOf("วัดร่องขุ่น"), api.queries)
+        assertEquals(listOf(LatLng(18.7883, 98.9853)), api.biases)
+    }
+
+    @Test
+    fun `a phone with no fix searches unbiased rather than not at all`() = runTest {
+        val api = Recorder()
+        val controller = PlaceSearchController(this, api)
+
+        controller.onQueryChanged("Pai")
+        advanceUntilIdle()
+
+        // The bias is a hint. A missing hint must never cost a rider a search.
+        assertEquals(listOf("Pai"), api.queries)
+        assertEquals(listOf<LatLng?>(null), api.biases)
+    }
+
+    @Test
+    fun `a search takes the position that was current when it went out`() = runTest {
+        val api = Recorder()
+        val controller = PlaceSearchController(this, api)
+
+        controller.near = LatLng(18.7883, 98.9853)
+        controller.onQueryChanged("market")
+        advanceUntilIdle()
+
+        // The rider moved a province between searches; the second one is
+        // ranked against where they are now, not where they opened the map.
+        controller.near = LatLng(13.7563, 100.5018)
+        controller.onQueryChanged("market again")
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(LatLng(18.7883, 98.9853), LatLng(13.7563, 100.5018)),
+            api.biases,
+        )
+    }
+
+    @Test
+    fun `a Thai name is long enough to search and is not normalised away`() {
+        // The reported symptom was "วัดร่องขุ่น finds nothing", and the first
+        // two things to rule out are the two this app controls: a length rule
+        // that refuses it, and a normaliser that changes it.
+        assertTrue(PlaceSearchRules.isSearchable("วัดร่องขุ่น"))
+        assertEquals("วัดร่องขุ่น", PlaceSearchRules.normalize("  วัดร่องขุ่น  "))
+        // Two Thai characters is a searchable query, the same as two Latin ones.
+        assertTrue(PlaceSearchRules.isSearchable("วัด"))
+    }
+
 }
