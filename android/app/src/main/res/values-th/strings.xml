@@ -63,6 +63,7 @@
     <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
     <string name="invite_email_label">อีเมลบัญชี Google</string>
     <string name="send_invite">เชิญ</string>
+    <string name="invite_by_email">เพิ่มด้วยอีเมล</string>
     <string name="invite_sent_to">เชิญ %1$s แล้ว</string>
     <string name="invite_hint">เขาจะเห็นคำเชิญในรายการทริปของตัวเองตอนเปิดแอปครั้งถัดไป ระบบไม่ได้ส่งอีเมลออกไป</string>
     <string name="not_tracking_yet">ยังไม่ได้แชร์ตำแหน่ง</string>

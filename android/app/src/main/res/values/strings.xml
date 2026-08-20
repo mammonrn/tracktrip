@@ -58,6 +58,11 @@
     <string name="invite_title">Invite a rider</string>
     <string name="invite_email_label">Google account email</string>
     <string name="send_invite">Invite</string>
+    <!--
+      The way into the email invite, which is a dialog now rather than a form
+      sitting open on the panel. Also the dialog's own title.
+    -->
+    <string name="invite_by_email">Add by email</string>
     <string name="invite_sent_to">Invited %1$s</string>
     <string name="invite_hint">They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
     <string name="not_tracking_yet">not tracking yet</string>

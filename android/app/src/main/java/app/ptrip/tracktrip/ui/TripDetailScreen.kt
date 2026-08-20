@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -194,6 +195,7 @@ fun TripDetailScreen(
                         email = state.inviteEmail,
                         pending = state.invitePending,
                         sentTo = state.inviteSentTo,
+                        error = state.error,
                         suggestions = state.orderedSuggestions,
                         onEmailChange = onInviteEmailChange,
                         onSend = onSendInvite,
@@ -444,11 +446,39 @@ private fun MemberRow(member: MemberPosition, fixAgeMinutes: Long? = null) {
     }
 }
 
+/**
+ * The three ways onto a trip, and a note about the one that used to take up
+ * most of the panel.
+ *
+ * ## Why the email field is behind a button now
+ *
+ * It was always on screen: a text field, a Send button, and a line of guidance
+ * under it, sitting between the suggestions and the QR and share buttons. That
+ * is a lot of panel for the least-used of the three ways in — the QR is for
+ * somebody standing next to you and the link is for a chat window, and both
+ * are one press. Typing a Google address from memory is the fallback, and a
+ * fallback does not need to be the tallest thing on the screen.
+ *
+ * So the field, its button and its guidance moved into [InviteByEmailDialog],
+ * behind "Add by email". Nothing about the invite changed: the same field,
+ * the same [onSend], the same rule about when it can be pressed.
+ *
+ * The suggestion chips stay out here, and tapping one still fills the address
+ * in — it opens the dialog with the address already there, which is what the
+ * chip was always shorthand for.
+ *
+ * Internal rather than private so `InviteByEmailTest` can compose it on its
+ * own. The screen around it runs two `while (true) { delay(...) }` effects —
+ * the members poll and the fix-age tick — and a dialog opened over those never
+ * lets a Compose test reach idle. The panel has no such effects.
+ */
 @Composable
-private fun InvitePanel(
+internal fun InvitePanel(
     email: String,
     pending: Boolean,
     sentTo: String?,
+    /** The screen's error line, which a dialog would otherwise cover. */
+    error: String?,
     suggestions: List<SuggestedInvitee>,
     onEmailChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -456,6 +486,16 @@ private fun InvitePanel(
     onShowQr: () -> Unit,
     onShareLink: () -> Unit,
 ) {
+    var typing by rememberSaveable { mutableStateOf(false) }
+
+    // An invite that landed closes the dialog. Keyed on the address rather
+    // than on a flag flipped inside onSend: the send is a round trip, and only
+    // the server's answer is worth closing on — a failed one leaves the rider
+    // in front of the address they typed with the reason underneath it.
+    LaunchedEffect(sentTo) {
+        if (sentTo != null) typing = false
+    }
+
     HudSurface(accent = AppPrimary.copy(alpha = 0.4f)) {
         // Riders from past trips, one tap instead of an email typed from
         // memory. Absent for a first trip, which is when there is nobody to
@@ -481,54 +521,32 @@ private fun InvitePanel(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 suggestions.forEach { invitee ->
-                    HudChip(text = invitee.label, onClick = { onUseSuggestion(invitee) })
+                    HudChip(
+                        text = invitee.label,
+                        onClick = {
+                            // Straight into the dialog with the address
+                            // already filled in. The chip was always shorthand
+                            // for typing it, and it still is.
+                            onUseSuggestion(invitee)
+                            typing = true
+                        },
+                    )
                 }
             }
         }
 
-        OutlinedTextField(
-            value = email,
-            onValueChange = onEmailChange,
-            label = { Text(stringResource(R.string.invite_email_label)) },
-            singleLine = true,
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Send,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            sentTo?.let {
-                Text(
-                    text = stringResource(R.string.invite_sent_to, it),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            HudPrimaryButton(
-                text = stringResource(R.string.send_invite),
-                onClick = onSend,
-                enabled = email.isNotBlank(),
-                loading = pending,
+        sentTo?.let {
+            Text(
+                text = stringResource(R.string.invite_sent_to, it),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppPrimary,
+                modifier = Modifier.padding(bottom = 10.dp),
             )
         }
-        Text(
-            text = stringResource(R.string.invite_hint),
-            style = MaterialTheme.typography.labelSmall,
-            color = AppTextMuted,
-            modifier = Modifier.padding(top = 8.dp),
-        )
 
-        // Alongside email, not instead of it: an email invite reaches someone
-        // who isn't here, a QR reaches someone who is, and a shared link
-        // reaches someone in a chat window.
+        // Three ways in, all the same size now that none of them is a form.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             HudSecondaryButton(
@@ -542,7 +560,126 @@ private fun InvitePanel(
                 modifier = Modifier.weight(1f),
             )
         }
+        HudSecondaryButton(
+            text = stringResource(R.string.invite_by_email),
+            onClick = { typing = true },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
     }
+
+    if (typing) {
+        InviteByEmailDialog(
+            email = email,
+            pending = pending,
+            error = error,
+            onEmailChange = onEmailChange,
+            onSend = onSend,
+            onDismiss = { if (!pending) typing = false },
+        )
+    }
+}
+
+/**
+ * The email invite, as the dialog it now is.
+ *
+ * A shell around [InviteByEmailForm], which is where everything that used to
+ * sit open on the panel actually lives. Split in two because the form can be
+ * composed and asserted on and this cannot: a text field inside a dialog
+ * window never lets a Compose test reach idle under Robolectric, which is why
+ * `StopNameDialog` has never been asserted on either. The shell is four lines
+ * of placement; the form is the part with behaviour in it.
+ */
+@Composable
+private fun InviteByEmailDialog(
+    email: String,
+    pending: Boolean,
+    error: String?,
+    onEmailChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.invite_by_email)) },
+        text = { InviteByEmailForm(email, error, onEmailChange) },
+        confirmButton = {
+            HudPrimaryButton(
+                text = stringResource(R.string.send_invite),
+                onClick = onSend,
+                // The same rule as before the move: nothing typed, or a send
+                // already in flight, are both requests whose answer is known,
+                // and a pressable button that does nothing reads as a send
+                // that silently failed.
+                enabled = InviteRules.canSend(email, pending),
+                loading = pending,
+            )
+        },
+        dismissButton = {
+            HudSecondaryButton(
+                text = stringResource(R.string.cancel),
+                onClick = onDismiss,
+                // Not while a send is out: dismissing would leave the rider
+                // with no way to see how it went.
+                enabled = !pending,
+            )
+        },
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+    )
+}
+
+/**
+ * The field, and the two things that belong under it.
+ *
+ * Everything that used to sit permanently on the panel: the address, the note
+ * about what an invite actually does — nothing is emailed, it appears in their
+ * trip list — and, new, the reason a send was refused.
+ *
+ * [error] is here rather than only on the screen behind, because a dialog
+ * covers the screen behind. An invite refused with the dialog up — a malformed
+ * address, a rider already on the trip — would otherwise fail in silence,
+ * which is the one thing this move must not introduce.
+ */
+@Composable
+internal fun InviteByEmailForm(
+    email: String,
+    error: String?,
+    onEmailChange: (String) -> Unit,
+) {
+    Column {
+        OutlinedTextField(
+            value = email,
+            onValueChange = onEmailChange,
+            label = { Text(stringResource(R.string.invite_email_label)) },
+            singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Send,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = stringResource(R.string.invite_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        error?.let { HudError(it, modifier = Modifier.padding(top = 10.dp)) }
+    }
+}
+
+/**
+ * When the invite can be sent.
+ *
+ * One line, written down on its own because it is the half of the dialog a
+ * Compose test cannot reach — see [InviteByEmailDialog] — and because it is
+ * the rule the move must not have changed.
+ */
+internal object InviteRules {
+
+    /** Nothing typed, or a send already out, are both answers already known. */
+    fun canSend(email: String, pending: Boolean): Boolean = email.isNotBlank() && !pending
 }
 
 /** Roughly four rows of chips before the box starts scrolling. */
