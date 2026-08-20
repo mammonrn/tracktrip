@@ -401,36 +401,3 @@ fun HudBatteryIcon(
     }
 }
 
-/**
- * The trail toggle: a dotted line behind a point.
- *
- * Dots rather than a solid line, because that is exactly what the toggle turns
- * on — a rider's breadcrumbs, one per reported fix — and the icon showing the
- * same thing the map draws is what makes the control guessable without a
- * label.
- */
-@Composable
-fun HudTrailIcon(
-    modifier: Modifier = Modifier,
-    tint: Color = AppPrimary,
-    iconSize: Dp = DEFAULT_ICON_SIZE,
-) {
-    Canvas(modifier = modifier.size(iconSize)) {
-        val dot = size.minDimension * 0.07f
-        // A shallow S, so the crumbs read as a road taken rather than as a
-        // dotted rule.
-        val path = listOf(
-            0.16f to 0.78f,
-            0.32f to 0.70f,
-            0.46f to 0.55f,
-            0.58f to 0.40f,
-            0.72f to 0.30f,
-        )
-        path.forEach { (x, y) ->
-            drawCircle(color = tint, radius = dot, center = at(x, y))
-        }
-        // The head of the trail: where the rider is now, drawn larger so the
-        // line has a direction.
-        drawCircle(color = tint, radius = dot * 2.1f, center = at(0.84f, 0.22f))
-    }
-}

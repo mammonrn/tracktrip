@@ -7,9 +7,11 @@ import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
 import {
   GeocodeError,
+  LOCATIONIQ_AUTOCOMPLETE_URL,
   LOCATIONIQ_SEARCH_URL,
   MAX_LIMIT,
   biasViewbox,
+  buildAutocompleteUrl,
   buildSearchUrl,
   createLocationIqSearch,
   normalizeBias,
@@ -791,4 +793,144 @@ test('a rider with no fix searches unbiased rather than failing', async () => {
   // a 400 — the bias is a hint, and a missing hint is not an error.
   assert.equal(res.status, 200);
   assert.equal(calls[0].bias, null);
+});
+
+/* ------------------------------------------------------------------ *
+ * Two indexes: the name one first, the address one as a fallback
+ *
+ * "วัดร่องขุ่น" is on record as returning one result from the address index
+ * with no bias, and nothing useful once a bias was added. A bias promotes
+ * everything nearby sharing a prefix, and "วัด" is a prefix several thousand
+ * places in northern Thailand share — so an exact name loses eight rows to its
+ * own neighbours. The name index is asked first for that reason, and the
+ * fallback drops the bias rather than repeating it.
+ * ------------------------------------------------------------------ */
+
+test('the autocomplete URL asks the name index for the name as typed', () => {
+  const url = new URL(
+    buildAutocompleteUrl({ apiKey: 'k', query: 'วัดร่องขุ่น', limit: 8 })
+  );
+
+  assert.ok(url.href.startsWith(LOCATIONIQ_AUTOCOMPLETE_URL));
+  assert.equal(url.searchParams.get('q'), 'วัดร่องขุ่น');
+  assert.equal(url.searchParams.get('limit'), '8');
+  // One row per place, or the same temple arrives three times and eats the
+  // eight rows a rider actually sees.
+  assert.equal(url.searchParams.get('dedupe'), '1');
+});
+
+test('the name index takes the bias too, as a preference', () => {
+  const url = new URL(
+    buildAutocompleteUrl({ apiKey: 'k', query: 'Pai', limit: 8, bias: { lat: 19.9, lng: 99.8 } })
+  );
+
+  assert.ok(url.searchParams.get('viewbox'));
+  assert.equal(url.searchParams.get('bounded'), '0');
+});
+
+test('the name index is asked first, and answers alone when it has something', async () => {
+  const asked = [];
+  const search = createLocationIqSearch({
+    apiKey: 'k',
+    fetchImpl: async (url) => {
+      asked.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [
+          { lat: '19.8244', lon: '99.7631', display_name: 'วัดร่องขุ่น, เชียงราย', osm_id: 1 },
+        ],
+      };
+    },
+  });
+
+  const results = await search('วัดร่องขุ่น', { bias: { lat: 19.9, lng: 99.8 } });
+
+  assert.equal(results.length, 1);
+  // One request, not two: an ordinary search costs exactly what it always did.
+  assert.equal(asked.length, 1);
+  assert.ok(asked[0].startsWith(LOCATIONIQ_AUTOCOMPLETE_URL), asked[0]);
+});
+
+test('nothing by name falls back to the address index, without the bias', async () => {
+  const asked = [];
+  const search = createLocationIqSearch({
+    apiKey: 'k',
+    fetchImpl: async (url) => {
+      asked.push(url);
+      const found = url.startsWith(LOCATIONIQ_SEARCH_URL);
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          found ? [{ lat: '19.8244', lon: '99.7631', display_name: 'วัดร่องขุ่น', osm_id: 1 }] : [],
+      };
+    },
+  });
+
+  const results = await search('วัดร่องขุ่น', { bias: { lat: 19.9, lng: 99.8 } });
+
+  assert.equal(results.length, 1);
+  assert.equal(asked.length, 2);
+  assert.ok(asked[0].startsWith(LOCATIONIQ_AUTOCOMPLETE_URL));
+  assert.ok(asked[1].startsWith(LOCATIONIQ_SEARCH_URL));
+  // The whole point of the fallback: the bias is what buried the answer, so
+  // the second ask does not carry it.
+  assert.equal(new URL(asked[1]).searchParams.get('viewbox'), null);
+  assert.equal(new URL(asked[1]).searchParams.get('bounded'), null);
+});
+
+test('both indexes empty is an empty list, not an error', async () => {
+  const search = createLocationIqSearch({
+    apiKey: 'k',
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => [] }),
+  });
+
+  assert.deepEqual(await search('nowhere at all'), []);
+});
+
+test('a 404 from the name index is "nothing here", so the fallback still runs', async () => {
+  // LocationIQ answers "matched nothing" with a 404 rather than an empty
+  // array. Treating that as a failure would skip the fallback entirely.
+  const asked = [];
+  const search = createLocationIqSearch({
+    apiKey: 'k',
+    fetchImpl: async (url) => {
+      asked.push(url);
+      if (url.startsWith(LOCATIONIQ_AUTOCOMPLETE_URL)) return { ok: false, status: 404 };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{ lat: '1', lon: '2', display_name: 'Somewhere', osm_id: 9 }],
+      };
+    },
+  });
+
+  assert.equal((await search('วัดร่องขุ่น')).length, 1);
+  assert.equal(asked.length, 2);
+});
+
+test('a real upstream failure on the name index is not swallowed by the fallback', async () => {
+  // An exhausted quota must reach the rider as a 429, not be turned into
+  // "nothing found" by a second request that fails the same way.
+  const search = createLocationIqSearch({
+    apiKey: 'k',
+    fetchImpl: async () => ({ ok: false, status: 429 }),
+  });
+
+  await assert.rejects(() => search('Pai'), (e) => e instanceof GeocodeError && e.status === 429);
+});
+
+test('a server with no key still refuses before either index is asked', async () => {
+  let called = 0;
+  const search = createLocationIqSearch({
+    apiKey: '',
+    fetchImpl: async () => {
+      called += 1;
+      return { ok: true, status: 200, json: async () => [] };
+    },
+  });
+
+  await assert.rejects(() => search('Pai'), (e) => e instanceof GeocodeError && e.status === 503);
+  assert.equal(called, 0);
 });

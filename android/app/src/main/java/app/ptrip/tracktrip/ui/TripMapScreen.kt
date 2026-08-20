@@ -66,7 +66,7 @@ import app.ptrip.tracktrip.data.TripEndpoint
 import app.ptrip.tracktrip.data.RouteLine
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.Bounds
-import app.ptrip.tracktrip.map.Breadcrumbs
+import app.ptrip.tracktrip.map.CameraAction
 import app.ptrip.tracktrip.map.CameraRules
 import app.ptrip.tracktrip.map.CameraTarget
 import app.ptrip.tracktrip.map.FOLLOW_ZOOM
@@ -88,7 +88,6 @@ import app.ptrip.tracktrip.map.MarkerMotion
 import app.ptrip.tracktrip.map.RiderMarker
 import app.ptrip.tracktrip.map.SOLO_ZOOM
 import app.ptrip.tracktrip.map.Speed
-import app.ptrip.tracktrip.map.TrailStatus
 import app.ptrip.tracktrip.map.WaypointMarker
 import app.ptrip.tracktrip.map.fitZoom
 import app.ptrip.tracktrip.map.initialCamera
@@ -121,7 +120,6 @@ import app.ptrip.tracktrip.ui.theme.HudRouteIcon
 import app.ptrip.tracktrip.ui.theme.HudSearchIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
-import app.ptrip.tracktrip.ui.theme.HudTrailIcon
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
 import org.osmdroid.events.MapEventsReceiver
@@ -191,15 +189,6 @@ fun TripMapScreen(
     onCenterOnMe: () -> Unit,
     onPlace: (MapPlacement, LatLng, String) -> Unit,
     onRemoveWaypoint: (Long) -> Unit,
-    /**
-     * Top the breadcrumb trail up, and turn it on or off.
-     *
-     * Two callbacks rather than one because they run on completely different
-     * beats: the top-up is a slow timer this screen owns, and the toggle is a
-     * button a rider presses. Defaulted so the previews need neither.
-     */
-    onRefreshTrail: () -> Unit = {},
-    onToggleTrails: () -> Unit = {},
     /**
      * What the place search is showing, and the two things a rider does to it.
      *
@@ -354,21 +343,6 @@ fun TripMapScreen(
         }
     }
 
-    // The breadcrumb trail, on its own much slower beat.
-    //
-    // Separate from the position poll on purpose: a trail is a line of things
-    // that have already happened, and nobody can see that its near end is half
-    // a minute short, whereas everybody can see a pin that is. Restarted when
-    // the toggle changes so switching it back on draws a line at once rather
-    // than at the next tick. See Breadcrumbs for the window and the cap.
-    LaunchedEffect(state.trailsVisible) {
-        if (!state.trailsVisible) return@LaunchedEffect
-        while (true) {
-            onRefreshTrail()
-            delay(Breadcrumbs.REFRESH_MS)
-        }
-    }
-
     // How tall the floating header actually is, in dp, or null before it has
     // been measured.
     //
@@ -466,7 +440,6 @@ fun TripMapScreen(
                     origin = state.drawnOrigin,
                     destination = state.drawnDestination,
                     route = state.drawnRoute,
-                    trails = if (state.trailsVisible) state.trails else emptyMap(),
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = {
@@ -579,73 +552,63 @@ fun TripMapScreen(
                     modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    // Trails on or off.
+                    // One button for the two ends of one question: am I
+                    // looking at the journey, or at myself? The answer is
+                    // always whichever one is not on screen, so the button
+                    // alternates and its icon shows where the next press
+                    // goes rather than where the last one went.
                     //
-                    // A control rather than a setting buried a screen away,
-                    // because whether eight coloured lines help or clutter
-                    // depends entirely on where the group is: threading a city
-                    // they are noise, on a mountain road with three riders out
-                    // of sight they are the whole point. The answer is
-                    // remembered between rides.
-                    HudIconButton(
-                        onClick = onToggleTrails,
-                        contentDescription = stringResource(
-                            if (state.trailsVisible) R.string.map_trails_hide
-                            else R.string.map_trails_show
-                        ),
-                        icon = {
-                            HudTrailIcon(
-                                tint = if (state.trailsVisible) AppPrimary else AppTextMuted
-                            )
-                        },
-                        modifier = Modifier
-                            .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                    // See CameraRules.nextAction — the icon, the words and
+                    // the press all read the same rule, so they cannot
+                    // disagree about what the button is for.
+                    val nextCamera = CameraRules.nextAction(
+                        camera = camera,
+                        canFitRoute = overviewPoints.size >= 2,
                     )
-
-                    // The whole journey at once: this rider and both ends of
-                    // the trip. Its own control rather than the default,
-                    // because the default while riding is the road ahead —
-                    // and it is hidden entirely when there is no route to take
-                    // in, rather than sitting there doing nothing.
-                    if (overviewPoints.size >= 2) {
-                        HudIconButton(
-                            onClick = {
-                                overviewSequence += 1
-                                boundsAround(overviewPoints)?.let {
-                                    camera = MapCamera.OVERVIEW
-                                    overview = MapOverview(it, overviewSequence)
-                                }
-                            },
-                            contentDescription = stringResource(R.string.map_overview),
-                            icon = { HudRouteIcon(tint = AppPrimary) },
-                            modifier = Modifier
-                                .background(AppSurface.copy(alpha = 0.92f), CircleShape),
-                        )
-                    }
-
                     HudIconButton(
                         onClick = {
-                            // For a rider who is sharing, this means "follow
-                            // me again" — which the follow effect does on its
-                            // own the moment the camera says so, at the zoom
-                            // following uses. Calling onCenterOnMe as well
-                            // would animate to a different zoom first and
-                            // fight it.
-                            //
-                            // For everyone else, and for a rider whose phone
-                            // has not produced a position yet, it means the
-                            // thing it has always meant: go and find me.
-                            if (isSharingThisTrip && myLocation != null) {
-                                camera = MapCamera.FOLLOW
-                            } else {
-                                onCenterOnMe()
+                            when (nextCamera) {
+                                CameraAction.FIT_ROUTE -> {
+                                    overviewSequence += 1
+                                    boundsAround(overviewPoints)?.let {
+                                        camera = MapCamera.OVERVIEW
+                                        overview = MapOverview(it, overviewSequence)
+                                    }
+                                }
+                                // For a rider who is sharing, this means
+                                // "follow me again" — which the follow effect
+                                // does on its own the moment the camera says
+                                // so, at the zoom following uses. Calling
+                                // onCenterOnMe as well would animate to a
+                                // different zoom first and fight it.
+                                //
+                                // For everyone else, and for a rider whose
+                                // phone has not produced a position yet, it
+                                // means the thing it has always meant: go and
+                                // find me.
+                                CameraAction.FOLLOW_ME -> {
+                                    if (isSharingThisTrip && myLocation != null) {
+                                        camera = MapCamera.FOLLOW
+                                    } else {
+                                        onCenterOnMe()
+                                    }
+                                }
                             }
                         },
-                        contentDescription = stringResource(R.string.map_center_on_me),
+                        contentDescription = stringResource(
+                            when (nextCamera) {
+                                CameraAction.FIT_ROUTE -> R.string.map_overview
+                                CameraAction.FOLLOW_ME -> R.string.map_center_on_me
+                            }
+                        ),
                         icon = {
-                            HudPinIcon(
-                                tint = if (camera == MapCamera.FOLLOW) AppPrimary else AppTextMuted
-                            )
+                            when (nextCamera) {
+                                CameraAction.FIT_ROUTE -> HudRouteIcon(tint = AppPrimary)
+                                CameraAction.FOLLOW_ME -> HudPinIcon(
+                                    tint = if (camera == MapCamera.FOLLOW) AppPrimary
+                                           else AppTextMuted
+                                )
+                            }
                         },
                         modifier = Modifier
                             .background(AppSurface.copy(alpha = 0.92f), CircleShape),
@@ -654,11 +617,6 @@ fun TripMapScreen(
             }
 
             HudDivider()
-
-            // Resolved out here rather than inside the list: a LazyColumn's
-            // item scope is not a composable one, so a string it has to look
-            // up has to be looked up before it.
-            val trailNote = trailMessage(state.trailStatus, state.trailError)
 
             if (state.loading && state.members.isEmpty()) {
                 HudLoading()
@@ -684,25 +642,6 @@ fun TripMapScreen(
                                 text = stringResource(R.string.map_place_hint),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AppTextMuted,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
-
-                    // A trail switched on with nothing to draw looks exactly
-                    // like a broken button, and that is what it looked like on
-                    // a real device — twice, for two different reasons. The
-                    // first time the trip simply had no history; the second
-                    // time the fetch failed and said nothing. Every state the
-                    // trail can be in now puts a row here, so the control can
-                    // never again be indistinguishable from a dead one.
-                    trailNote?.let { message ->
-                        item {
-                            Text(
-                                text = message,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (state.trailStatus == TrailStatus.FAILED) AppDanger
-                                        else AppTextMuted,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             )
                         }
@@ -1619,27 +1558,6 @@ private fun PlaceSearchRow(place: Place, onClick: () -> Unit) {
 }
 
 /**
- * What the row under the map says about the trail, or null when it says
- * nothing.
- *
- * Silent in the two states that speak for themselves: switched off, where the
- * grey icon is the message, and drawn, where the lines are. Everything else
- * gets a sentence — including the failure, which used to get nothing at all
- * and is the reason this is a function rather than an `if`.
- */
-@Composable
-private fun trailMessage(status: TrailStatus, error: String?): String? = when (status) {
-    TrailStatus.OFF, TrailStatus.DRAWN -> null
-    TrailStatus.LOADING -> stringResource(R.string.map_trails_loading)
-    TrailStatus.EMPTY -> stringResource(R.string.map_trails_none_yet)
-    // The server's own sentence when it gave one — "can't reach the server"
-    // and "your session expired" are different things for a rider to do about.
-    TrailStatus.FAILED ->
-        error?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.map_trails_failed_reason, it) }
-            ?: stringResource(R.string.map_trails_failed)
-}
-
-/**
  * What to say when a search fails, in the rider's own language.
  *
  * The two "search does not work here" cases are worded apart on purpose. Both
@@ -2091,8 +2009,6 @@ private fun RiderMap(
      * exactly as it did before road routing existed.
      */
     route: List<LatLng>,
-    /** Each rider's recent breadcrumbs, keyed by rider. Empty draws nothing. */
-    trails: Map<Long, List<LatLng>>,
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
@@ -2150,7 +2066,6 @@ private fun RiderMap(
     // rebuilt on its own trigger, and a shared list would have one of them
     // clearing the other's overlays.
     val routeLines = remember { mutableListOf<Polyline>() }
-    val trailLines = remember { mutableListOf<Polyline>() }
 
     // Press and hold anywhere to place a point.
     //
@@ -2242,15 +2157,6 @@ private fun RiderMap(
     // only when the ends do, so it is keyed on the line itself.
     LaunchedEffect(route) {
         syncRouteLine(mapView, route, routeLines)
-    }
-
-    // Everybody's breadcrumbs, in their own colours. Redrawn wholesale on each
-    // top-up rather than appended to: osmdroid's Polyline holds its points as
-    // one list, and a line that grew by mutation would have to be invalidated
-    // by hand anyway — for a hundred-odd points, thirty seconds apart, it is
-    // not worth the class of bug that comes with it.
-    LaunchedEffect(trails) {
-        syncTrails(mapView, trails, trailLines)
     }
 
     // The opening camera: it follows this phone's own position while the trip
@@ -2472,75 +2378,11 @@ private fun syncRouteLine(
     view.invalidate()
 }
 
-/**
- * Draws each rider's breadcrumbs behind them, one line per rider.
- *
- * ## Why the colours are the rider colours
- *
- * A trail is only useful if you can tell whose it is at a glance, and the app
- * already has an answer to "which colour is Nut?" — their pin, their dot in
- * the member list, and now their trail, all from [riderColor] on the same user
- * id. A separate palette would mean learning a second one.
- *
- * The lines are drawn thinner and part-transparent, and below the route and
- * every marker: they are where somebody *was*, and they must never compete
- * with where everybody is.
- */
-private fun syncTrails(
-    view: MapView,
-    trails: Map<Long, List<LatLng>>,
-    drawn: MutableList<Polyline>,
-) {
-    // Rebuilt wholesale, which is what the note above always claimed and what
-    // the code did not do: it kept one Polyline per rider, added it to the map
-    // empty and unpainted, and configured it afterwards.
-    //
-    // That is *not* a proven cause of anything — this runs on the main thread,
-    // so no draw pass can land between the add and the setPoints, and the data
-    // path either side of it is covered by tests. It is a consistency change:
-    // syncRouteLine, the one that visibly works, builds each line complete and
-    // only then adds it, and two shapes of the same job in one file is one
-    // shape too many when somebody is trying to work out why one of them drew
-    // nothing. A couple of hundred points every thirty seconds is not a budget
-    // worth keeping the difference for.
-    drawn.forEach { view.overlays.remove(it) }
-    drawn.clear()
-
-    trails.forEach { (userId, points) ->
-        if (points.size < 2) return@forEach
-        val line = Polyline(view).apply {
-            setPoints(points.map { GeoPoint(it.lat, it.lng) })
-            outlinePaint.strokeWidth = TRAIL_LINE_WIDTH_PX
-            outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-            outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
-            outlinePaint.color = riderColor(userId).copy(alpha = TRAIL_ALPHA).toArgb()
-            setOnClickListener { _, _, _ -> false }
-        }
-        // Bottom of the pile, under the route and under every pin.
-        view.overlays.add(0, line)
-        drawn += line
-    }
-
-    view.invalidate()
-}
-
 /** The coloured part of the drawn route, in pixels. */
 private const val ROUTE_LINE_WIDTH_PX = 12f
 
 /** Its white casing, wide enough to stand clear on both sides. */
 private const val ROUTE_CASING_WIDTH_PX = 20f
-
-/** A trail: thinner than the route, because it is history rather than plan. */
-private const val TRAIL_LINE_WIDTH_PX = 7f
-
-/**
- * How solid a trail is.
- *
- * Part-transparent so that eight of them crossing in a town centre stay
- * readable as separate lines rather than as one dark smear, and so the road
- * names underneath survive.
- */
-private const val TRAIL_ALPHA = 0.65f
 
 /**
  * Draws the trip's waypoints, replacing whatever was drawn before.

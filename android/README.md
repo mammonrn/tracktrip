@@ -307,69 +307,40 @@ Note that the fallback is a *measure*, not a drawn line. Nothing is drawn on
 the map when there is no road route: an invented straight line between two
 towns is not a road, and drawing one would make a claim the app cannot back.
 
-### Trails
+### Breadcrumb trails — removed
 
-**Every state the trail can be in says something.** The toggle was reported as
-doing nothing twice, for two different reasons, and only the first was covered:
-the trip genuinely had no history, which the "no trail yet" row answers. The
-second time the *fetch* failed — and a swallowed `ApiException` set no state at
-all, so the map drew no lines and gave no reason, which from the rider's side
-is a dead button. [`map/Breadcrumbs.kt`](
-app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt)'s `TrailStatus` is
-the fix: `OFF`, `LOADING`, `DRAWN`, `EMPTY`, `FAILED`, and only the two that
-speak for themselves — off, where the grey icon is the message, and drawn,
-where the lines are — are allowed to be silent. `TrailStatusTest` holds that as
-a sweep over the enum, so a state added later without a message fails on a
-laptop rather than on a phone.
+The map used to draw each rider's recent trail behind them, behind a toggle in
+the corner. It is gone: the control was reported as doing nothing three times,
+for three different reasons, and each fix bought one ride before the next one.
+A feature whose failure mode is indistinguishable from a dead button, and which
+kept finding new ways into that state, was costing more attention than the line
+was worth.
 
-`LOADING` is only entered when nothing is drawn yet, so a top-up behind a trail
-already on screen does not flicker a message every thirty seconds.
+`GET /trips/:id/positions/history` **stays on the server**, along with
+`position_history` and its cleanup job — the data is still recorded and still
+readable, so this is a UI decision and not a schema one. Nothing in the app
+calls it now.
 
 
-Each rider's recent breadcrumbs are drawn behind them in their own colour,
-from `GET /trips/:id/positions/history`. The rules are in [`map/Breadcrumbs.kt`](
-app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt): the last **15
-minutes**, at most **200 points per rider**, topped up every 30 seconds by
-asking only for what is newer than the newest point already held.
+### One button for the camera
 
-Fifteen minutes is a judgement, not a limit imposed by anything: the trail
-answers "which way did they come, and did they take the turn?", which is a
-question about the last few minutes, and a whole day drawn behind eight riders
-is a ball of wool rather than a map. The per-rider cap exists for the case the
-cadence does not describe — a phone that lost signal in the hills and flushes a
-backlog of fixes in one second.
+The corner used to hold three buttons: trails on/off, frame the whole route,
+and find me. The trail one is gone with its feature; the other two became one.
 
-It was 45 minutes and 120 points, sized against the 45-second reporting
-cadence. At 10 seconds the same window is 4.5× the points — 270 per rider,
-over two thousand for a group of eight — and both ceilings would have been hit
-at once: the per-rider cap would have quietly clipped every trail to its last
-twenty minutes, and the endpoint would have truncated. Fifteen minutes at ten
-seconds is ninety points where forty-five minutes at forty-five seconds was
-sixty, so the line is denser and more road-shaped than it was, and still around
-fifteen kilometres of riding. The constants are derived from
-`ReportCadence.INTERVAL_MS` now rather than written down, so the two cannot
-drift apart again silently.
+They were never two jobs a rider alternates between at random — they are the
+two ends of one question, *am I looking at the journey or at myself*, and the
+answer is always whichever one is not on screen. So the button offers the other
+one, and its icon shows where the next press goes rather than where the last
+one went: the route glyph while the camera is on the rider, the pin while it is
+holding the overview. Following returns at `FOLLOW_ZOOM` (17), unchanged.
 
-The window is also why the fetch passes `since`: the history endpoint is
-`ORDER BY recorded_at ASC ... LIMIT`, so a request without one returns the
-*oldest* points of the ride, which is the opposite of what a trail behind a
-moving pin needs. For the same reason a **truncated** answer is chased rather
-than accepted — it is the *start* of the window, so taking it would draw a line
-that stops in the middle of a road. `Breadcrumbs.collect` asks again from the
-newest point it received, bounded to three rounds; the window is sized so a
-realistic group never needs a second one.
-
-**If the trail is on and nothing is drawn, the map says so.** Nothing is
-recorded until somebody actually shares their position, and a rider testing the
-map usually has not — which made the toggle indistinguishable from a broken
-button on its first real outing. The row under the map now tells the two
-states apart.
-
-There is a toggle for it on the map, and the answer is remembered in
-`AppSettings`. On by default — a feature switched off by default is a feature
-nobody finds — but whether eight coloured lines help or clutter genuinely
-depends on where the group is, so it is a button on the map rather than a
-setting a screen away.
+`CameraRules.nextAction` in [`map/RouteProgress.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RouteProgress.kt) is the rule, and
+the icon, the content description and the click all read it — so they cannot
+disagree about what the button is for. With fewer than two points to frame (no
+ends set, no position reported) it keeps the "find me" job rather than becoming
+a control that does nothing, which is what the old overview button avoided by
+hiding itself. One button cannot hide.
 
 ### The progress bar down the edge
 
