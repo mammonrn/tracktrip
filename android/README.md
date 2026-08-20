@@ -25,11 +25,11 @@ inline message rather than crashing.
 
 | Screen | Backend it talks to |
 |---|---|
-| Sign-in | `POST /auth/google` |
+| Sign-in — the app's mark over its name, and the Google button | `POST /auth/google` |
 | Trip list — the newest three, an archive for the rest, a podium on each card | `GET /trips`, `GET /invites`, `POST /invites/:id/accept`, `GET /trips/:id/positions` |
 | Create trip | `POST /trips` |
 | Trip detail — members, sharing, invite, end trip | `GET /trips/:id/positions`, `POST /trips/:id/invites`, `POST /trips/:id/end`, `GET /trips/:id/suggested-invitees`, `POST /trips/:id/share/start`, `/share/stop` |
-| Settings — profile, language, sharing default, sharing toggles, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
+| Settings — profile, language, sharing default, the phone's sharing switch and the trip it sends to, saved places, sign out | `GET /me`, `GET /trips`, `POST /trips/:id/share/start`, `/share/stop`, `GET /places`, `GET /me/places`, `DELETE /places/:id`, `DELETE /me/places/:id` |
 | Profile — photo, name, username, phone, date of birth | `GET /me`, `PATCH /me`, `POST /me/avatar` |
 | Live map — everyone's position, with the member list under it and the route card over it | `GET /trips/:id/positions` + the `/ws` socket, `GET /trips/:id/waypoints`, `PATCH /trips/:id`, `POST /trips/:id/waypoints`, `DELETE /trips/:id/waypoints/:wpId`, `GET /geocode/search`, `GET /directions` |
 | Invite with QR — a code to hold up | `POST /trips/:id/join-code` |
@@ -76,6 +76,29 @@ The one colour outside `Theme.kt` is `hud_background` in `res/values/colors.xml`
 the window background the system paints before Compose starts. Keep it in step
 with `HudBlack`.
 
+### The mark on the sign-in screen
+
+Sign-in was the word "PTrips" in the middle of an empty page — the one screen
+every rider sees before they have any reason to trust what they are signing
+into. The mark now sits above the name at 96dp, centred, which reassembles the
+lockup from `design/app_icon.png` where the pin sits over the wordmark.
+
+It draws `@mipmap/ic_launcher_foreground` rather than a new asset: that file is
+already the mark alone, cropped and centred on its own ink at five densities,
+and the whole point is that it is the icon the rider just tapped. Because it is
+an adaptive icon's *foreground layer*, `AppLogo` applies the two rules a
+launcher applies to it — a circle of `ic_launcher_background` behind it (the
+clouds in the pin are transparent cut-outs, not white, so on a bare page they
+would read as holes), and the image laid out at 1.5x the circle and clipped
+back to it, which is the 108:72 crop a round launcher icon performs. Drawn at
+the layer's own 108dp instead, the mark would appear at two thirds the size the
+launcher gives it, ringed by its own safe-zone padding.
+
+No content description: the name is written underneath it in words, and a
+screen reader saying "PTrips" twice on a screen with one button is worse than a
+mark it skips. `SignInLogoTest` finds it by tag, which buys the test the same
+hook and adds no announcement.
+
 ## Location sharing
 
 Starting sharing is three things in a fixed order, which is why the sequence
@@ -96,6 +119,50 @@ than in each screen that offers it:
 
 Stopping runs the other way — service down first, then the server — so a
 failed network call still leaves the phone silent.
+
+### The switch is the phone's, not a trip's
+
+Settings used to ask "is this phone sharing?" once per running trip: a list
+built from `listTrips().filter { it.isActive }` with a `Switch` on each row.
+Every one of those switches is a statement about a trip, so a rider whose trip
+had **ended** came to turn sharing on and found nothing to press — the trip was
+filtered out before the list was drawn, and what stood where the control should
+have been was "Sharing needs a running trip". A privacy setting had been made
+out of somebody's weekend plans.
+
+Sharing binds a trip id in five places and four of them are right: the server's
+session is per trip, the service reports to the trip it was started for,
+`SharingState.ActiveSharing` says which, and `SharingController.start/stop`
+carry one out. The fifth — whether the phone may share at all — was the only
+statement about the phone, and the only one made out of trips.
+
+So the section asks two questions now. **May this phone share where it is?** is
+a switch at the top, backed by `AppSettings.shareLocationFromThisPhone` and
+always pressable: no trips, every trip finished, network down. **Which trip is
+a fix reported to?** is the same rows as before, underneath, greyed while the
+phone's answer is no.
+
+[`location/DeviceSharing.kt`](
+app/src/main/java/app/ptrip/tracktrip/location/DeviceSharing.kt) holds the
+decisions, with no Android in it, for the same reason `BatteryExemption` does:
+
+- **Off** stops whatever is live and never reads the trip list — the id comes
+  from the service, so a session that outlived its trip stops all the same.
+  That case is exactly what a trip-shaped control could not reach.
+- **On** starts sharing when there is one obvious trip to start on, which is
+  the gesture the per-trip toggle used to be. With none it records the choice;
+  with several, *which* is a second question and the rows below ask it, because
+  guessing would send a position to the wrong group.
+
+On while nothing is being sent is permission rather than transmission, and an
+ordinary state — the line under the switch says which of the three it is
+(`DeviceSharing.Status`). The preference defaults to **on**, matching the
+backend, where a rider who has never touched the controls already counts as
+sharing; defaulting it off would have silently stopped everyone who upgraded
+mid-tour. Starting from the trip screen turns it on, because picking a duration
+there is consenting. Android's location dialog is raised only when the switch
+is about to start sending, and never when turning it off — a kill switch that
+waits on a dialog is not a kill switch.
 
 The service reports every 10 seconds via `LocationManager` (not Play
 Services' fused provider: at that cadence the accuracy is not worth another
@@ -210,24 +277,71 @@ for somebody standing next to you, a **share link** for a chat window, and a
 The third is the fallback, and it used to take up more of the panel than the
 other two together — a field, an Invite button and two lines about what an
 invite actually does, sitting open whether or not anybody was going to type. It
-is behind an **"Add by email"** button now. Nothing about the invite changed:
-the same field, the same `POST /trips/:id/invites`, the same rule about when it
-can be pressed. The suggestion chips — riders you have ridden with before,
-ordered by how often — stay out on the panel and still fill the address in;
-they open the dialog on it, which is what the chip was always shorthand for.
+is behind an **"Add by email"** button.
 
-Two things had to follow the field into the dialog or be lost by it. The
-**reason a send failed** is drawn inside the dialog, because a dialog covers
+### "Ridden with before": five, and a number
+
+The shortcut chips draw the riders you have ridden with before, in the server's
+own order (`trips_together DESC, last_ridden_together DESC`). They used to draw
+*all* of them, in a box that scrolled — which for a group that has ridden
+together for years is a wall of names above the three buttons that actually add
+people. [`ui/InviteShortcuts.kt`](
+app/src/main/java/app/ptrip/tracktrip/ui/InviteShortcuts.kt) cuts it to **five**
+and puts the rest behind a **"+12 more"** chip that opens them in place; the
+number says exactly how much is behind it. Nothing is hidden and there is no
+second screen to dismiss.
+
+That pairing with the backend's `ORDER BY` is written down in `InviteShortcuts`
+for the same reason `ReportCadence` writes down the rate limit: `SuggestedInvitee`
+carries no `last_ridden_together`, so nothing else in the app would say what
+"the first five" means.
+
+### A chip is the invite, and the list refills behind it
+
+Tapping a name used to fill the email field in and open the dialog on it. A
+name from the rider's own past trips needs no form and no second confirmation,
+so a tap **sends it**. The chip then sinks past the window — sunk, not dropped,
+because inviting the wrong Nut is easy and a chip that vanishes leaves no way
+to put it right — and the sixth name rises into its place. Working down a group
+is the same tap repeated until the names run out, rather than four screens each
+time. Anyone who has joined the trip since the list was read is dropped
+outright: they are on it, and there is nothing left to offer about them.
+
+### The dialog takes several at once
+
+It was one address and one Invite, so adding four people was four rounds of
+open, type, send, watch it close. Both halves are plural now: the chips are the
+same five-and-a-number, **multi-select** (filled when picked), and the field
+takes a list — split on commas, semicolons and any whitespace, because that is
+what an address list arrives as when it is pasted out of a chat window. One
+press sends everything, `InviteRules.addresses` being what turns the two
+controls into one request list — chips first, deduplicated case-insensitively,
+so a chip and the same address typed is one invite rather than one invite and
+one "already invited" the rider caused by being thorough.
+
+`POST /trips/:id/invites` takes one address and there is no bulk endpoint, so
+they go one after another. A refusal does not stop the rest — one rider already
+on the trip must not cost the other four their invite — and what came back is
+kept apart from what did not: `inviteSent` lists the accepted ones and the error
+line names each refusal with the address it belongs to.
+
+### What had to stay where
+
+The **reason a send failed** is drawn inside the dialog, because a dialog covers
 the screen's own error line and a refused invite would otherwise fail in
 silence. The **confirmation** stays on the panel, because the dialog closes on
 the server's answer and the answer has to outlive it — and it closes on
-`inviteSentTo` changing rather than on a flag flipped inside the press, so a
-failed send leaves the rider in front of what they typed.
+`inviteSent` changing rather than on a flag flipped inside the press, so a press
+where nothing landed leaves the rider in front of what they chose. One name is
+confirmed as the name; several as a count, because five addresses on one line is
+not a confirmation anybody reads.
 
 A text field inside a dialog window never lets a Compose test reach idle under
 Robolectric, so the dialog is split: `InviteByEmailDialog` is placement and
-nothing else, and everything with behaviour in it — `InviteByEmailForm` and
-`InviteRules.canSend` — lives where a test can reach it.
+nothing else, and everything with behaviour in it — `InviteByEmailForm`,
+`InviteRules.addresses` and `InviteRules.canSend` — lives where a test can
+reach it. The selection is held one level up, in `InvitePanel`, because the
+Invite button sits in the dialog's confirm slot rather than inside the form.
 
 ## The map
 
