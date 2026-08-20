@@ -12,9 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -88,6 +90,17 @@ fun PlacesMapScreen(
      * makes pressing it twice move the map twice.
      */
     centreOn: MapFocus?,
+    /**
+     * Whether the phone is being asked where it is *right now*, because this
+     * rider pressed the button.
+     *
+     * The press is answered by the phone, not by this screen, and a cold
+     * provider can take the better part of `LocationFix.QUICK_TIMEOUT_MS` to
+     * answer — fifteen seconds in which the old button did not change by a
+     * single pixel. A rider who cannot tell "asking" from "broken" presses it
+     * again, and then stops pressing it.
+     */
+    centringOnMe: Boolean,
     hasLocationPermission: Boolean,
     currentUserId: Long?,
     onSearchQueryChanged: (String) -> Unit,
@@ -232,13 +245,32 @@ fun PlacesMapScreen(
                 // same. Tinted only once there is a fix — grey says "I would
                 // have to go and ask", which is exactly what pressing it then
                 // does, permission dialog and all.
+                //
+                // While the phone is being asked, the pin is replaced by a
+                // spinner and the button stops taking presses. Both halves
+                // matter: the spinner is the only thing on the screen that
+                // says the press landed, and without the guard a rider who
+                // pressed three times queued three location requests, each
+                // with its own fifteen-second timeout, to answer a question
+                // that had already been asked.
                 HudIconButton(
-                    onClick = onCenterOnMe,
-                    contentDescription = stringResource(R.string.map_center_on_me),
+                    onClick = { if (!centringOnMe) onCenterOnMe() },
+                    contentDescription = stringResource(
+                        if (centringOnMe) R.string.map_finding_me
+                        else R.string.map_center_on_me
+                    ),
                     icon = {
-                        HudPinIcon(
-                            tint = if (myLocation != null) AppPrimary else AppTextMuted
-                        )
+                        if (centringOnMe) {
+                            CircularProgressIndicator(
+                                color = AppPrimary,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        } else {
+                            HudPinIcon(
+                                tint = if (myLocation != null) AppPrimary else AppTextMuted
+                            )
+                        }
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
