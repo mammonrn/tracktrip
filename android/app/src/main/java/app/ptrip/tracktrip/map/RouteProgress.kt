@@ -163,4 +163,49 @@ object CameraRules {
      * frame is bigger than the rider, and in free the rider is holding it.
      */
     fun followsPosition(camera: MapCamera): Boolean = camera == MapCamera.FOLLOW
+
+    /**
+     * What the one camera button does next, given where the camera is now.
+     *
+     * Framing the route is the offer whenever the camera is *not* already
+     * holding it, so the first press from anywhere — following, or dragged
+     * somewhere by hand — pulls back to the whole journey, and the next press
+     * comes back to the rider. That is the alternation a rider expects from
+     * one button, and it is the only one that leaves no state where pressing
+     * twice lands where you started without having seen the other view.
+     *
+     * [canFitRoute] is false when there are fewer than two points to frame —
+     * a trip with no ends set, and a rider whose phone has not reported. There
+     * is nothing to pull back to then, so the button keeps its other job
+     * rather than becoming a control that does nothing.
+     */
+    fun nextAction(camera: MapCamera, canFitRoute: Boolean): CameraAction = when {
+        !canFitRoute -> CameraAction.FOLLOW_ME
+        camera == MapCamera.OVERVIEW -> CameraAction.FOLLOW_ME
+        else -> CameraAction.FIT_ROUTE
+    }
+}
+
+/**
+ * What the map's one camera button does when it is next pressed.
+ *
+ * ## Why one button and not two
+ *
+ * There were two, side by side: "frame the whole route" and "find me". They
+ * are not two jobs a rider alternates between at random — they are the two
+ * ends of one question, *am I looking at the journey or at myself*, and the
+ * answer is always whichever one you are not looking at now. Two buttons made
+ * the rider work out which of them they wanted; one button that knows where
+ * the camera already is does not.
+ *
+ * The value exists so the icon and the press cannot disagree. They read the
+ * same rule, so the button always shows what pressing it will do rather than
+ * what it did last time.
+ */
+enum class CameraAction {
+    /** Zoom out to take in the start, the finish and this rider. */
+    FIT_ROUTE,
+
+    /** Go back to this rider, at the zoom following uses. */
+    FOLLOW_ME,
 }

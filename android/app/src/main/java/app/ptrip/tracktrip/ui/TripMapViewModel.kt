@@ -10,20 +10,17 @@ import app.ptrip.tracktrip.data.RiderLevel
 import app.ptrip.tracktrip.data.RouteLine
 import app.ptrip.tracktrip.data.RouteLookup
 import app.ptrip.tracktrip.data.SessionExpiredException
-import app.ptrip.tracktrip.data.TrailPoint
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
 import app.ptrip.tracktrip.data.TripEndpoint
 import app.ptrip.tracktrip.data.TripWaypoints
 import app.ptrip.tracktrip.data.Waypoint
-import app.ptrip.tracktrip.map.Breadcrumbs
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RideOrder
 import app.ptrip.tracktrip.map.DirectProgress
 import app.ptrip.tracktrip.map.RoutePlan
 import app.ptrip.tracktrip.map.RoutePlans
 import app.ptrip.tracktrip.map.RouteRequests
-import app.ptrip.tracktrip.map.TrailStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,31 +46,6 @@ data class TripMapUiState(
      * the progress bar says which of the two is on screen.
      */
     val route: RouteLine? = null,
-    /**
-     * Where each rider has just been, oldest point first, keyed by rider.
-     *
-     * Empty when the trail is switched off, when nobody has moved far enough
-     * to have one, or when the fetch failed — all three draw nothing, which is
-     * the same thing the map did before trails existed.
-     */
-    val trails: Map<Long, List<LatLng>> = emptyMap(),
-    /** Whether the rider wants trails drawn. Remembered between rides. */
-    val trailsVisible: Boolean = true,
-    /**
-     * What the trail is doing, so the screen can say so.
-     *
-     * Every state, not just "fetched and empty" — see [TrailStatus]. The state
-     * that was missing is the one that made the toggle look broken: a fetch
-     * that failed used to set nothing at all, leaving no lines and no reason.
-     */
-    val trailStatus: TrailStatus = TrailStatus.OFF,
-    /**
-     * What the server said about a failed trail fetch, when it said anything.
-     *
-     * Kept because the reason is the useful half: "can't reach the server" and
-     * "your session expired" are two different things for the rider to do.
-     */
-    val trailError: String? = null,
     /**
      * Whether [members] is ordered leader-first rather than by how recently
      * each rider reported.
@@ -226,13 +198,7 @@ class TripMapViewModel(
      * a server with no key: no route, and the straight line stays.
      */
     private val routeApi: RouteLookup? = null,
-    /**
-     * Whether trails start switched on, and where the answer is written back
-     * to. Defaulted so a preview or a test needs neither.
-     */
-    trailsVisible: Boolean = true,
-    private val onTrailsVisibleChanged: (Boolean) -> Unit = {},
-    /** The clock, injected so the trail window and the routing backoff can be tested. */
+    /** The clock, injected so the routing backoff can be tested. */
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
@@ -306,7 +272,7 @@ class TripMapViewModel(
         rememberFixes(listOf(position))
     }
 
-    private val _uiState = MutableStateFlow(TripMapUiState(trailsVisible = trailsVisible))
+    private val _uiState = MutableStateFlow(TripMapUiState())
     val uiState: StateFlow<TripMapUiState> = _uiState.asStateFlow()
 
     // After the state it writes to, not before it: an initialiser block runs
@@ -734,108 +700,8 @@ class TripMapViewModel(
         }
     }
 
-    /**
-     * Every rider's breadcrumbs, held here rather than in the state.
-     *
-     * The state carries the drawn lines; this carries the points they are made
-     * of, with their ids and timestamps, because that is what the next top-up
-     * needs to ask for only what it has not already got. See [Breadcrumbs].
-     */
-    private var trailPoints: List<TrailPoint> = emptyList()
 
-    /**
-     * Tops the trail up.
-     *
-     * Driven by the screen on its own slow beat, not by [refresh]: a trail is
-     * a line that has already happened, and a rider cannot see that its near
-     * end is half a minute short. The first call asks for the whole window;
-     * every one after it asks only for what has arrived since the newest point
-     * already held, so the usual answer is a row or two per rider.
-     *
-     * Silent on failure, like everything else that is not a position: a map
-     * with pins on it is not broken because the history did not load.
-     */
-    fun refreshTrail() {
-        if (!_uiState.value.trailsVisible) return
 
-        // Said out loud before the request goes out, but only when there is
-        // nothing on screen yet: a rider who has just pressed the button gets
-        // an answer immediately instead of a control that appears to do
-        // nothing, and a top-up behind a trail already drawn stays silent
-        // rather than flickering a message every thirty seconds.
-        if (_uiState.value.trails.isEmpty()) {
-            _uiState.update { it.copy(trailStatus = TrailStatus.LOADING, trailError = null) }
-        }
-
-        viewModelScope.launch {
-            val nowMs = now()
-            // The loop that chases a truncated answer lives in Breadcrumbs so
-            // it can be tested against a stub — see Breadcrumbs.collect.
-            trailPoints = try {
-                Breadcrumbs.collect(trailPoints, nowMs) { since, limit ->
-                    tripApi.trail(tripId, sinceIso = since, limit = limit)
-                }
-            } catch (e: SessionExpiredException) {
-                // Still recorded: the sign-out takes the rider off this screen,
-                // but a state left saying "loading" would greet them on the
-                // way back in.
-                _uiState.update {
-                    it.copy(trailStatus = TrailStatus.FAILED, trailError = e.message)
-                }
-                onSessionExpired()
-                return@launch
-            } catch (e: ApiException) {
-                // The line that this whole value exists for. This used to
-                // return having set nothing, so the map drew no trail and gave
-                // no reason — which is indistinguishable from a dead button,
-                // and is what one was reported as.
-                _uiState.update {
-                    it.copy(trailStatus = TrailStatus.FAILED, trailError = e.message)
-                }
-                return@launch
-            }
-
-            // Recomputed even when nothing arrived: the window is a moving
-            // one, so the tail of every line ages out whether or not the head
-            // grew.
-            val lines = Breadcrumbs.byRider(trailPoints, nowMs)
-            _uiState.update {
-                it.copy(
-                    trails = lines,
-                    trailStatus = if (lines.isEmpty()) TrailStatus.EMPTY else TrailStatus.DRAWN,
-                    trailError = null,
-                )
-            }
-        }
-    }
-
-    /**
-     * Turns the trail on or off, and remembers the answer.
-     *
-     * Switching off throws the points away rather than hiding them: they age
-     * out of the window anyway, and keeping a stale set to show instantly on
-     * the way back would draw a line that stops where the rider was when they
-     * pressed the button.
-     */
-    fun toggleTrails() {
-        val visible = !_uiState.value.trailsVisible
-        if (!visible) trailPoints = emptyList()
-        _uiState.update {
-            it.copy(
-                trailsVisible = visible,
-                trails = if (visible) it.trails else emptyMap(),
-                // Switching on says "working on it" rather than nothing: the
-                // fetch has not run, and a press that changes no pixel is the
-                // thing that reads as a broken button.
-                trailStatus = if (visible) TrailStatus.LOADING else TrailStatus.OFF,
-                trailError = null,
-            )
-        }
-        onTrailsVisibleChanged(visible)
-        // Not refetched here: the screen's own loop is keyed on this flag and
-        // fires the moment it flips, so doing it here as well would be two
-        // requests for one button press.
-    }
 
     /** Rolls each rider's fix forward, keeping the one before it. */
     private fun rememberFixes(members: List<MemberPosition>) {

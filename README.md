@@ -735,9 +735,26 @@ Never commit a real `.env` file — it's excluded via `.gitignore`.
 
 ## Place search
 
-`GET /geocode/search?q=<name>&limit=<n>` turns a typed place name into
-coordinates, so a rider can set a trip's start, finish or a stop by name
-instead of hunting for the spot on the map. Pressing and holding the map
+`GET /geocode/search?q=<name>&limit=<n>[&near=<lat,lng>]` turns a typed place
+name into coordinates, so a rider can set a trip's start, finish or a stop by
+name instead of hunting for the spot on the map.
+
+**Two upstream indexes, asked in order.** LocationIQ's `/v1/autocomplete` is
+the name index and is asked first, biased towards the rider — "somebody is
+typing the name of a place" is the question it was built for. `/v1/search` is
+an address geocoder and is the fallback, asked **unbiased**.
+
+That order came out of a real failure. "วัดร่องขุ่น" — the White Temple, one
+of the best-known places in Chiang Rai — returned one result from the address
+index with no bias, and nothing useful once a bias was added. A bias promotes
+everything near the rider that shares a prefix, and in northern Thailand "วัด"
+is a prefix several thousand places share, so an exact name can be crowded out
+of eight rows by its own neighbours. The fallback therefore drops the bias
+rather than repeating it.
+
+The second call only happens when the first found nothing at all, so an
+ordinary search still costs one upstream request; a search that matches nothing
+costs two, and the cache stores that answer either way. Pressing and holding the map
 still does the same job and is unaffected — the search is an addition, not a
 replacement, and it is the long press that keeps working for a viewpoint with
 no name and on a server with no key set.

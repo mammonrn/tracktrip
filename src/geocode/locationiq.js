@@ -20,6 +20,22 @@
 export const LOCATIONIQ_SEARCH_URL = 'https://us1.locationiq.com/v1/search';
 
 /**
+ * The name-first index, and the one a rider typing a place name should hit.
+ *
+ * `/v1/search` is a *geocoder*: it is built to turn an address into a point,
+ * and it ranks accordingly. `/v1/autocomplete` is built for exactly what this
+ * app does — somebody typing the name of a place — and matches on the name
+ * rather than on the address around it.
+ *
+ * That distinction is what "วัดร่องขุ่น" ran into. On the address index a
+ * bias towards northern Thailand promotes every one of the several thousand
+ * places whose name begins with "วัด" inside the box, and with a limit of
+ * eight the exact match can be crowded out by its own neighbours. On the name
+ * index the exact name is what is being ranked.
+ */
+export const LOCATIONIQ_AUTOCOMPLETE_URL = 'https://us1.locationiq.com/v1/autocomplete';
+
+/**
  * Shortest query worth spending a request on.
  *
  * One character matches most of the planet, so the answer is useless and the
@@ -247,6 +263,43 @@ export function buildSearchUrl({
 }
 
 /**
+ * The URL for one autocomplete lookup.
+ *
+ * The same parameters `/v1/search` takes, minus the ones that only mean
+ * something to an address geocoder. The response shape is the same
+ * Nominatim-derived one — `lat`, `lon`, `display_name`, `address`, `osm_id`,
+ * `type` — which is why [parsePlace] reads both without knowing which it got.
+ */
+export function buildAutocompleteUrl({
+  apiKey,
+  query,
+  limit,
+  url = LOCATIONIQ_AUTOCOMPLETE_URL,
+  countryCodes,
+  bias,
+}) {
+  const params = new URLSearchParams({
+    key: apiKey,
+    q: query,
+    limit: String(limit),
+    addressdetails: '1',
+    normalizecity: '1',
+    // One row per place. Without it the same temple arrives two or three
+    // times under different OSM objects and eats the eight rows a rider sees.
+    dedupe: '1',
+  });
+  if (countryCodes) params.set('countrycodes', countryCodes);
+
+  const viewbox = biasViewbox(bias);
+  if (viewbox) {
+    params.set('viewbox', viewbox);
+    params.set('bounded', '0');
+  }
+
+  return `${url}?${params.toString()}`;
+}
+
+/**
  * Turns an upstream status into something a rider can read.
  *
  * 404 is the odd one: LocationIQ answers a search that matched nothing with
@@ -276,22 +329,18 @@ export function createLocationIqSearch({
   apiKey,
   fetchImpl = globalThis.fetch,
   url = LOCATIONIQ_SEARCH_URL,
+  autocompleteUrl = LOCATIONIQ_AUTOCOMPLETE_URL,
   countryCodes,
   timeoutMs = REQUEST_TIMEOUT_MS,
 }) {
-  return async function search(query, { limit = DEFAULT_LIMIT, bias = null } = {}) {
-    if (!apiKey) {
-      // Not thrown at construction: a server with no key still serves every
-      // other route, and the one endpoint that needs it says so on use.
-      throw new GeocodeError('Place search is not configured on this server.', 503);
-    }
-
+  /** One call: fetch it, read it, and turn what comes back into places. */
+  async function fetchPlaces(target) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     let response;
     try {
-      response = await fetchImpl(buildSearchUrl({ apiKey, query, limit, url, countryCodes, bias }), {
+      response = await fetchImpl(target, {
         signal: controller.signal,
         headers: { accept: 'application/json' },
       });
@@ -321,6 +370,46 @@ export function createLocationIqSearch({
     }
 
     return parseResults(payload);
+  }
+
+  /**
+   * Two indexes, asked in the order that answers a typed place name best.
+   *
+   * ## Why there are two
+   *
+   * The name index (`/v1/autocomplete`) is asked first, biased towards the
+   * rider, because "somebody is typing the name of a place" is the question it
+   * was built for.
+   *
+   * The address index (`/v1/search`) is the fallback, and it is asked
+   * **unbiased**. That is not a detail — it is the case this exists for. A
+   * biased address search promotes everything near the rider that shares a
+   * prefix, and in northern Thailand "วัด" is a prefix several thousand places
+   * share, so an exact name can be crowded out of eight rows by its own
+   * neighbours. Unbiased, that same query is on record as returning the place
+   * (one result, in this server's own log, before any bias existed). So when
+   * the first ask comes back with nothing, the second one drops the bias
+   * rather than repeating it.
+   *
+   * The second call only happens when the first found nothing at all, so an
+   * ordinary search still costs one request. An empty answer costs two, and
+   * the route caches it either way — see src/routes/geocode.js.
+   */
+  return async function search(query, { limit = DEFAULT_LIMIT, bias = null } = {}) {
+    if (!apiKey) {
+      // Not thrown at construction: a server with no key still serves every
+      // other route, and the one endpoint that needs it says so on use.
+      throw new GeocodeError('Place search is not configured on this server.', 503);
+    }
+
+    const byName = await fetchPlaces(
+      buildAutocompleteUrl({ apiKey, query, limit, url: autocompleteUrl, countryCodes, bias })
+    );
+    if (byName.length > 0) return byName;
+
+    return fetchPlaces(
+      buildSearchUrl({ apiKey, query, limit, url, countryCodes, bias: null })
+    );
   };
 }
 

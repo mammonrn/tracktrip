@@ -173,4 +173,85 @@ class CameraRulesTest {
         // Overview's whole point is a frame bigger than the rider in it.
         assertTrue(!CameraRules.followsPosition(MapCamera.OVERVIEW))
     }
+    // --- the one camera button ---------------------------------------------
+
+    @Test
+    fun `the first press pulls back to the whole route`() {
+        // From anywhere that is not already the overview — following, or
+        // dragged somewhere by hand — the offer is the journey.
+        assertEquals(
+            CameraAction.FIT_ROUTE,
+            CameraRules.nextAction(MapCamera.FOLLOW, canFitRoute = true),
+        )
+        assertEquals(
+            CameraAction.FIT_ROUTE,
+            CameraRules.nextAction(MapCamera.FREE, canFitRoute = true),
+        )
+    }
+
+    @Test
+    fun `pressing again comes back to the rider`() {
+        assertEquals(
+            CameraAction.FOLLOW_ME,
+            CameraRules.nextAction(MapCamera.OVERVIEW, canFitRoute = true),
+        )
+    }
+
+    @Test
+    fun `two presses alternate rather than landing where they started`() {
+        // The property that makes one button work instead of two: whatever is
+        // on screen, the button offers the other thing, and pressing twice
+        // shows you both.
+        var camera = MapCamera.FOLLOW
+        val seen = mutableListOf<CameraAction>()
+
+        repeat(4) {
+            val action = CameraRules.nextAction(camera, canFitRoute = true)
+            seen += action
+            camera = when (action) {
+                CameraAction.FIT_ROUTE -> MapCamera.OVERVIEW
+                CameraAction.FOLLOW_ME -> MapCamera.FOLLOW
+            }
+        }
+
+        assertEquals(
+            listOf(
+                CameraAction.FIT_ROUTE,
+                CameraAction.FOLLOW_ME,
+                CameraAction.FIT_ROUTE,
+                CameraAction.FOLLOW_ME,
+            ),
+            seen,
+        )
+    }
+
+    @Test
+    fun `with no route to frame the button keeps its other job`() {
+        // A trip with no ends set, or a rider whose phone has not reported:
+        // there is nothing to pull back to, and the old screen hid the
+        // overview button entirely in that state. One button cannot hide, so
+        // it must not become a control that does nothing.
+        MapCamera.entries.forEach { camera ->
+            assertEquals(
+                "$camera with nothing to frame",
+                CameraAction.FOLLOW_ME,
+                CameraRules.nextAction(camera, canFitRoute = false),
+            )
+        }
+    }
+
+    @Test
+    fun `a drag does not strand the button in overview`() {
+        // Dragging leaves the camera FREE (see afterPan), so the next press
+        // offers the route again rather than "find me" — the rider has just
+        // moved the map by hand, and what they have lost sight of is the
+        // journey.
+        val afterDrag = CameraRules.afterPan()
+
+        assertEquals(
+            CameraAction.FIT_ROUTE,
+            CameraRules.nextAction(afterDrag, canFitRoute = true),
+        )
+    }
+
 }
