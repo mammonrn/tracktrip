@@ -275,9 +275,10 @@ private fun SignedInNavigation(
         }
     }
 
-    // A sharing action waiting on the permission dialog's answer: a toggle
-    // from settings, or a duration picked on the trip screen.
-    var pendingToggle by remember { mutableStateOf<Pair<Trip, Boolean>?>(null) }
+    // A sharing action waiting on the permission dialog's answer. Two, because
+    // they are different sentences: the switch in settings is about this
+    // phone, and the duration on the trip screen is about this ride.
+    var pendingDeviceSwitch by remember { mutableStateOf<Boolean?>(null) }
     var pendingDuration by remember { mutableStateOf<SharingDuration?>(null) }
 
     BackHandler(enabled = backStack.canGoBack) { backStack.pop() }
@@ -296,6 +297,7 @@ private fun SignedInNavigation(
             onOpenSettings = { backStack.push(Screen.Settings) },
             isSuperuser = profile?.isSuperuser == true,
             onShowAllTrips = tripsViewModel::setShowAllTrips,
+            onToggleArchive = tripsViewModel::setArchiveOpen,
             modifier = modifier,
         )
 
@@ -303,6 +305,13 @@ private fun SignedInNavigation(
             val settingsViewModel: SettingsViewModel =
                 viewModel(factory = settingsViewModelFactory(container, onSignOut))
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+
+            // The same instance Map & places uses — `viewModel()` is keyed by
+            // type on this activity's store — so the list a rider tidies here
+            // is the list of pins they see there, without a second read.
+            val placesViewModel: PlacesViewModel =
+                viewModel(factory = placesViewModelFactory(container, profile?.id, onSignOut))
+            val placesState by placesViewModel.uiState.collectAsStateWithLifecycle()
 
             // Applying the language is the screen's side of the setting: the
             // view model persists the choice, AppCompat enacts it (and, below
@@ -312,26 +321,41 @@ private fun SignedInNavigation(
             }
 
             val requestSharingPermission = rememberSharingPermissionRequest(
-                onGranted = { pendingToggle?.let { (trip, on) -> settingsViewModel.toggleSharing(trip, on) } },
+                onGranted = {
+                    pendingDeviceSwitch?.let { on ->
+                        pendingDeviceSwitch = null
+                        settingsViewModel.setShareFromThisPhone(on)
+                    }
+                },
                 onDenied = settingsViewModel::onPermissionDenied,
                 askBatteryExemption = true,
             )
 
             SettingsScreen(
                 state = settingsState,
+                places = placesState,
                 displayName = profile?.label ?: user.displayName,
                 email = profile?.email ?: user.email,
                 photoUrl = profile?.photoUrl ?: user.photoUrl,
                 sharingTripId = sharing?.tripId,
+                sharingTripName = sharing?.tripName,
                 onOpenProfile = { backStack.push(Screen.Profile) },
+                onRemovePersonalPlace = placesViewModel::removePersonal,
+                onRemoveSharedPlace = placesViewModel::removeShared,
                 onLanguageChange = settingsViewModel::setLanguage,
                 onSharingDurationChange = settingsViewModel::setDefaultSharingDuration,
-                onToggleSharing = { trip, on ->
-                    if (on) {
-                        pendingToggle = trip to true
+                // Turning the switch on only asks Android when it is about to
+                // start sending. With no trip running it records a preference,
+                // and putting the location dialog in front of that would be
+                // demanding an answer nothing is about to act on. Turning it
+                // off never asks — a kill switch that waits on a dialog is not
+                // a kill switch.
+                onShareFromThisPhoneChange = { on ->
+                    if (on && settingsViewModel.switchWouldStartSharing(true)) {
+                        pendingDeviceSwitch = true
                         requestSharingPermission()
                     } else {
-                        settingsViewModel.toggleSharing(trip, false)
+                        settingsViewModel.setShareFromThisPhone(on)
                     }
                 },
                 onSignOut = onSignOut,
@@ -455,6 +479,7 @@ private fun SignedInNavigation(
                         requestLocation()
                     }
                 },
+                onOpenSettings = { backStack.push(Screen.Settings) },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -464,6 +489,7 @@ private fun SignedInNavigation(
             ScanQrScreen(
                 joining = joinState.joining,
                 error = joinState.error,
+                blockedByTripName = joinState.blockedByTripName,
                 onCodeScanned = { code ->
                     joinViewModel.join(code) { trip ->
                         // Straight to the trip that was just joined — the
@@ -486,6 +512,7 @@ private fun SignedInNavigation(
             CreateTripScreen(
                 creating = createState.creating,
                 error = createState.error,
+                blockedByTripName = createState.blockedByTripName,
                 onCreate = { name ->
                     createViewModel.create(name) { trip ->
                         // Straight into the new trip: the next thing anyone
@@ -555,8 +582,8 @@ private fun SignedInNavigation(
                 onShareInviteLink = detailViewModel::requestShareLink,
                 onOpenMap = { backStack.push(Screen.TripMap(screen.tripId)) },
                 onInviteEmailChange = detailViewModel::onInviteEmailChange,
-                onSendInvite = detailViewModel::sendInvite,
-                onUseSuggestion = detailViewModel::useSuggestion,
+                onSendInvites = detailViewModel::sendInvites,
+                onInviteSuggestion = detailViewModel::inviteSuggestion,
                 onShowQr = {
                     // Issued on the way in, so the screen never opens on a
                     // code from an earlier visit that has since lapsed.
@@ -574,6 +601,16 @@ private fun SignedInNavigation(
                     // The list shows each trip's status, so it is stale the
                     // moment this one ends.
                     tripsViewModel.refresh()
+                },
+                onLeaveTrip = {
+                    detailViewModel.leaveTrip {
+                        // Back to the list rather than left looking at a trip
+                        // that is no longer theirs — every read on this screen
+                        // would answer 403 from here on. Refreshed because the
+                        // trip has gone from the list too.
+                        tripsViewModel.refresh()
+                        backStack.pop()
+                    }
                 },
                 // Quiet: a background poll must not raise the loading flag or
                 // clear an error the rider has not read. See
@@ -663,6 +700,10 @@ private fun SignedInNavigation(
                 onPickRoutePoint = mapViewModel::pickRoutePoint,
                 onRemoveRouteRow = mapViewModel::removeRouteRow,
                 onMoveRoutePoint = mapViewModel::moveRoutePoint,
+                // Confirm here writes the route and leaves it on screen. The
+                // list *is* this screen, so the map's confirm — which throws
+                // the draft away because its card is closing — would blank the
+                // rows the rider just confirmed. See TripMapViewModel.
                 onConfirmRoute = mapViewModel::confirmRoute,
                 onBack = actions::leave,
                 modifier = modifier,
@@ -828,7 +869,10 @@ private fun SignedInNavigation(
                 onRemoveRouteStop = mapViewModel::removeRouteStop,
                 onRemoveRouteRow = mapViewModel::removeRouteRow,
                 onMoveRoutePoint = mapViewModel::moveRoutePoint,
-                onConfirmRoute = mapViewModel::confirmRoute,
+                // The card closes behind this one, so the draft goes with it:
+                // a draft left on the view model outranks the trip's own stops
+                // when the map draws its pins.
+                onConfirmRoute = mapViewModel::confirmRouteAndClose,
                 onAddSharedPlace = mapViewModel::addSharedPlace,
                 onRemoveSharedPlace = mapViewModel::removeSharedPlace,
                 onAddPersonalPlace = mapViewModel::addPersonalPlace,

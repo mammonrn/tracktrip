@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudChip
+import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -76,8 +78,10 @@ fun TripDetailScreen(
     onShareInviteLink: () -> Unit,
     onOpenMap: () -> Unit,
     onInviteEmailChange: (String) -> Unit,
-    onSendInvite: () -> Unit,
-    onUseSuggestion: (SuggestedInvitee) -> Unit,
+    /** Every address one press of Invite carries: chips picked, addresses typed. */
+    onSendInvites: (List<String>) -> Unit,
+    /** One past companion, added on one tap of their chip. */
+    onInviteSuggestion: (SuggestedInvitee) -> Unit,
     onShowQr: () -> Unit,
     /**
      * Opens the trip's own details — its name, and the way through to the
@@ -85,6 +89,8 @@ fun TripDetailScreen(
      */
     onEditTrip: () -> Unit,
     onEndTrip: () -> Unit,
+    /** A member's way off the trip — see the button for why the owner has none. */
+    onLeaveTrip: () -> Unit = {},
     onBack: () -> Unit,
     /**
      * Re-read the trip and its members. Called on a slow beat while this
@@ -101,6 +107,7 @@ fun TripDetailScreen(
 ) {
     val trip = state.trip
     var confirmingEnd by remember { mutableStateOf(false) }
+    var confirmingLeave by rememberSaveable { mutableStateOf(false) }
 
     var choosingDuration by remember { mutableStateOf(false) }
 
@@ -193,11 +200,12 @@ fun TripDetailScreen(
                     InvitePanel(
                         email = state.inviteEmail,
                         pending = state.invitePending,
-                        sentTo = state.inviteSentTo,
-                        suggestions = state.orderedSuggestions,
+                        sent = state.inviteSent,
+                        error = state.error,
+                        shortcuts = state.suggestionWindow,
                         onEmailChange = onInviteEmailChange,
-                        onSend = onSendInvite,
-                        onUseSuggestion = onUseSuggestion,
+                        onSendInvites = onSendInvites,
+                        onInviteSuggestion = onInviteSuggestion,
                         onShowQr = onShowQr,
                         onShareLink = onShareInviteLink,
                     )
@@ -319,9 +327,53 @@ fun TripDetailScreen(
                             }
                         }
                     }
+                } else if (trip.isActive) {
+                    // A member's way off the trip, where the owner's End is.
+                    //
+                    // The two are not the same control renamed. Ending closes
+                    // the ride for the whole group and only its owner may;
+                    // leaving takes one rider off it and the owner may not,
+                    // because a trip with no owner is one nobody can end,
+                    // invite to or rename.
+                    //
+                    // It is here at all because one active trip per rider made
+                    // it necessary: without a door of their own, a rider whose
+                    // host went home without pressing End could not start a
+                    // trip, could not accept another invitation, and had
+                    // nothing they could do about it.
+                    //
+                    // Not offered on a finished trip: nothing is holding them
+                    // there, and leaving would take them off a completed
+                    // ride's roster and off its podium.
+                    HudDivider(modifier = Modifier.padding(top = 4.dp))
+
+                    HudDangerButton(
+                        text = stringResource(R.string.leave_trip),
+                        onClick = { confirmingLeave = true },
+                        quiet = true,
+                        loading = state.leavePending,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
+    }
+
+    // A dialog rather than the inline confirm End uses, for the same reason
+    // signing out has one: this is the rider's own irreversible act, and
+    // getting back on takes somebody else issuing a fresh invitation.
+    if (confirmingLeave) {
+        HudConfirmDialog(
+            title = stringResource(R.string.leave_trip_confirm_title),
+            message = stringResource(R.string.leave_trip_confirm_message),
+            confirmText = stringResource(R.string.leave_trip),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                confirmingLeave = false
+                onLeaveTrip()
+            },
+            onDismiss = { confirmingLeave = false },
+        )
     }
 
     if (choosingDuration) {
@@ -444,91 +496,101 @@ private fun MemberRow(member: MemberPosition, fixAgeMinutes: Long? = null) {
     }
 }
 
+/**
+ * The three ways onto a trip, and the shortcut above them.
+ *
+ * ## The email field is behind a button
+ *
+ * It was always on screen: a text field, a Send button and a line of guidance,
+ * sitting between the shortcuts and the QR and share buttons. That is a lot of
+ * panel for the least-used of the three ways in — the QR is for somebody
+ * standing next to you and the link is for a chat window, and both are one
+ * press. Typing a Google address from memory is the fallback, and a fallback
+ * does not need to be the tallest thing on the screen.
+ *
+ * ## The shortcuts are five, and a number
+ *
+ * "Ridden with before" drew everybody, in a box that scrolled. For the groups
+ * this app was written for that is a wall of names above the buttons that
+ * actually add people. [InviteShortcuts] cuts it to five and puts the rest
+ * behind "+N more", which opens them in place — no second screen, because a
+ * list of chips is not worth a screen.
+ *
+ * ## A chip is now the invite, not a shortcut to a form
+ *
+ * Tapping a name used to fill the email field in and open the dialog on it.
+ * A name from the rider's own past trips does not need a form and a second
+ * confirmation, so a tap sends it. The chip then sinks past the window and the
+ * sixth name rises into its place, which is what makes working down a group
+ * the same tap repeated rather than four screens each time.
+ *
+ * Internal rather than private so `InviteShortcutsTest` can compose it on its
+ * own. The screen around it runs two `while (true) { delay(...) }` effects —
+ * the members poll and the fix-age tick — and a dialog opened over those never
+ * lets a Compose test reach idle. The panel has no such effects.
+ */
 @Composable
-private fun InvitePanel(
+internal fun InvitePanel(
     email: String,
     pending: Boolean,
-    sentTo: String?,
-    suggestions: List<SuggestedInvitee>,
+    /** The addresses the last press actually got onto the trip. */
+    sent: List<String>,
+    /** The screen's error line, which a dialog would otherwise cover. */
+    error: String?,
+    shortcuts: InviteShortcuts.Window,
     onEmailChange: (String) -> Unit,
-    onSend: () -> Unit,
-    onUseSuggestion: (SuggestedInvitee) -> Unit,
+    onSendInvites: (List<String>) -> Unit,
+    onInviteSuggestion: (SuggestedInvitee) -> Unit,
     onShowQr: () -> Unit,
     onShareLink: () -> Unit,
 ) {
+    var typing by rememberSaveable { mutableStateOf(false) }
+    var panelExpanded by rememberSaveable { mutableStateOf(false) }
+
+    // Who the dialog is holding. Here rather than inside the dialog because
+    // the Invite button lives in the dialog's own confirm slot, which is a
+    // sibling of the form rather than inside it — and because a selection that
+    // died with the dialog would be lost to a rotation mid-choice.
+    var picked by rememberSaveable { mutableStateOf(setOf<Long>()) }
+
+    // Invites that landed close the dialog and clear the choice. Keyed on what
+    // came back rather than on a flag flipped inside the press: the send is a
+    // round trip, and only the server's answer is worth closing on — a press
+    // where nothing landed leaves the rider in front of what they chose, with
+    // the reason underneath it.
+    LaunchedEffect(sent) {
+        if (sent.isNotEmpty()) {
+            typing = false
+            picked = emptySet()
+        }
+    }
+
     HudSurface(accent = AppPrimary.copy(alpha = 0.4f)) {
         // Riders from past trips, one tap instead of an email typed from
         // memory. Absent for a first trip, which is when there is nobody to
         // suggest — so the row simply isn't there rather than being empty.
-        //
-        // The whole list, ordered by how often you have ridden together, in a
-        // box that scrolls once it grows past a few rows. Capping it hid
-        // exactly the regulars a long-standing group is looking for.
-        if (suggestions.isNotEmpty()) {
+        if (shortcuts.all.isNotEmpty()) {
             Text(
                 text = stringResource(R.string.invite_suggestions),
                 style = MaterialTheme.typography.labelSmall,
                 color = AppTextMuted,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
-            FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = SUGGESTIONS_MAX_HEIGHT)
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                suggestions.forEach { invitee ->
-                    HudChip(text = invitee.label, onClick = { onUseSuggestion(invitee) })
-                }
-            }
-        }
-
-        OutlinedTextField(
-            value = email,
-            onValueChange = onEmailChange,
-            label = { Text(stringResource(R.string.invite_email_label)) },
-            singleLine = true,
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Send,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            sentTo?.let {
-                Text(
-                    text = stringResource(R.string.invite_sent_to, it),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            HudPrimaryButton(
-                text = stringResource(R.string.send_invite),
-                onClick = onSend,
-                enabled = email.isNotBlank(),
-                loading = pending,
+            ShortcutChips(
+                shortcuts = shortcuts,
+                expanded = panelExpanded,
+                onExpand = { panelExpanded = true },
+                selected = emptySet(),
+                onChipClick = onInviteSuggestion,
+                modifier = Modifier.padding(bottom = 12.dp),
             )
         }
-        Text(
-            text = stringResource(R.string.invite_hint),
-            style = MaterialTheme.typography.labelSmall,
-            color = AppTextMuted,
-            modifier = Modifier.padding(top = 8.dp),
-        )
 
-        // Alongside email, not instead of it: an email invite reaches someone
-        // who isn't here, a QR reaches someone who is, and a shared link
-        // reaches someone in a chat window.
+        InviteSentLine(sent)
+
+        // Three ways in, all the same size now that none of them is a form.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             HudSecondaryButton(
@@ -542,7 +604,291 @@ private fun InvitePanel(
                 modifier = Modifier.weight(1f),
             )
         }
+        HudSecondaryButton(
+            text = stringResource(R.string.invite_by_email),
+            onClick = { typing = true },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
     }
+
+    if (typing) {
+        InviteByEmailDialog(
+            email = email,
+            pending = pending,
+            error = error,
+            shortcuts = shortcuts,
+            picked = picked,
+            onPickedChange = { picked = it },
+            onEmailChange = onEmailChange,
+            onSend = {
+                onSendInvites(
+                    InviteRules.addresses(email, shortcuts.all.filter { it.userId in picked })
+                )
+            },
+            onDismiss = { if (!pending) typing = false },
+        )
+    }
+}
+
+/**
+ * What the last press got onto the trip.
+ *
+ * On the panel rather than in the dialog, because the dialog closes on the
+ * server's answer and the answer has to outlive it. One name is drawn as the
+ * name — which is the confirmation a rider is actually checking — and several
+ * as a count, because five addresses on one line is not something anybody
+ * reads.
+ */
+@Composable
+private fun InviteSentLine(sent: List<String>) {
+    if (sent.isEmpty()) return
+
+    Text(
+        text = sent.singleOrNull()
+            ?.let { stringResource(R.string.invite_sent_to, it) }
+            ?: stringResource(R.string.invite_sent_count, sent.size),
+        style = MaterialTheme.typography.labelSmall,
+        color = AppPrimary,
+        modifier = Modifier.padding(bottom = 10.dp),
+    )
+}
+
+/**
+ * The five chips, and the one that opens the rest.
+ *
+ * Shared by the panel and the dialog, which is the point: they are the same
+ * shortcut and a rider should not have to learn it twice. What differs is what
+ * a tap means — an invite out here, a choice held in there — so the caller
+ * passes [selected] and [onChipClick] and this draws whichever it is told.
+ *
+ * "+N more" expands in place rather than opening a list of its own. A screen
+ * for a handful of chips is a screen to dismiss, and the chips are already in
+ * a box that scrolls when it needs to.
+ */
+@Composable
+private fun ShortcutChips(
+    shortcuts: InviteShortcuts.Window,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    selected: Set<Long>,
+    onChipClick: (SuggestedInvitee) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val drawn = if (expanded) shortcuts.all else shortcuts.shown
+
+    FlowRow(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(max = SUGGESTIONS_MAX_HEIGHT)
+            .verticalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        drawn.forEach { invitee ->
+            HudChip(
+                text = invitee.label,
+                onClick = { onChipClick(invitee) },
+                selected = invitee.userId in selected,
+            )
+        }
+        if (!expanded && shortcuts.moreCount > 0) {
+            HudChip(
+                text = stringResource(R.string.invite_suggestions_more, shortcuts.moreCount),
+                onClick = onExpand,
+                accent = AppTextMuted,
+            )
+        }
+    }
+}
+
+/**
+ * The email invite, as the dialog it now is.
+ *
+ * A shell around [InviteByEmailForm], which is where everything that used to
+ * sit open on the panel actually lives. Split in two because the form can be
+ * composed and asserted on and this cannot: a text field inside a dialog
+ * window never lets a Compose test reach idle under Robolectric, which is why
+ * `StopNameDialog` has never been asserted on either. The shell is placement;
+ * the form is the part with behaviour in it.
+ */
+@Composable
+private fun InviteByEmailDialog(
+    email: String,
+    pending: Boolean,
+    error: String?,
+    shortcuts: InviteShortcuts.Window,
+    picked: Set<Long>,
+    onPickedChange: (Set<Long>) -> Unit,
+    onEmailChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.invite_by_email)) },
+        text = {
+            InviteByEmailForm(
+                email = email,
+                error = error,
+                shortcuts = shortcuts,
+                picked = picked,
+                onPickedChange = onPickedChange,
+                onEmailChange = onEmailChange,
+            )
+        },
+        confirmButton = {
+            HudPrimaryButton(
+                text = stringResource(R.string.send_invite),
+                onClick = onSend,
+                // Nothing chosen and nothing typed, or a send already in
+                // flight, are both requests whose answer is known, and a
+                // pressable button that does nothing reads as a send that
+                // silently failed.
+                enabled = InviteRules.canSend(
+                    typed = email,
+                    picked = shortcuts.all.filter { it.userId in picked },
+                    pending = pending,
+                ),
+                loading = pending,
+            )
+        },
+        dismissButton = {
+            HudSecondaryButton(
+                text = stringResource(R.string.cancel),
+                onClick = onDismiss,
+                // Not while a send is out: dismissing would leave the rider
+                // with no way to see how it went.
+                enabled = !pending,
+            )
+        },
+        containerColor = AppSurface,
+        titleContentColor = AppText,
+        textContentColor = AppTextMuted,
+    )
+}
+
+/**
+ * The chips, the field, and the two things that belong under it.
+ *
+ * ## Several riders, one press
+ *
+ * The dialog used to be one address and one Invite, so adding four people was
+ * four rounds of open, type, send, watch it close — for what is one intention.
+ * Both halves are plural now: the chips are a selection that is held rather
+ * than acted on, and the field takes a list. One press of Invite sends
+ * everything, and [InviteRules.addresses] is what turns the two into one.
+ *
+ * The chips are the same five-and-a-number the panel draws, for the same
+ * reason they are on the panel at all — the addresses a rider wants are
+ * usually already known to the app, and typing them again from memory is the
+ * thing this is here to avoid.
+ *
+ * ## Why the error is drawn here too
+ *
+ * [error] is here rather than only on the screen behind, because a dialog
+ * covers the screen behind. An invite refused with the dialog up — a malformed
+ * address, a rider already on the trip — would otherwise fail in silence,
+ * which is the one thing this must not introduce. With several addresses in
+ * one press it also has to name *which* were refused, which is why the view
+ * model builds the line per address rather than passing one message on.
+ */
+@Composable
+internal fun InviteByEmailForm(
+    email: String,
+    error: String?,
+    shortcuts: InviteShortcuts.Window,
+    picked: Set<Long>,
+    onPickedChange: (Set<Long>) -> Unit,
+    onEmailChange: (String) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    Column {
+        if (shortcuts.all.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.invite_suggestions),
+                style = MaterialTheme.typography.labelSmall,
+                color = AppTextMuted,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            ShortcutChips(
+                shortcuts = shortcuts,
+                expanded = expanded,
+                onExpand = { expanded = true },
+                selected = picked,
+                onChipClick = { invitee ->
+                    onPickedChange(
+                        if (invitee.userId in picked) picked - invitee.userId
+                        else picked + invitee.userId
+                    )
+                },
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+        }
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = onEmailChange,
+            label = { Text(stringResource(R.string.invite_email_label)) },
+            // Not single-line any more: several addresses is the ordinary case
+            // now, and a rider pasting three of them out of a chat window
+            // should be able to see all three.
+            singleLine = false,
+            maxLines = 3,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Done,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = stringResource(R.string.invite_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        error?.let { HudError(it, modifier = Modifier.padding(top = 10.dp)) }
+    }
+}
+
+/**
+ * What one press of Invite sends, and when it may be pressed.
+ *
+ * Written down on its own because it is the half of the dialog a Compose test
+ * cannot reach — see [InviteByEmailDialog] — and because it is now the rule
+ * that turns two controls into one request list.
+ */
+internal object InviteRules {
+
+    /**
+     * Every address one press carries, in the order the rider chose them.
+     *
+     * Chips first, then whatever was typed: the chips were picked deliberately
+     * from a list the app offered, and if a rate limit stops the run halfway
+     * it should stop after the certain ones rather than before them.
+     *
+     * The field is split on commas, semicolons and any whitespace, because
+     * those are what an address list arrives as when it is pasted out of a
+     * chat window or an email client, and a rider who separates three
+     * addresses with spaces has not made a mistake worth an error message.
+     *
+     * Deduplicated case-insensitively, since a chip and a typed address are
+     * easily the same person and the backend would answer the second one with
+     * "already invited" — a refusal the rider caused by being thorough.
+     */
+    fun addresses(typed: String, picked: List<SuggestedInvitee>): List<String> {
+        val fromChips = picked.map { it.email }
+        val fromField = typed.split(*SEPARATORS).map { it.trim() }.filter { it.isNotEmpty() }
+
+        val seen = mutableSetOf<String>()
+        return (fromChips + fromField).filter { seen.add(it.lowercase()) }
+    }
+
+    /** Nothing chosen and nothing typed, or a send already out, are both answers already known. */
+    fun canSend(typed: String, picked: List<SuggestedInvitee>, pending: Boolean): Boolean =
+        !pending && addresses(typed, picked).isNotEmpty()
+
+    private val SEPARATORS = arrayOf(",", ";", " ", "\n", "\t", "\r")
 }
 
 /** Roughly four rows of chips before the box starts scrolling. */
@@ -598,8 +944,8 @@ private fun TripDetailPreview() {
             onShareInviteLink = {},
             onOpenMap = {},
             onInviteEmailChange = {},
-            onSendInvite = {},
-            onUseSuggestion = {},
+            onSendInvites = {},
+            onInviteSuggestion = {},
             onShowQr = {},
             onEditTrip = {},
             onEndTrip = {},

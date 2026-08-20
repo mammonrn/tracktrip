@@ -34,6 +34,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import android.os.Build
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.location.DeviceSharing
 import app.ptrip.tracktrip.location.PhoneVendor
 import app.ptrip.tracktrip.location.VendorBatteryAdvice
 import app.ptrip.tracktrip.data.Trip
@@ -51,7 +52,6 @@ import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
-import app.ptrip.tracktrip.ui.theme.HudLoading
 import app.ptrip.tracktrip.ui.theme.HudGlobeIcon
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudPowerIcon
@@ -94,14 +94,27 @@ private const val SECTION_SHARING = "sharing"
 @Composable
 fun SettingsScreen(
     state: SettingsUiState,
+    /**
+     * This rider's own places, and whether they are still being read.
+     *
+     * On this screen rather than under the map they belong to — see
+     * [MyPlacesSection] for why. It is passed in rather than read here so that
+     * the screen stays a screen: the places have a view model of their own,
+     * shared with Map & places, and one list read serves both.
+     */
+    places: PlacesUiState,
     displayName: String?,
     email: String?,
     photoUrl: String?,
     sharingTripId: Long?,
+    /** The name of the trip being shared to, for the line under the switch. */
+    sharingTripName: String?,
     onOpenProfile: () -> Unit,
+    onRemovePersonalPlace: (Long) -> Unit,
+    onRemoveSharedPlace: (Long) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onSharingDurationChange: (SharingDuration) -> Unit,
-    onToggleSharing: (Trip, Boolean) -> Unit,
+    onShareFromThisPhoneChange: (Boolean) -> Unit,
     onSignOut: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -237,11 +250,25 @@ fun SettingsScreen(
             HudDivider()
 
             SharingSection(
-                trips = state.activeTrips,
-                loading = state.loadingTrips,
+                on = state.shareFromThisPhone,
+                switchPending = state.switchPending,
                 sharingTripId = sharingTripId,
-                pendingTripId = state.pendingTripId,
-                onToggle = onToggleSharing,
+                sharingTripName = sharingTripName,
+                onSwitch = onShareFromThisPhoneChange,
+            )
+
+            HudDivider()
+
+            // The places this rider has written down. Here rather than under
+            // the map because the only controls on it are destructive, and a
+            // screen you have to go and open is the right price for those.
+            MyPlacesSection(
+                personal = places.personal,
+                shared = places.mine,
+                loading = places.loading,
+                onRemovePersonal = onRemovePersonalPlace,
+                onRemoveShared = onRemoveSharedPlace,
+                modifier = Modifier.padding(vertical = 8.dp),
             )
 
             HudDivider()
@@ -272,21 +299,42 @@ fun SettingsScreen(
 }
 
 /**
- * Location sharing, one switch per running trip.
+ * Location sharing: one switch, and a line saying what it is doing.
  *
- * A list rather than a single switch because nothing stops a rider being on
- * two running trips at once — the schema has no such constraint, and a
- * weekend group ride during a longer tour is the ordinary case. Only one can
- * be shared to at a time, though: the phone has one location, and the service
- * reports to the trip it was started for.
+ * ## What was wrong with one switch per trip
+ *
+ * There was no phone switch. The section was a list built from the running
+ * trips, with a `Switch` on each row, and every one of those switches was a
+ * statement about a trip. A rider whose trip had **ended** came here to turn
+ * sharing on and found nothing to press: the trip had been filtered out before
+ * the list was drawn, and there was no other control on the screen. The report
+ * was "I can't turn it on". The screen's answer was "there is no trip to turn
+ * it on for" — an answer to a different question, and the wrong one to give
+ * about a privacy setting.
+ *
+ * ## And why the fix is one switch rather than two
+ *
+ * The first attempt added the phone's switch above the trip rows and kept
+ * both. That is one question too many: a rider is on one ride at a time, and
+ * the phone is on one by construction — the service reports to the trip it was
+ * started for. Rows asking *which* trip were asking somebody to choose between
+ * things they cannot do at once, and two switches that can disagree about the
+ * same fact is the confusion this was meant to end, not extend.
+ *
+ * So the section is a switch and a sentence. **On** shares with the trip that
+ * is running; with none running it is consent kept for the next one, which is
+ * a perfectly ordinary state and one a bare switch cannot describe — hence the
+ * line, which says which of the three it is in ([DeviceSharing.Status]) and
+ * names the trip when there is one. **Off** sends nothing, whatever is
+ * running, and stops anything that already was.
  */
 @Composable
 private fun SharingSection(
-    trips: List<Trip>,
-    loading: Boolean,
+    on: Boolean,
+    switchPending: Boolean,
     sharingTripId: Long?,
-    pendingTripId: Long?,
-    onToggle: (Trip, Boolean) -> Unit,
+    sharingTripName: String?,
+    onSwitch: (Boolean) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(
@@ -299,55 +347,47 @@ private fun SharingSection(
                 text = stringResource(R.string.settings_sharing),
                 style = MaterialTheme.typography.titleMedium,
                 color = AppText,
+                modifier = Modifier.weight(1f),
             )
-        }
-
-        when {
-            loading && trips.isEmpty() -> HudLoading()
-
-            trips.isEmpty() -> Text(
-                text = stringResource(R.string.sharing_no_active_trips),
-                style = MaterialTheme.typography.bodySmall,
-                color = AppTextMuted,
-                modifier = Modifier.padding(start = 38.dp, bottom = 12.dp, end = 8.dp),
-            )
-
-            else -> trips.forEach { trip ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 38.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = trip.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (trip.id == sharingTripId) AppText else AppTextMuted,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (trip.id == pendingTripId) {
-                        CircularProgressIndicator(
-                            color = AppPrimary,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    } else {
-                        Switch(
-                            checked = trip.id == sharingTripId,
-                            onCheckedChange = { on -> onToggle(trip, on) },
-                            enabled = pendingTripId == null,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = AppOnPrimary,
-                                checkedTrackColor = AppPrimary,
-                                uncheckedThumbColor = AppTextMuted,
-                                uncheckedTrackColor = AppSurfaceAlt,
-                                uncheckedBorderColor = AppLine,
-                            ),
-                        )
-                    }
-                }
+            if (switchPending) {
+                CircularProgressIndicator(
+                    color = AppPrimary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(20.dp),
+                )
+            } else {
+                Switch(
+                    checked = on,
+                    onCheckedChange = onSwitch,
+                    // The app's switch, rather than Material's default purple.
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AppOnPrimary,
+                        checkedTrackColor = AppPrimary,
+                        uncheckedThumbColor = AppTextMuted,
+                        uncheckedTrackColor = AppSurfaceAlt,
+                        uncheckedBorderColor = AppLine,
+                    ),
+                )
             }
         }
+
+        Text(
+            text = when (DeviceSharing.status(on, sharingTripId)) {
+                // Named, because "which trip" is a question this screen no
+                // longer asks — so it had better answer it.
+                DeviceSharing.Status.ON_SHARING -> stringResource(
+                    R.string.settings_sharing_device_on,
+                    sharingTripName.orEmpty(),
+                )
+                DeviceSharing.Status.ON_IDLE ->
+                    stringResource(R.string.settings_sharing_device_idle)
+                DeviceSharing.Status.OFF ->
+                    stringResource(R.string.settings_sharing_device_off)
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = AppTextMuted,
+            modifier = Modifier.padding(start = 38.dp, bottom = 12.dp, end = 8.dp),
+        )
     }
 }
 
@@ -467,14 +507,18 @@ private fun SettingsPreview() {
                 loadingTrips = false,
                 activeTrips = listOf(Trip(1, "Chiang Mai loop", 1, "active", "owner")),
             ),
+            places = PlacesUiState(),
             displayName = "Poom",
             email = "rider@gmail.com",
             photoUrl = null,
             sharingTripId = 1,
+            sharingTripName = "Chiang Mai loop",
             onOpenProfile = {},
+            onRemovePersonalPlace = {},
+            onRemoveSharedPlace = {},
             onLanguageChange = {},
             onSharingDurationChange = {},
-            onToggleSharing = { _, _ -> },
+            onShareFromThisPhoneChange = {},
             onSignOut = {},
             onBack = {},
         )

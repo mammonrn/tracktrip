@@ -17,6 +17,19 @@
     <string name="all_trips_title">All trips</string>
     <string name="trips_show_all">Show every trip</string>
     <string name="trips_show_mine">Show only mine</string>
+    <!--
+      The archive: everything older than the newest few. The count is on the
+      label because "how much is in there" is the whole of what a rider needs
+      to decide whether to open it.
+    -->
+    <string name="trips_archive_show">Archived trips (%1$d)</string>
+    <string name="trips_archive_hide">Show recent only</string>
+    <!--
+      One face on a trip card's podium, spoken rather than seen: the numeral is
+      on the badge and the order is left to right, so this exists for the
+      screen reader that has neither.
+    -->
+    <string name="trip_podium_place">%1$d. %2$s reached the finish</string>
     <string name="no_trips_at_all">There are no trips on this server yet.</string>
     <string name="no_trips_yet">No trips yet. Create one, or wait to be invited.</string>
     <string name="new_trip">New trip</string>
@@ -43,16 +56,32 @@
     <!-- Trip detail -->
     <string name="members_title">Members</string>
     <string name="invite_title">Invite a rider</string>
-    <string name="invite_email_label">Google account email</string>
+    <string name="invite_email_label">Google account emails</string>
     <string name="send_invite">Invite</string>
+    <!--
+      The way into the email invite, which is a dialog now rather than a form
+      sitting open on the panel. Also the dialog's own title.
+    -->
+    <string name="invite_by_email">Add by email</string>
     <string name="invite_sent_to">Invited %1$s</string>
-    <string name="invite_hint">They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
+    <!-- One press of Invite can carry several now, and five addresses on one line is not a confirmation anybody reads. -->
+    <string name="invite_sent_count">Invited %1$d riders</string>
+    <string name="invite_hint">Separate several with a comma. They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
     <string name="not_tracking_yet">not tracking yet</string>
     <string name="start_sharing">Tracking</string>
     <string name="view_final_positions">Final positions</string>
     <string name="end_trip">End trip</string>
     <string name="end_trip_confirm">End trip? This stops location sharing for everyone in the group.</string>
     <string name="end_trip_yes">End trip</string>
+    <!--
+      A member's way off a trip, where the owner's End is. Not the same act
+      renamed: ending closes the ride for the group, leaving takes one rider
+      off it. The message says what it costs, because getting back on takes
+      the owner sending a fresh invitation.
+    -->
+    <string name="leave_trip">Leave trip</string>
+    <string name="leave_trip_confirm_title">Leave this trip?</string>
+    <string name="leave_trip_confirm_message">You\'ll stop sharing your location with the group and drop off their map. Getting back on needs a new invitation from the trip\'s owner.</string>
 
     <!-- Profile -->
     <string name="profile_title">Profile</string>
@@ -100,8 +129,17 @@
     <string name="sharing_stop">Stop sharing</string>
     <string name="sharing_choose_duration">Share my location for…</string>
     <string name="sharing_until">Until %1$s</string>
-    <string name="sharing_no_active_trips">Sharing needs a running trip. Create one, or join a friend\'s.</string>
     <string name="settings_sharing">Location sharing</string>
+    <!--
+      The three states of the one sharing switch. "On" is permission rather
+      than transmission, so the middle one has to exist: a phone that is
+      willing to share and has no trip to send to is an ordinary state, and a
+      switch on its own cannot say so. The first names the trip because the
+      screen no longer has a row that does.
+    -->
+    <string name="settings_sharing_device_on">On. Sharing your position with %1$s.</string>
+    <string name="settings_sharing_device_idle">On. No trip is running, so nothing is being sent yet.</string>
+    <string name="settings_sharing_device_off">Off. This phone sends nothing, whatever trips are running.</string>
 
     <!-- Battery optimisation -->
     <string name="settings_battery">Background battery use</string>
@@ -351,6 +389,8 @@
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">Ridden with before</string>
+    <!-- The chip that opens the companions the first five did not fit. -->
+    <string name="invite_suggestions_more">+%1$d more</string>
     <string name="qr_invite_action">QR code</string>
     <string name="qr_invite_title">Invite with QR</string>
     <string name="qr_invite_intro">Show this code to someone standing next to you and they can join the trip without swapping email addresses.</string>
@@ -369,6 +409,17 @@
     <string name="invite_share_body">Join my trip \"%1$s\" on PTrips.\n\nCode: %2$s\nOpen: %3$s\n\nThe code works for 15 minutes.</string>
     <string name="invite_share_chooser">Share invite</string>
     <string name="language_system">Match my phone</string>
+
+    <!--
+      The one server refusal the app words itself.
+      Everywhere else the backend's own English `error` string is shown, which
+      keeps the app's rules in step with the server's. This one is different:
+      a rider meets it the first time they forget to end a ride, it stands
+      between them and the thing they opened the app to do, and the trip's name
+      is the half that matters — "you already have an active trip" sends
+      somebody to a list of forty to work out which.
+    -->
+    <string name="error_active_trip_exists">You\'re already on \"%1$s\". End that trip before starting or joining another.</string>
 
     <!-- Sign-in error messages -->
     <string name="error_client_id_not_configured">Google sign-in isn\'t configured yet: fill in the web client ID in res/values/config.xml.</string>

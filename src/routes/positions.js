@@ -364,6 +364,7 @@ export function createPositionsRouter({ db, config, hub }) {
          JOIN trip_members
            ON trip_members.trip_id = member_positions.trip_id
           AND trip_members.user_id = member_positions.user_id
+          AND trip_members.left_at IS NULL
          LEFT JOIN sharing_sessions
            ON sharing_sessions.trip_id = member_positions.trip_id
           AND sharing_sessions.user_id = member_positions.user_id
@@ -392,6 +393,10 @@ export function createPositionsRouter({ db, config, hub }) {
     // Every member is listed, including those who haven't reported yet (all
     // position fields null) — the friend list shows them as still offline
     // rather than dropping them.
+    //
+    // Every *current* member: leaving a trip is a soft delete, so the row of a
+    // rider who got off is still here and would otherwise be drawn on the map
+    // as somebody offline rather than somebody gone.
     const positions = db
       .prepare(
         `SELECT trip_members.user_id, trip_members.role,
@@ -410,6 +415,7 @@ export function createPositionsRouter({ db, config, hub }) {
            ON sharing_sessions.trip_id = trip_members.trip_id
           AND sharing_sessions.user_id = trip_members.user_id
          WHERE trip_members.trip_id = ?
+           AND trip_members.left_at IS NULL
          ORDER BY (member_positions.recorded_at IS NULL),
                   member_positions.recorded_at DESC,
                   trip_members.user_id ASC`

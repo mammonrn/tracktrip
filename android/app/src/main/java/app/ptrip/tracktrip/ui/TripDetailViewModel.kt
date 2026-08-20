@@ -25,9 +25,20 @@ data class TripDetailUiState(
     val error: String? = null,
     val inviteEmail: String = "",
     val invitePending: Boolean = false,
-    /** Set after a successful invite, cleared when the field is edited again. */
-    val inviteSentTo: String? = null,
+    /**
+     * The addresses the server accepted on the last press, cleared when the
+     * form is edited again.
+     *
+     * A list rather than the single address it used to be, because one press
+     * of Invite can now carry several — chips picked and addresses typed, all
+     * sent together. One name is still drawn as the name; several are drawn as
+     * a count, because five addresses on one line is not a confirmation
+     * anybody reads.
+     */
+    val inviteSent: List<String> = emptyList(),
     val endPending: Boolean = false,
+    /** True while leaving is in flight, so its button alone shows a spinner. */
+    val leavePending: Boolean = false,
     val renamePending: Boolean = false,
     /**
      * Kept apart from [error] for the same reason [joinCodeError] is: a rename
@@ -48,15 +59,21 @@ data class TripDetailUiState(
     val sharingPending: Boolean = false,
 ) {
     /**
-     * Suggestions with the ones already invited moved to the end.
+     * Suggestions in the order the chips are drawn: anyone already on the trip
+     * dropped, anyone invited in this sitting sunk to the end.
      *
-     * Moved rather than removed: inviting the wrong Nut is easy, and a chip
-     * that vanishes on tap leaves no way to notice, let alone to invite the
-     * right one afterwards. The sort is stable, so the server's frequency
-     * order survives within each group.
+     * The rules and the reasons are [InviteShortcuts.ordered]'s.
      */
     val orderedSuggestions: List<SuggestedInvitee>
-        get() = suggestions.sortedBy { it.userId in invitedThisSession }
+        get() = InviteShortcuts.ordered(
+            suggestions = suggestions,
+            invited = invitedThisSession,
+            memberIds = members.mapTo(mutableSetOf()) { it.userId },
+        )
+
+    /** The first five of those, and the rest behind a "+N more" chip. */
+    val suggestionWindow: InviteShortcuts.Window
+        get() = InviteShortcuts.window(orderedSuggestions)
 }
 
 class TripDetailViewModel(
@@ -189,9 +206,18 @@ class TripDetailViewModel(
         _uiState.update { it.copy(renameError = null) }
     }
 
-    /** Fills the invite field from a suggestion instead of typing it out. */
-    fun useSuggestion(invitee: SuggestedInvitee) {
-        _uiState.update { it.copy(inviteEmail = invitee.email, inviteSentTo = null, error = null) }
+    /**
+     * Invites one past companion, on one tap of their chip.
+     *
+     * The chip used to open the email dialog with the address filled in, which
+     * made the shortcut a shortcut to a form rather than to the thing the
+     * rider wanted. A name they have ridden with before, on their own
+     * suggestion list, needs no second confirmation — and the list refills
+     * behind the press ([InviteShortcuts]), so working down a group is the
+     * same tap repeated rather than four screens each time.
+     */
+    fun inviteSuggestion(invitee: SuggestedInvitee) {
+        sendInvites(listOf(invitee.email))
     }
 
     /**
@@ -218,33 +244,70 @@ class TripDetailViewModel(
     }
 
     fun onInviteEmailChange(value: String) {
-        _uiState.update { it.copy(inviteEmail = value, inviteSentTo = null, error = null) }
+        _uiState.update { it.copy(inviteEmail = value, inviteSent = emptyList(), error = null) }
     }
 
-    fun sendInvite() {
-        val email = _uiState.value.inviteEmail.trim()
-        if (email.isEmpty() || _uiState.value.invitePending) return
+    /**
+     * Invites everybody named in [emails], on one press.
+     *
+     * ## One press, several riders
+     *
+     * The dialog used to be one address and one Invite, so adding four people
+     * meant opening it, typing, sending, watching it close and opening it
+     * again — four times, for what is one intention: these four are coming.
+     * Now the chips are multi-select, the field takes a list, and this is what
+     * both arrive at.
+     *
+     * ## Why it is still one request each
+     *
+     * `POST /trips/:id/invites` takes one address. There is no bulk endpoint,
+     * and inventing one on the client — firing them together and hoping — is
+     * how a rate limit turns a five-rider invite into two riders and three
+     * silences. They go one after another, in the order the rider chose them.
+     *
+     * ## Partial success is reported as partial
+     *
+     * A failure does not stop the rest, because the addresses are independent:
+     * one already on the trip must not cost the other four their invite. What
+     * came back is kept apart from what did not — [TripDetailUiState.inviteSent]
+     * lists the accepted ones and the error line names each refusal with the
+     * address it belongs to. Anything else would leave a rider re-sending four
+     * invitations to find out which one bounced.
+     */
+    fun sendInvites(emails: List<String>) {
+        if (emails.isEmpty() || _uiState.value.invitePending) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(invitePending = true, error = null, inviteSentTo = null) }
-            try {
-                val invite = tripApi.invite(tripId, email)
-                _uiState.update { state ->
-                    val invited = state.suggestions
-                        .firstOrNull { it.email.equals(invite.email, ignoreCase = true) }
-                    state.copy(
-                        invitePending = false,
-                        inviteEmail = "",
-                        inviteSentTo = invite.email,
-                        invitedThisSession = invited
-                            ?.let { state.invitedThisSession + it.userId }
-                            ?: state.invitedThisSession,
-                    )
+            _uiState.update { it.copy(invitePending = true, error = null, inviteSent = emptyList()) }
+
+            val sent = mutableListOf<String>()
+            val refused = mutableListOf<String>()
+            for (email in emails) {
+                try {
+                    sent += tripApi.invite(tripId, email).email
+                } catch (e: SessionExpiredException) {
+                    // Nothing after this would fare better, and the rider is
+                    // about to be sent to the sign-in screen.
+                    onSessionExpired()
+                    return@launch
+                } catch (e: ApiException) {
+                    refused += "$email: ${e.message}"
                 }
-            } catch (e: SessionExpiredException) {
-                onSessionExpired()
-            } catch (e: ApiException) {
-                _uiState.update { it.copy(invitePending = false, error = e.message) }
+            }
+
+            _uiState.update { state ->
+                val invitedIds = state.suggestions
+                    .filter { suggestion -> sent.any { it.equals(suggestion.email, true) } }
+                    .map { it.userId }
+                state.copy(
+                    invitePending = false,
+                    // Only what landed is cleared from the field. A refused
+                    // address stays where the rider can see and fix it.
+                    inviteEmail = if (refused.isEmpty()) "" else state.inviteEmail,
+                    inviteSent = sent,
+                    invitedThisSession = state.invitedThisSession + invitedIds,
+                    error = refused.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                )
             }
         }
     }
@@ -312,6 +375,39 @@ class TripDetailViewModel(
     }
 
     /**
+     * Leaves this trip.
+     *
+     * The member's counterpart to [endTrip], and the reason it exists: one
+     * active trip per rider turned a host who forgets to press End into an
+     * indefinite lock on everybody else's account. Not offered to the owner —
+     * they have [endTrip], and a trip with no owner is one nobody can end.
+     *
+     * [onLeft] runs only on success, so navigation stays out of the view model
+     * and a refusal leaves the rider on the screen with the reason on it. The
+     * phone stops sharing the moment the server confirms, through the same
+     * [onTripEnded] the end of a trip goes through — the membership is gone, so
+     * the next report would be answered 403 and the notification in the rider's
+     * pocket would be claiming something untrue.
+     */
+    fun leaveTrip(onLeft: () -> Unit) {
+        if (_uiState.value.leavePending) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(leavePending = true, error = null) }
+            try {
+                tripApi.leaveTrip(tripId)
+                onTripEnded()
+                _uiState.update { it.copy(leavePending = false) }
+                onLeft()
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+            } catch (e: ApiException) {
+                _uiState.update { it.copy(leavePending = false, error = e.message) }
+            }
+        }
+    }
+
+    /**
      * Issues a code and hands it back for the share sheet.
      *
      * A fresh one every time rather than reusing whatever the QR screen last
@@ -344,6 +440,11 @@ class TripDetailViewModel(
     /**
      * Ending a trip clears every rider's sharing session on the server, so the
      * phone must stop too rather than carry on reporting into a 409.
+     *
+     * [leaveTrip] goes through here as well, for the same reason in a narrower
+     * form: leaving deletes this rider's session and membership, so the next
+     * report would be answered 403 and the notification in their pocket would
+     * be claiming something untrue.
      */
     fun onTripEnded() {
         if (sharingController.active.value?.tripId == tripId) {

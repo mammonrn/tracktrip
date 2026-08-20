@@ -32,6 +32,9 @@
     <string name="all_trips_title">ทริปทั้งหมด</string>
     <string name="trips_show_all">ดูทริปทั้งหมด</string>
     <string name="trips_show_mine">ดูเฉพาะของฉัน</string>
+    <string name="trips_archive_show">ทริปย้อนหลัง (%1$d)</string>
+    <string name="trips_archive_hide">ดูเฉพาะล่าสุด</string>
+    <string name="trip_podium_place">อันดับ %1$d %2$s ถึงจุดหมาย</string>
     <string name="no_trips_at_all">ยังไม่มีทริปบนเซิร์ฟเวอร์นี้เลย</string>
     <string name="no_trips_yet">ยังไม่มีทริป สร้างใหม่ หรือรอเพื่อนชวน</string>
     <string name="new_trip">ทริปใหม่</string>
@@ -58,16 +61,21 @@
     <!-- Trip detail -->
     <string name="members_title">สมาชิก</string>
     <string name="invite_title">ชวนเพื่อนร่วมทริป</string>
-    <string name="invite_email_label">อีเมลบัญชี Google</string>
+    <string name="invite_email_label">อีเมลบัญชี Google (ใส่ได้หลายคน)</string>
     <string name="send_invite">เชิญ</string>
+    <string name="invite_by_email">เพิ่มด้วยอีเมล</string>
     <string name="invite_sent_to">เชิญ %1$s แล้ว</string>
-    <string name="invite_hint">เขาจะเห็นคำเชิญในรายการทริปของตัวเองตอนเปิดแอปครั้งถัดไป ระบบไม่ได้ส่งอีเมลออกไป</string>
+    <string name="invite_sent_count">เชิญแล้ว %1$d คน</string>
+    <string name="invite_hint">ถ้ามีหลายคนให้คั่นด้วยเครื่องหมายจุลภาค เขาจะเห็นคำเชิญในรายการทริปของตัวเองตอนเปิดแอปครั้งถัดไป ระบบไม่ได้ส่งอีเมลออกไป</string>
     <string name="not_tracking_yet">ยังไม่ได้แชร์ตำแหน่ง</string>
     <string name="start_sharing">แผนที่สด</string>
     <string name="view_final_positions">ตำแหน่งสุดท้าย</string>
     <string name="end_trip">จบทริป</string>
     <string name="end_trip_confirm">จบทริปเลยไหม? ทุกคนในกลุ่มจะหยุดแชร์ตำแหน่งทันที</string>
     <string name="end_trip_yes">จบทริป</string>
+    <string name="leave_trip">ออกจากทริป</string>
+    <string name="leave_trip_confirm_title">ออกจากทริปนี้เลยไหม?</string>
+    <string name="leave_trip_confirm_message">คุณจะหยุดแชร์ตำแหน่งกับกลุ่มและหายไปจากแผนที่ของพวกเขา ถ้าจะกลับเข้ามาอีกต้องให้เจ้าของทริปส่งคำเชิญใหม่</string>
 
     <!-- Settings -->
     <string name="settings_title">ตั้งค่า</string>
@@ -123,6 +131,9 @@
 
     <!-- Location sharing -->
     <string name="settings_sharing">แชร์ตำแหน่ง</string>
+    <string name="settings_sharing_device_on">เปิดอยู่ กำลังแชร์ตำแหน่งกับ %1$s</string>
+    <string name="settings_sharing_device_idle">เปิดอยู่ แต่ยังไม่มีทริปที่กำลังเดินทาง จึงยังไม่ได้ส่งอะไร</string>
+    <string name="settings_sharing_device_off">ปิดอยู่ เครื่องนี้จะไม่ส่งตำแหน่งไม่ว่าจะมีทริปไหนกำลังเดินทางก็ตาม</string>
     <string name="sharing_on">กำลังแชร์ตำแหน่ง</string>
     <string name="sharing_off">ไม่ได้แชร์</string>
     <string name="sharing_on_trip">กำลังแชร์ · %1$s</string>
@@ -130,7 +141,6 @@
     <string name="sharing_stop">หยุดแชร์</string>
     <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
     <string name="sharing_until">ถึง %1$s</string>
-    <string name="sharing_no_active_trips">ต้องมีทริปที่กำลังเดินทางก่อนถึงจะแชร์ได้ สร้างทริปใหม่ หรือเข้าร่วมทริปของเพื่อน</string>
 
     <!-- Map -->
     <string name="map_title">แผนที่สด</string>
@@ -257,6 +267,7 @@
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">เคยร่วมทริปกันมาก่อน</string>
+    <string name="invite_suggestions_more">อีก %1$d คน</string>
     <string name="qr_invite_action">QR โค้ด</string>
     <string name="qr_invite_title">เชิญด้วย QR</string>
     <string name="qr_invite_intro">ให้คนที่อยู่ตรงหน้าสแกนโค้ดนี้ เข้าร่วมทริปได้เลยโดยไม่ต้องแลกอีเมลกัน</string>
@@ -287,4 +298,5 @@
     <string name="error_cancelled_or_aborted">Google ปิดหน้าเข้าสู่ระบบไปโดยไม่ได้ส่งบัญชีกลับมา ถ้าคุณไม่ได้กดยกเลิกเอง เป็นไปได้ว่า package name และใบรับรองของบิลด์นี้ยังไม่ได้ลงทะเบียนในโปรเจกต์ Google Cloud ดูรายละเอียดได้ใน logcat แท็ก TracktripSignIn</string>
     <string name="error_sign_in_failed">เข้าสู่ระบบด้วย Google ไม่สำเร็จ ลองใหม่อีกครั้ง</string>
     <string name="error_unexpected_credential">ได้ข้อมูลรับรองชนิดที่ไม่คาดคิดจาก Google</string>
+    <string name="error_active_trip_exists">คุณกำลังอยู่ในทริป \"%1$s\" อยู่แล้ว จบทริปนั้นก่อนจึงจะเริ่มหรือเข้าร่วมทริปใหม่ได้</string>
 </resources>

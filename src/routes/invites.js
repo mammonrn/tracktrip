@@ -2,6 +2,11 @@ import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { normalizeEmail } from '../trips/email.js';
 import { serializeTrip, serializeInvite } from '../trips/serialize.js';
+import {
+  activeTripConflict,
+  activeTripFor,
+  isOneActiveTripAbort,
+} from '../trips/activeTrip.js';
 
 export function createInvitesRouter({ db, config }) {
   const router = Router();
@@ -10,9 +15,15 @@ export function createInvitesRouter({ db, config }) {
   // Joining has to add the membership and close the invite together, or a
   // crash in between would leave an invite that can never be accepted again.
   const acceptInvite = db.transaction((inviteId, tripId, userId, nowIso) => {
+    // A rider who left this trip kept their row — leaving is a soft delete, so
+    // that the ride still counts towards "ridden with before" — and an invite
+    // back is that row's `left_at` going to NULL. `DO NOTHING` would have
+    // marked the invite accepted and put nobody on the trip.
     db.prepare(
       `INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'member')
-       ON CONFLICT (trip_id, user_id) DO NOTHING`
+       ON CONFLICT (trip_id, user_id) DO UPDATE
+         SET left_at = NULL, role = excluded.role
+       WHERE trip_members.left_at IS NOT NULL`
     ).run(tripId, userId);
     db.prepare(
       "UPDATE trip_invites SET status = 'accepted', accepted_at = ?, accepted_by = ? WHERE id = ?"
@@ -75,7 +86,24 @@ export function createInvitesRouter({ db, config }) {
       return res.status(409).json({ error: 'trip has ended' });
     }
 
-    acceptInvite(invite.id, invite.trip_id, req.user.id, new Date().toISOString());
+    // One active trip per rider — see trips/activeTrip.js. The invite is left
+    // pending rather than consumed, so it is still there to accept once the
+    // trip in the way has ended.
+    const held = activeTripFor(db, req.user.id, { excludeTripId: trip.id });
+    if (held) {
+      return res.status(409).json(activeTripConflict(held));
+    }
+
+    try {
+      acceptInvite(invite.id, invite.trip_id, req.user.id, new Date().toISOString());
+    } catch (e) {
+      if (isOneActiveTripAbort(e)) {
+        return res
+          .status(409)
+          .json(activeTripConflict(activeTripFor(db, req.user.id, { excludeTripId: trip.id })));
+      }
+      throw e;
+    }
 
     const accepted = db.prepare('SELECT * FROM trip_invites WHERE id = ?').get(invite.id);
     res.json({

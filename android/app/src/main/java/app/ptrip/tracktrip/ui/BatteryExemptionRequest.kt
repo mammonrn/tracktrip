@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.getSystemService
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import app.ptrip.tracktrip.location.BatteryExemption
+import app.ptrip.tracktrip.location.BatterySettingsTarget
 
 /**
  * The rider's standing with Android's battery optimiser, and the way to
@@ -34,12 +36,16 @@ data class BatteryExemptionUi(
 
 /**
  * Reads whether this app is exempt from battery optimisation, and hands back
- * a way to ask for it.
+ * the way to the setting.
+ *
+ * "A way to ask for it" is what this used to be, and it is why the row was
+ * reported dead: the asking dialog is not a dialog for a rider who already has
+ * the exemption. Where [BatteryExemptionUi.ask] goes now depends on where the
+ * rider stands — see [BatteryExemption.destinations].
  *
  * See [app.ptrip.tracktrip.location.BatteryExemption] for what the exemption
  * buys and why a foreground service alone does not buy it.
  */
-@SuppressLint("BatteryLife")
 @Composable
 fun rememberBatteryExemption(): BatteryExemptionUi {
     val context = LocalContext.current
@@ -58,27 +64,52 @@ fun rememberBatteryExemption(): BatteryExemptionUi {
     val isExempt = remember(reads) { isIgnoringBatteryOptimizations(context) }
 
     return BatteryExemptionUi(isExempt = isExempt) {
-        // The direct dialog is the one worth showing: it is a single yes/no
-        // rather than a list of every app on the phone to find this one in.
-        // It can be absent — some builds strip it, and a managed device can
-        // disable it — so a refusal to open is answered with the list instead
-        // of with nothing happening.
-        val direct = Intent(
-            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            Uri.fromParts("package", context.packageName, null),
-        )
-        try {
-            launcher.launch(direct)
-        } catch (missingDialog: ActivityNotFoundException) {
+        // Where to go depends on where the rider already stands, and that is
+        // the whole of the fix: the one-tap dialog is only a dialog while the
+        // app is *not* exempt. Launched by a rider whose row already reads
+        // "Unrestricted", the system activity behind it finds nothing to grant
+        // and finishes without drawing a pixel — which is precisely how the
+        // row was reported: pressed, and nothing happens.
+        //
+        // See [BatteryExemption.destinations] for the order and the reasons.
+        // Working down it stops at the first that opens; a phone with none of
+        // them leaves the rider where they are rather than crashing them out
+        // of a ride, and the row's own hint underneath still says what the
+        // setting is for.
+        BatteryExemption.destinations(isExempt).any { target ->
             try {
-                launcher.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-            } catch (missingList: ActivityNotFoundException) {
-                // Nothing else to try: leave the rider where they are rather
-                // than crashing them out of a ride.
+                launcher.launch(intentFor(target, context.packageName))
+                true
+            } catch (missing: ActivityNotFoundException) {
+                false
             }
         }
     }
 }
+
+/**
+ * The intent for one destination.
+ *
+ * Separate from the choosing, which is [BatteryExemption.destinations]: this
+ * half needs Android and is three lines of `Intent`, and that half is the part
+ * with a decision in it.
+ */
+@SuppressLint("BatteryLife")
+private fun intentFor(target: BatterySettingsTarget, packageName: String): Intent =
+    when (target) {
+        BatterySettingsTarget.REQUEST_EXEMPTION -> Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.fromParts("package", packageName, null),
+        )
+
+        BatterySettingsTarget.APP_DETAILS -> Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null),
+        )
+
+        BatterySettingsTarget.OPTIMISATION_LIST ->
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    }
 
 /**
  * Whether Android currently exempts this app.

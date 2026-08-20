@@ -1,5 +1,6 @@
 package app.ptrip.tracktrip.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
@@ -17,15 +19,23 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.Invite
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.map.Arrival
+import app.ptrip.tracktrip.ui.theme.AppOnPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.HudAvatar
 import app.ptrip.tracktrip.ui.theme.HudChip
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudEmpty
@@ -77,6 +87,8 @@ fun TripListScreen(
      */
     isSuperuser: Boolean = false,
     onShowAllTrips: (Boolean) -> Unit = {},
+    /** Opens or closes everything older than the newest [TripListRules.RECENT]. */
+    onToggleArchive: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -115,7 +127,7 @@ fun TripListScreen(
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )
 
-        state.error?.let { HudError(it) }
+        apiErrorText(state.error, state.blockedByTripName)?.let { HudError(it) }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -168,6 +180,11 @@ fun TripListScreen(
                 }
             }
 
+            // The newest few, and everything else behind one tap. See
+            // [TripListRules] for why the first screen of the app answers
+            // "what am I riding" before "what have I ridden".
+            val archived = TripListRules.archived(state.trips)
+
             when {
                 state.loading && state.trips.isEmpty() -> item { HudLoading() }
                 state.trips.isEmpty() -> item {
@@ -179,8 +196,42 @@ fun TripListScreen(
                         }
                     )
                 }
-                else -> items(state.trips, key = { "trip-${it.id}" }) { trip ->
-                    TripCard(trip = trip, onClick = { onOpenTrip(trip) })
+                else -> items(
+                    TripListRules.recent(state.trips),
+                    key = { "trip-${it.id}" },
+                ) { trip ->
+                    TripCard(
+                        trip = trip,
+                        podium = state.podiums[trip.id].orEmpty(),
+                        onClick = { onOpenTrip(trip) },
+                    )
+                }
+            }
+
+            if (archived.isNotEmpty()) {
+                // Above the trips it opens rather than below them, so the
+                // control a rider just pressed is still under their thumb
+                // afterwards instead of seven cards up the screen.
+                item {
+                    HudChip(
+                        text = if (state.archiveOpen) {
+                            stringResource(R.string.trips_archive_hide)
+                        } else {
+                            stringResource(R.string.trips_archive_show, archived.size)
+                        },
+                        onClick = { onToggleArchive(!state.archiveOpen) },
+                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    )
+                }
+
+                if (state.archiveOpen) {
+                    items(archived, key = { "trip-${it.id}" }) { trip ->
+                        TripCard(
+                            trip = trip,
+                            podium = state.podiums[trip.id].orEmpty(),
+                            onClick = { onOpenTrip(trip) },
+                        )
+                    }
                 }
             }
         }
@@ -204,7 +255,7 @@ fun TripListScreen(
 }
 
 @Composable
-private fun TripCard(trip: Trip, onClick: () -> Unit) {
+private fun TripCard(trip: Trip, podium: List<Arrival>, onClick: () -> Unit) {
     HudSurface(
         modifier = Modifier.clickable(onClick = onClick),
         accent = if (trip.isActive) {
@@ -220,6 +271,8 @@ private fun TripCard(trip: Trip, onClick: () -> Unit) {
                     text = trip.name,
                     style = MaterialTheme.typography.titleMedium,
                     color = AppText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = buildString {
@@ -237,11 +290,101 @@ private fun TripCard(trip: Trip, onClick: () -> Unit) {
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = AppTextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
+
+            // Inside the row the card already had, and shorter than the two
+            // lines beside it, so the card is exactly the height it was. A
+            // trip nobody has finished has no strip at all — see [ArrivalBoard]
+            // for why that is not an empty state.
+            if (podium.isNotEmpty()) {
+                PodiumStrip(podium, modifier = Modifier.padding(start = 12.dp))
             }
         }
     }
 }
+
+/**
+ * The first three to the finish, as a row of faces.
+ *
+ * ## Why faces and not names
+ *
+ * The card cannot get taller — it is one of three above the fold, and the
+ * whole point of the archive next to it is that this screen stays short — so
+ * the podium has one row of the card's existing height to live in, at the end
+ * of a row that already holds a name and a status line. Three names would not
+ * fit across it; three 26dp faces do, with room to spare under the two lines
+ * they sit beside.
+ *
+ * Left to right is first to third, which is how every podium anybody has seen
+ * is read, and the numeral on each face says it outright for anyone it is not
+ * obvious to. Colour is never the only carrier: the tints are decoration on
+ * top of a numeral and a position.
+ *
+ * Each face's content description is the rank and the rider's name in words,
+ * so a screen reader gets the ranking as a ranking rather than three
+ * unexplained avatars.
+ */
+@Composable
+private fun PodiumStrip(podium: List<Arrival>, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        podium.forEach { arrival ->
+            val tint = podiumTint(arrival.place)
+            val spoken = stringResource(R.string.trip_podium_place, arrival.place, arrival.label)
+
+            Box(
+                modifier = Modifier
+                    .size(PODIUM_FACE)
+                    .semantics { contentDescription = spoken },
+                contentAlignment = Alignment.BottomEnd,
+            ) {
+                HudAvatar(
+                    name = arrival.label,
+                    photoUrl = arrival.photoUrl,
+                    diameter = PODIUM_FACE,
+                    accent = tint,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(PODIUM_BADGE)
+                        .background(tint, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = arrival.place.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp,
+                        lineHeight = 8.sp,
+                        color = AppOnPrimary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Gold, silver, bronze.
+ *
+ * Decoration rather than information: the numeral on the badge and the
+ * left-to-right order both say the same thing, so nothing is lost to anyone
+ * who cannot tell these three apart.
+ */
+private fun podiumTint(place: Int): Color = when (place) {
+    1 -> Color(0xFFF9A825)
+    2 -> Color(0xFF9AA0A6)
+    else -> Color(0xFFA1662F)
+}
+
+/** As tall as the podium gets — shorter than the two lines it sits beside. */
+private val PODIUM_FACE = 26.dp
+private val PODIUM_BADGE = 12.dp
 
 @Composable
 private fun InviteCard(invite: Invite, accepting: Boolean, onAccept: () -> Unit) {

@@ -313,8 +313,13 @@ test('DELETE: 404 for an unknown waypoint, or one belonging to another trip', as
   assert.equal(missing.status, 404);
 
   // A second trip the member also belongs to, with its own waypoint.
+  //
+  // Ended, because one active trip per rider (migration 0013) means a member
+  // cannot be on two running ones — and it makes no difference to what is
+  // under test: the waypoint exists, it belongs elsewhere, and a delete
+  // addressed through this trip must not find it.
   const otherTripId = Number(
-    db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Other', ?, 'active')").run(ownerId)
+    db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Other', ?, 'ended')").run(ownerId)
       .lastInsertRowid
   );
   db.prepare('INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, ?)').run(

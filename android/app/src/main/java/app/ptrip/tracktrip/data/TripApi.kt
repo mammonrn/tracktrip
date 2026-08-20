@@ -245,12 +245,21 @@ data class LevelProgress(
  * [ApiClient].
  */
 /**
- * Open, and four of its reads with it, for one reason: `TripMapViewModel` has
+ * Open, and a handful of its calls with it, for one reason: `TripMapViewModel`
+ * has
  * timing worth asserting on — what is on screen *while* a fetch is in flight,
  * not only after it lands — and that cannot be tested against a call that
  * always answers instantly. A test subclass overrides the handful of reads a
  * view model makes on the way in and controls when they return; nothing here
  * changes for the app, which uses this class exactly as it did.
+ *
+ * The three route *writes* are open for the neighbouring reason: confirming a
+ * route is a write followed by a re-read, and what the rider is left looking
+ * at afterwards is the whole of the question — so a test needs a server that
+ * answers the re-read with what the write just sent it.
+ *
+ * `listInvites` is open because the trip list reads it on the way in, and a
+ * test about how many `members` calls that screen makes has to get past it.
  */
 open class TripApi(private val client: ApiClient) {
 
@@ -273,6 +282,23 @@ open class TripApi(private val client: ApiClient) {
         JSONObject(client.post("/trips/$tripId/end")).toTrip()
 
     /**
+     * Leaves a trip this rider is a member of.
+     *
+     * The way off a trip for everyone who is not its owner, and the reason one
+     * had to exist: one active trip per rider means a rider whose host went
+     * home without pressing End could not start a trip of their own, could not
+     * accept another invitation, and had nothing they could do about it.
+     *
+     * Answers 204, so there is nothing to read back — the caller re-reads the
+     * trip list, which is where the trip has now gone from. Refused for the
+     * owner (409, use [endTrip]) and on a finished trip (409, nothing is
+     * holding anybody there).
+     */
+    suspend fun leaveTrip(tripId: Long) {
+        client.delete("/trips/$tripId/members/me")
+    }
+
+    /**
      * Renames a trip.
      *
      * The same `PATCH /trips/:id` the two ends go through, and for the same
@@ -287,7 +313,7 @@ open class TripApi(private val client: ApiClient) {
     suspend fun renameTrip(tripId: Long, name: String): Trip =
         JSONObject(client.patch("/trips/$tripId", JSONObject().put("name", name))).toTrip()
 
-    suspend fun listInvites(): List<Invite> =
+    open suspend fun listInvites(): List<Invite> =
         JSONArray(client.get("/invites")).map { it.toInvite() }
 
     /** Returns the trip just joined, so the caller can go straight to it. */
@@ -383,11 +409,11 @@ open class TripApi(private val client: ApiClient) {
      * time would make "name the destination" indistinguishable from "wipe the
      * start". Owner-only on the server; the screen offers it to nobody else.
      */
-    suspend fun setOrigin(tripId: Long, endpoint: TripEndpoint?): Trip =
+    open suspend fun setOrigin(tripId: Long, endpoint: TripEndpoint?): Trip =
         patchEndpoint(tripId, "origin", endpoint)
 
     /** Sets where the trip is going, or clears it. See [setOrigin]. */
-    suspend fun setDestination(tripId: Long, endpoint: TripEndpoint?): Trip =
+    open suspend fun setDestination(tripId: Long, endpoint: TripEndpoint?): Trip =
         patchEndpoint(tripId, "destination", endpoint)
 
     private suspend fun patchEndpoint(tripId: Long, field: String, endpoint: TripEndpoint?): Trip {
@@ -407,7 +433,7 @@ open class TripApi(private val client: ApiClient) {
      * refuses it on a live drop rather than ignoring it, because a live point
      * has no place in a route nobody planned.
      */
-    suspend fun addWaypoint(
+    open suspend fun addWaypoint(
         tripId: Long,
         name: String,
         lat: Double,

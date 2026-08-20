@@ -33,6 +33,8 @@ import app.ptrip.tracktrip.ui.theme.TracktripTheme
 fun CreateTripScreen(
     creating: Boolean,
     error: String?,
+    /** Set when the create was refused for a trip still running — see [apiErrorText]. */
+    blockedByTripName: String? = null,
     onCreate: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -68,7 +70,9 @@ fun CreateTripScreen(
             )
         }
 
-        error?.let { HudError(it, modifier = Modifier.padding(top = 12.dp)) }
+        apiErrorText(error, blockedByTripName)?.let {
+            HudError(it, modifier = Modifier.padding(top = 12.dp))
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 20.dp),

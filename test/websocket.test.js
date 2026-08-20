@@ -452,10 +452,20 @@ test('one socket cannot hold more trips than the cap', async (t) => {
   t.after(() => ctx.close());
 
   // Enough trips to go past the cap, all of them the rider's own.
+  //
+  // Ended as they are created — and the setup's own trip with them — because a
+  // rider may only be on one active trip at a time (migration 0013). It makes
+  // no difference to what is under test: subscribing asks for membership, not
+  // for a running trip, so a socket watching last year's rides hits the same
+  // cap.
+  await ctx.as(ctx.riderId).post(`/trips/${ctx.tripId}/end`).send();
+
   const tripIds = [];
   for (let i = 0; i < MAX_SUBSCRIPTIONS + 1; i += 1) {
     const created = await ctx.as(ctx.riderId).post('/trips').send({ name: `Trip ${i}` });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
     tripIds.push(created.body.id);
+    await ctx.as(ctx.riderId).post(`/trips/${created.body.id}/end`).send();
   }
 
   const socket = ctx.connect(ctx.riderId);

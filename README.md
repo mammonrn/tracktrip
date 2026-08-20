@@ -46,6 +46,8 @@ src/
     distance.js      # haversine + the GPS-jitter rules for counting km
     sharing.js       # sharing-session durations, expiry, and the on/off predicate
     joinCodes.js     # QR join codes: generation, expiry, normalisation
+    activeTrip.js    # one active trip per rider: the lookup and the 409 body
+    membership.js    # "on this trip now" vs "was ever on it" — the left_at rule
   users/
     levels.js        # the rider level table and progress towards the next one
     profile.js       # validation for the editable profile fields
@@ -67,7 +69,8 @@ src/
     cache.js          # the short-lived answer cache both of them use
   ws/                # WebSocket server (stub)
 scripts/
-  cleanup-history.js  # CLI wrapper for npm run cleanup
+  cleanup-history.js         # CLI wrapper for npm run cleanup
+  check-one-active-trip.js   # read-only: who is on more than one active trip
 test/                 # node:test unit tests
 data/                 # SQLite DB file lives here (gitignored)
 deploy/
@@ -154,7 +157,9 @@ accepting an emailed invite. All routes require
 - `POST /trips` — body `{ name }` (1–60 characters after trimming), plus an
   optional `origin` and `destination` (see below). Returns `201` with the
   trip. The caller becomes the owner and is written into `trip_members` with
-  `role = 'owner'` in the same transaction.
+  `role = 'owner'` in the same transaction. **`409` while the caller is
+  already on an active trip** — see [One active trip per
+  rider](#one-active-trip-per-rider).
 - `GET /trips` — the caller's trips (owned **and** joined), newest first, each
   with the caller's own `role`.
 - `GET /trips?all=true` — **super users only**: every trip on the server, in
@@ -164,6 +169,87 @@ accepting an emailed invite. All routes require
   parameter is ignored for everyone else, who get their own trips rather than
   a 403: it is a request for more, and the honest answer to it is everything
   they are allowed to see. See [Roles](#roles).
+
+#### One active trip per rider
+
+A rider may be on **one** active trip at a time. `POST /trips`, `POST
+/invites/:id/accept` and `POST /trips/join` all answer `409` while the caller
+already belongs to a trip whose `status` is `active`:
+
+```json
+{
+  "error": "You're already on an active trip, \"Chiang Mai loop\". End it before starting or joining another.",
+  "code": "active_trip_exists",
+  "active_trip": { "id": 4, "name": "Chiang Mai loop", "role": "owner" }
+}
+```
+
+`code` is there so a client can say it in its own language; `active_trip`
+because "you already have an active trip" sends a rider to a list of forty to
+work out which, and the answer is usually a ride they forgot to end. The
+Android app shows a translated sentence naming the trip, falling back to
+`error`.
+
+**Owner and member both count.** The rule is about riding, and both roles ride:
+it is the same `trip_members` rows `GET /trips` lists and
+`/suggested-invitees` counts as having ridden together. A rule that counted
+only the trips you own would let one invitation put you on three rides at once.
+`users.role` is unrelated — a super user browsing every trip through
+`GET /trips?all=true` holds no membership, and is neither blocked nor counted.
+
+A refused invite is **left pending** rather than consumed, so it is still there
+to accept once the trip in the way has ended. Redeeming a join code for the
+trip you are already on is still a success, not a conflict.
+
+##### Why the rule exists
+
+The Android client had always assumed it — the phone holds one sharing session
+and the location service reports to the trip it was started for — so a rider on
+two active trips has a trip on their list that can never receive a position,
+and no way to tell which.
+
+##### Enforced twice
+
+The route guards produce the message; migration `0013` is what makes the rule
+true. It is a **trigger**, not a partial unique index, for two reasons. A
+partial index's `WHERE` may only reference columns of the table it indexes, and
+"active" lives in `trips.status`, one join away. And an index is validated
+against existing rows when created, so on a database that already holds a rider
+with two active trips the `CREATE` fails, the migration transaction rolls back,
+and — because migrations run at boot — the API does not start. A trigger only
+ever sees writes made after it exists.
+
+That is deliberate for the data as well as for the deploy: **nobody already on
+two active trips is evicted.** Those are real trips with real positions in
+them, and picking one to close is a decision for whoever owns the data, not for
+a migration running unattended at boot. They keep both and are simply refused a
+third. `node scripts/check-one-active-trip.js` reports who is in that state:
+
+```
+DB_PATH=/root/tracktrip/data/trip-tracker.db node scripts/check-one-active-trip.js
+```
+
+It only reads, and exits non-zero when it finds somebody.
+
+A second trigger refuses reviving an ended trip whose members have moved on.
+No route does that — `POST /trips/:id/end` is the only writer of `trips.status`
+and only ever sets `ended` — but a constraint that holds only for the paths the
+application happens to use is a convention, not a constraint, and this repo
+documents reaching for `sqlite3` on the server.
+
+##### The way out
+
+Two doors, and they are not the same act renamed. The **owner** ends the trip
+(`POST /trips/:id/end`), which closes the ride for the whole group. Everybody
+else **leaves** it (`DELETE /trips/:id/members/me`), which takes one rider off
+it and leaves the trip running.
+
+The second door exists because of the first. With only `/end`, a rider who
+accepted an invitation and whose host then went home without pressing it could
+not start a trip of their own, could not accept another invitation, and had
+nothing they could do about it — the rule turned somebody else's
+forgetfulness into an indefinite lock on their account. A constraint needs a
+door the person it constrains can open.
 
 #### Where a trip starts and ends
 
@@ -283,11 +369,87 @@ without knowing their email address.
   | Code not found | `404` |
   | Code expired or retired | `410` — distinct from `404`, because "a minute too late" and "never existed" have different next steps |
   | Trip has ended | `409` |
+  | Caller is already on a *different* active trip | `409 { code: "active_trip_exists", active_trip }` — see [One active trip per rider](#one-active-trip-per-rider) |
   | Missing or malformed code | `400`, without reaching the lookup |
 
   A code is **not** consumed by being redeemed: one QR held up to four riders
   should add four riders. It stops working on expiry, and when the next code
   is issued.
+
+- `DELETE /trips/:id/members/me` — the caller leaves the trip. `204`, with
+  nothing to read back.
+
+  | Case | Response |
+  |---|---|
+  | A member, on a running trip | `204` |
+  | The **owner** | `409` — a trip with no owner is one nobody can end, invite to or rename. `/end` is their door |
+  | Not on the trip (a super user included) | `403` — managing a trip has never meant riding on it |
+  | Trip has ended | `409` — nothing is holding them there, and leaving would take them off a finished ride's roster and its podium |
+
+  One transaction, because half of it is not a state anybody should be in:
+
+  - the **membership**, stamped with `left_at` rather than deleted — see
+    [Leaving is a soft delete](#leaving-is-a-soft-delete). Every read that asks
+    "are they on this trip now?" takes `left_at IS NULL`, so this alone takes
+    them off the roster, off everyone's map, out of their own trip list and out
+    of every access check;
+  - the **sharing session**, for the same reason `/end` clears everybody's — a
+    session outliving the membership is a rider believing they are still being
+    tracked. Deleted rather than marked spent: the "no row means sharing by
+    default" reading is about *members*, and somebody rejoining should start as
+    a new one;
+  - the **last known position** — `member_positions`, one live row per rider
+    and what the map draws. Left behind it would be an orphan today and a ghost
+    tomorrow: re-invited next month, they would appear at the petrol station
+    they left from, dated then and drawn now;
+  - the **accepted invitation**, back to `revoked`, which is the one state
+    `POST /trips/:id/invites` already knows how to reopen. Left `accepted`,
+    `UNIQUE (trip_id, email)` would answer "that invite was already accepted"
+    for ever, and a door out that cannot be walked back through is half a door.
+
+  `position_history` is deliberately **kept**: it is the record of a ride that
+  happened, `cleanup-history.js` already ages it out, and leaving afterwards is
+  not grounds to rewrite where everybody went. Waypoints are untouched — a
+  route belongs to the trip, not to whoever added a stop to it.
+
+#### Leaving is a soft delete
+
+`trip_members` used to answer "is this rider on this trip?" by existing, and
+every read of the table could take a row at face value. Leaving deleted the
+row — which took the ride out of the pair's history with it, because "ridden
+with before" is built by joining `trip_members` to itself. They *had* ridden
+together; that happened, and the app should go on offering them to each other.
+
+So `left_at` (migration `0014`) is stamped instead, and the one rule the whole
+codebase relied on splits into two questions that had been the same question:
+
+| | who asks | clause |
+|---|---|---|
+| **Are they on this trip now?** | access, rosters, the map, the trip list, the leaderboard, the one-active-trip rule | `left_at IS NULL`, strictly |
+| **Were they ever?** | `GET /trips/:id/suggested-invitees`, and nothing else | every row, `left_at` ignored |
+
+Getting the first one wrong is not a display bug: a rider who left and still
+passed the membership check would keep reading the group's live positions and
+its route, and could go on reporting their own — the exact access leaving
+exists to end. So the clause lives in
+[`src/trips/membership.js`](src/trips/membership.js), which both gates —
+`requireTripMembership` and the WebSocket's `readableTrip` — now call.
+
+The second question is asked in one query and says so out loud. Its
+*exclusion* — who is already on this trip and so not worth suggesting — is the
+first question again, and takes the clause: a rider who left is offered back.
+
+**Rejoining** is that row's `left_at` going back to NULL. The primary key is
+`(trip_id, user_id)`, so an invitation accepted or a code redeemed by somebody
+who left conflicts with their own dormant row; `ON CONFLICT … DO NOTHING`
+would have looked like success and joined nobody, so both are
+`DO UPDATE SET left_at = NULL … WHERE trip_members.left_at IS NOT NULL` — a
+no-op for somebody already on the trip, a return for somebody who was not.
+
+Migration `0014` rewrites 0013's triggers for the same reason: they counted
+rows, and a row is no longer a membership. It also adds a third, because
+membership is no longer only gained by INSERT — coming back is an UPDATE, which
+a `BEFORE INSERT` trigger never sees.
 
 Once a trip has ended it is **read-only**: members can still read it, but
 every write to it — positions and live waypoint drops included — returns
@@ -422,7 +584,10 @@ which covers Workspace accounts on custom domains too.
   notification yet, so this is how an invitee discovers an invite.
 - `POST /invites/:id/accept` — the invitee joins the trip. Returns `200` with
   `{ trip, invite }`; the membership row and the invite's
-  `status`/`accepted_at`/`accepted_by` are written in one transaction.
+  `status`/`accepted_at`/`accepted_by` are written in one transaction. **`409`
+  while the invitee is already on an active trip** — see [One active trip per
+  rider](#one-active-trip-per-rider); the invite stays `pending`, so it can be
+  taken up once that trip has ended.
 
   | Case | Result |
   |---|---|

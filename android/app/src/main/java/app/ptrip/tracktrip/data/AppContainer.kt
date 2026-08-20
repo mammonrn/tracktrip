@@ -84,7 +84,7 @@ class AppContainer private constructor(context: Context) {
 
     val settings: AppSettings by lazy { AppSettings(appContext) }
 
-    val sharingController: SharingController by lazy { SharingController(appContext, tripApi) }
+    val sharingController: SharingController by lazy { SharingController(appContext, tripApi, settings) }
 
     companion object {
         @Volatile

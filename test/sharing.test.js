@@ -84,7 +84,24 @@ const expireSession = (db, tripId, userId) =>
     .prepare('UPDATE sharing_sessions SET expires_at = ? WHERE trip_id = ? AND user_id = ?')
     .run('2020-01-01T00:00:00.000Z', tripId, userId);
 
+/**
+ * Lets a fixture build the one state migration 0013 refuses to create: a
+ * rider on two active trips.
+ *
+ * Dropping the triggers is deliberate rather than a way round the rule. The
+ * rule stops that state being *made* from now on; it does not unmake the
+ * riders already in it — see the migration for why evicting one of somebody's
+ * trips is not a decision for an unattended migration. So those riders exist,
+ * and what this holds is that ending one of their trips leaves the other
+ * alone, which has to stay true for as long as anybody is in that state.
+ */
+function allowLegacySecondActiveTrip(db) {
+  db.exec('DROP TRIGGER IF EXISTS trip_members_one_active_trip');
+  db.exec('DROP TRIGGER IF EXISTS trips_one_active_trip_on_reactivate');
+}
+
 // ─── Sharing is on by default ───────────────────────────────────────────────
+
 
 test('a rider with no session shares by default for the whole trip', async () => {
   const { app, db, tripId, memberToken, memberId } = setup();
@@ -361,6 +378,7 @@ test('after the trip ends nobody reads as sharing', async () => {
 
 test('ending one trip does not stop sharing on another', async () => {
   const { app, db, tripId, ownerToken, ownerId } = setup();
+  allowLegacySecondActiveTrip(db);
 
   const otherTripId = Number(
     db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Still riding', ?, 'active')").run(

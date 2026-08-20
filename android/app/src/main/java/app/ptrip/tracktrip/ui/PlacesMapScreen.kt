@@ -10,12 +10,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,8 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.PersonalPlace
@@ -43,11 +38,10 @@ import app.ptrip.tracktrip.ui.theme.AppLine
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
 import app.ptrip.tracktrip.ui.theme.AppSurface
-import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
-import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudGearIcon
 import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudSearchIcon
@@ -116,6 +110,14 @@ fun PlacesMapScreen(
      * this screen has never had it. The answer comes back as [centreOn].
      */
     onCenterOnMe: () -> Unit,
+    /**
+     * Settings, which is where the list of this rider's own places now lives.
+     *
+     * See [MyPlacesSection] for why it moved off this screen: a column of
+     * delete buttons an inch below a map a finger is dragging is how places
+     * went missing.
+     */
+    onOpenSettings: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -189,7 +191,17 @@ fun PlacesMapScreen(
                 onBack = onBack,
                 backContentDescription = stringResource(R.string.back),
                 modifier = Modifier.padding(horizontal = 16.dp),
-            )
+            ) {
+                // The way to the list of what is on this map, which used to be
+                // printed underneath it. Removing the list from here without
+                // leaving a door to it would make a rider go back two screens
+                // to tidy up somewhere they are already standing.
+                HudIconButton(
+                    onClick = onOpenSettings,
+                    contentDescription = stringResource(R.string.settings_title),
+                    icon = { HudGearIcon() },
+                )
+            }
 
             state.error?.let { message ->
                 HudError(message = message, modifier = Modifier.padding(horizontal = 16.dp))
@@ -305,15 +317,6 @@ fun PlacesMapScreen(
                 )
             }
 
-            HudDivider()
-
-            MyPlacesList(
-                state = state,
-                onShowShared = { moveTo(LatLng(it.lat, it.lng)) },
-                onShowPersonal = { moveTo(it.point) },
-                onRemoveShared = { removingShared = it },
-                onRemovePersonal = { removingPersonal = it },
-            )
         }
 
         if (searching) {
@@ -424,131 +427,7 @@ fun PlacesMapScreen(
     }
 }
 
-/**
- * The two lists, under the map, headed so they can never be mistaken for one
- * another.
- *
- * The headings are the whole point of drawing them as two sections rather than
- * one merged list: everything under "Shared with everyone" is visible to the
- * whole server and everything under "Only you" is visible to nobody, and a
- * rider tidying up needs to know which is which without tapping anything.
- */
-@Composable
-private fun MyPlacesList(
-    state: PlacesUiState,
-    onShowShared: (SharedPlace) -> Unit,
-    onShowPersonal: (PersonalPlace) -> Unit,
-    onRemoveShared: (SharedPlace) -> Unit,
-    onRemovePersonal: (PersonalPlace) -> Unit,
-) {
-    LazyColumn(modifier = Modifier.heightIn(max = PLACES_LIST_MAX_HEIGHT).fillMaxWidth()) {
-        item {
-            Text(
-                text = stringResource(R.string.places_mine_title),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium,
-                color = AppText,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-        }
-
-        if (state.mine.isEmpty() && state.personal.isEmpty() && !state.loading) {
-            item {
-                Text(
-                    text = stringResource(R.string.places_mine_empty),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AppTextMuted,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-        }
-
-        if (state.personal.isNotEmpty()) {
-            item { PlacesSectionHeading(stringResource(R.string.places_personal_section)) }
-            items(state.personal, key = { "personal:${it.id}" }) { place ->
-                PlaceRow(
-                    title = place.label,
-                    detail = place.name,
-                    onClick = { onShowPersonal(place) },
-                    onRemove = { onRemovePersonal(place) },
-                )
-            }
-        }
-
-        if (state.mine.isNotEmpty()) {
-            item { PlacesSectionHeading(stringResource(R.string.places_shared_section)) }
-            items(state.mine, key = { "shared:${it.id}" }) { place ->
-                PlaceRow(
-                    title = place.name,
-                    detail = place.createdByName.orEmpty(),
-                    onClick = { onShowShared(place) },
-                    onRemove = { onRemoveShared(place) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlacesSectionHeading(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = AppTextMuted,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 2.dp),
-    )
-}
-
-@Composable
-private fun PlaceRow(
-    title: String,
-    detail: String,
-    onClick: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-    ) {
-        HudPinIcon(tint = AppPrimary)
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 10.dp, top = 10.dp, bottom = 10.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = AppText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (detail.isNotBlank()) {
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppTextMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Text(
-            text = stringResource(R.string.map_search_clear_symbol),
-            color = AppTextMuted,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .clickable(onClick = onRemove)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-        )
-    }
-}
-
 private val PlacesBarShape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
-
-/** Tall enough for a handful of rows without swallowing the map above it. */
-private val PLACES_LIST_MAX_HEIGHT = 220.dp
 
 
 /**

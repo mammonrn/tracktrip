@@ -338,7 +338,11 @@ test('GET /invites shows the caller only their own pending invites', async () =>
   await authed(app, 'post', `/invites/${invited.body.id}/accept`, friendToken).send();
   assert.deepEqual((await authed(app, 'get', '/invites', friendToken)).body, []);
 
-  // So does the trip ending, for an invite that was never accepted.
+  // So does the trip ending, for an invite that was never accepted. The first
+  // trip has to end before the second can start — one active trip per rider,
+  // migration 0013 — which is the ordinary way a rider gets to a second trip
+  // anyway.
+  await authed(app, 'post', `/trips/${trip.id}/end`, ownerToken).send();
   const second = await createTrip(app, ownerToken, 'Doi Inthanon');
   await invite(app, ownerToken, second.id, 'friend@gmail.com');
   assert.equal((await authed(app, 'get', '/invites', friendToken)).body.length, 1);
