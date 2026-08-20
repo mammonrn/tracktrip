@@ -1,5 +1,6 @@
 package app.ptrip.tracktrip.ui
 
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -157,6 +158,76 @@ class PlacesCentreButtonTest {
             "the camera did not move to the answer: $after",
             Math.abs(after.latitude - 13.7563) < 0.01 && Math.abs(after.longitude - 100.5018) < 0.01,
         )
+    }
+
+    @Test
+    fun `the button holds the answer, because the camera cannot show it`() {
+        // The other half of the "nothing happened" report, and the half no
+        // camera can answer: this screen frames itself on the rider the moment
+        // their position arrives, so a press moves the map to where it already
+        // is. Nothing changes. Pressed twice, not even the half-step of zoom.
+        //
+        // So the button says it instead — and goes on saying it, rather than
+        // flashing something a rider had to be watching for.
+        var centreOn by mutableStateOf<MapFocus?>(null)
+        showWith { centreOn }
+
+        compose.onNodeWithContentDescription("Centre on me").assertIsDisplayed()
+
+        centreOn = MapFocus(18.80, 98.98, 1)
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("Centred on you").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Centre on me").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a finger on the map gives the button back`() {
+        var centreOn by mutableStateOf<MapFocus?>(null)
+        showWith { centreOn }
+        centreOn = MapFocus(18.80, 98.98, 1)
+        compose.waitForIdle()
+
+        // A drag, the same one the map's own touch listener watches for. The
+        // rider has gone looking somewhere else, so "you are here" stops being
+        // true and the button offers to bring them back.
+        val map = findMap(compose.activity.window.decorView)!!
+        map.dispatchTouchEvent(motion(MotionEvent.ACTION_DOWN, 100f, 100f))
+        map.dispatchTouchEvent(motion(MotionEvent.ACTION_MOVE, 100f, 260f))
+        map.dispatchTouchEvent(motion(MotionEvent.ACTION_UP, 100f, 260f))
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("Centre on me").assertIsDisplayed()
+    }
+
+    private fun motion(action: Int, x: Float, y: Float): MotionEvent =
+        MotionEvent.obtain(0L, 0L, action, x, y, 0)
+
+    /** The screen with the camera answer driven from outside, as it really is. */
+    private fun showWith(centreOn: () -> MapFocus?) {
+        compose.setContent {
+            TracktripTheme {
+                PlacesMapScreen(
+                    state = PlacesUiState(loading = false),
+                    searchState = PlaceSearchState(),
+                    myLocation = LatLng(18.80, 98.98),
+                    centreOn = centreOn(),
+                    centringOnMe = false,
+                    hasLocationPermission = true,
+                    currentUserId = 1L,
+                    onSearchQueryChanged = {},
+                    onSearchCleared = {},
+                    onAddShared = { _, _ -> true },
+                    onAddPersonal = { _, _, _ -> true },
+                    onRemoveShared = {},
+                    onRemovePersonal = {},
+                    onDismissError = {},
+                    onCenterOnMe = {},
+                    onBack = {},
+                )
+            }
+        }
+        compose.waitForIdle()
     }
 
     private fun findMap(view: View): MapView? {

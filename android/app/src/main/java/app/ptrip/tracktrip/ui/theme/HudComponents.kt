@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -86,6 +87,16 @@ fun HudPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
+    /**
+     * Room for a mark before the label — a live dot, a lock, whatever the
+     * action is.
+     *
+     * A slot rather than an icon parameter, and unused for now on purpose:
+     * the marks themselves are being drawn elsewhere, and the layout that has
+     * to hold them is worth settling first. A button with nothing in the slot
+     * lays out exactly as it did before there was one.
+     */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val active = enabled && !loading
     Button(
@@ -104,7 +115,7 @@ fun HudPrimaryButton(
             disabledElevation = 0.dp,
         ),
         contentPadding = PaddingValues(
-            horizontal = 24.dp,
+            horizontal = BUTTON_HORIZONTAL_PADDING,
             vertical = BUTTON_VERTICAL_PADDING,
         ),
         modifier = modifier,
@@ -116,10 +127,30 @@ fun HudPrimaryButton(
                 modifier = Modifier.size(18.dp),
             )
         } else {
-            Text(text, style = MaterialTheme.typography.labelLarge)
+            leading?.let {
+                it()
+                Spacer(modifier = Modifier.width(ICON_LABEL_GAP))
+            }
+            // One line, always. A label that will not fit on a button half the
+            // width of the screen is a label to shorten, not to wrap — two
+            // buttons side by side with different heights read as a mistake.
+            Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         }
     }
 }
+
+/**
+ * How much of a button is edge rather than label.
+ *
+ * 16dp rather than the 20-24dp it was, because buttons come in pairs now:
+ * half of a 320dp screen is 138dp, and 24dp on each side of that leaves a
+ * fourteen-character label nothing to sit in. A full-width button is
+ * unchanged to look at — its label is centred either way.
+ */
+private val BUTTON_HORIZONTAL_PADDING = 16.dp
+
+/** The gap between a leading mark and the label it belongs to. */
+private val ICON_LABEL_GAP = 8.dp
 
 /** The secondary action: the same shape, outlined instead of filled. */
 @Composable
@@ -139,6 +170,16 @@ fun HudSecondaryButton(
      * carry the same weight however they are coloured.
      */
     quiet: Boolean = false,
+    /**
+     * Room for a mark before the label — a live dot, a lock, whatever the
+     * action is.
+     *
+     * A slot rather than an icon parameter, and unused for now on purpose:
+     * the marks themselves are being drawn elsewhere, and the layout that has
+     * to hold them is worth settling first. A button with nothing in the slot
+     * lays out exactly as it did before there was one.
+     */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val active = enabled && !loading
     OutlinedButton(
@@ -160,7 +201,7 @@ fun HudSecondaryButton(
         contentPadding = PaddingValues(
             // A quiet button has no edge to hold its label off, so it needs
             // less of one: the text itself is the control.
-            horizontal = if (quiet) 12.dp else 20.dp,
+            horizontal = if (quiet) 12.dp else BUTTON_HORIZONTAL_PADDING,
             vertical = BUTTON_VERTICAL_PADDING,
         ),
         modifier = modifier,
@@ -172,7 +213,11 @@ fun HudSecondaryButton(
                 modifier = Modifier.size(18.dp),
             )
         } else {
-            Text(text, style = MaterialTheme.typography.labelLarge)
+            leading?.let {
+                it()
+                Spacer(modifier = Modifier.width(ICON_LABEL_GAP))
+            }
+            Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         }
     }
 }
@@ -189,6 +234,7 @@ fun HudDangerButton(
     enabled: Boolean = true,
     loading: Boolean = false,
     quiet: Boolean = false,
+    leading: (@Composable () -> Unit)? = null,
 ) {
     HudSecondaryButton(
         text = text,
@@ -198,6 +244,7 @@ fun HudDangerButton(
         loading = loading,
         accent = AppDanger,
         quiet = quiet,
+        leading = leading,
     )
 }
 

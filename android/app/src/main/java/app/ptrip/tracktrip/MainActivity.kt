@@ -50,6 +50,7 @@ import app.ptrip.tracktrip.ui.EditTripScreen
 import app.ptrip.tracktrip.ui.JoinTripViewModel
 import app.ptrip.tracktrip.ui.joinCodeFrom
 import app.ptrip.tracktrip.ui.joinWebLinkFor
+import app.ptrip.tracktrip.ui.rememberCentreOnMe
 import app.ptrip.tracktrip.ui.rememberSharingPermissionRequest
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
 import app.ptrip.tracktrip.ui.ProfileScreen
@@ -385,62 +386,36 @@ private fun SignedInNavigation(
             var centreSequence by remember { mutableIntStateOf(0) }
             val noLocationMessage = stringResource(R.string.map_no_location)
 
-            /**
-             * Whether a press of "centre on me" is still waiting on the phone.
-             *
-             * The button reported nothing at all while it worked. A cached fix
-             * makes it instant, and there is a cached fix whenever anything on
-             * the phone has asked recently — but on a phone that has not, the
-             * press falls through to a live one, and `QUICK_TIMEOUT_MS` allows
-             * that fifteen seconds. For those fifteen seconds the screen was
-             * identical to a screen that had ignored the press, which is
-             * indistinguishable from a broken button and was reported as one.
-             *
-             * Only the centring press raises it: the read on the way in is
-             * nobody's request and has nothing to say for itself.
-             */
-            var centringOnMe by remember { mutableStateOf(false) }
-
-            // One way to go and ask, used by the arrival effect and by the
-            // button. It re-reads rather than trusting whatever the effect
-            // found on the way in: a rider who granted the permission from
-            // the button, or who walked out of the car park since, is exactly
-            // who presses it.
-            val findMe: suspend (Boolean) -> Unit = { centre ->
-                if (centre) centringOnMe = true
-                try {
-                    mapPermission = LocationFix.hasPermission(context)
-                    val fix = if (mapPermission) {
-                        LocationFix.lastKnown(context)
-                            ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
-                    } else {
-                        null
-                    }
-                    val here = fix?.let { LatLng(it.latitude, it.longitude) }
-                    if (here != null) {
-                        myLocation = here
-                        placesViewModel.placeSearch.near = here
-                    }
-                    if (centre) {
-                        if (here == null) {
-                            placesViewModel.onNoLocation(noLocationMessage)
-                        } else {
-                            centreSequence += 1
-                            centreOn = MapFocus(here.lat, here.lng, centreSequence)
-                        }
-                    }
-                } finally {
-                    // In a `finally` because the screen can go while the phone
-                    // is still thinking: the scope this runs in is cancelled
-                    // with the composition, and a spinner left true would be
-                    // the state a returning rider found the button in.
-                    if (centre) centringOnMe = false
-                }
+            // A rider's own position, however it arrives: noted here, handed
+            // to the search so a place name is ranked against the region they
+            // are in, and — when they asked for it — pointed at.
+            val onFix: (LatLng) -> Unit = { here ->
+                myLocation = here
+                placesViewModel.placeSearch.near = here
             }
 
-            LaunchedEffect(Unit) { findMe(false) }
+            // The button's own logic, which is not this navigation graph's to
+            // hold: see [CentreOnMe] for the two rules it exists to keep — one
+            // lookup per press, and a busy state that lasts long enough to be
+            // drawn.
+            val centre = rememberCentreOnMe(
+                onFix = { here ->
+                    onFix(here)
+                    centreSequence += 1
+                    centreOn = MapFocus(here.lat, here.lng, centreSequence)
+                },
+                onNoLocation = { placesViewModel.onNoLocation(noLocationMessage) },
+            )
 
-            val centreScope = rememberCoroutineScope()
+            // The read on the way in, which is nobody's request: it fills
+            // "use my current location" and opens the camera somewhere useful,
+            // and has nothing to say for itself if it finds nothing.
+            LaunchedEffect(Unit) {
+                mapPermission = LocationFix.hasPermission(context)
+                if (mapPermission) {
+                    LocationFix.nearest(context)?.let { onFix(LatLng(it.latitude, it.longitude)) }
+                }
+            }
 
             // The same request the sharing controls and the trip map's own
             // "centre on me" use — asked only when the button is pressed
@@ -448,7 +423,7 @@ private fun SignedInNavigation(
             // looking a place up needs no permission, and a dialog in front
             // of a map nobody asked to be located on is a toll.
             val requestLocation = rememberSharingPermissionRequest(
-                onGranted = { centreScope.launch { findMe(true) } },
+                onGranted = { mapPermission = true; centre.press() },
                 onDenied = placesViewModel::onNoLocation,
             )
 
@@ -466,10 +441,15 @@ private fun SignedInNavigation(
                 onRemovePersonal = placesViewModel::removePersonal,
                 onDismissError = placesViewModel::clearError,
                 centreOn = centreOn,
-                centringOnMe = centringOnMe,
+                centringOnMe = centre.busy,
                 onCenterOnMe = {
+                    // Re-read rather than trusting what the arrival found: a
+                    // rider who granted the permission from Android's own
+                    // settings while this screen was in front of them is
+                    // exactly who presses this.
                     if (LocationFix.hasPermission(context)) {
-                        centreScope.launch { findMe(true) }
+                        mapPermission = true
+                        centre.press()
                     } else {
                         requestLocation()
                     }
@@ -639,8 +619,7 @@ private fun SignedInNavigation(
             LaunchedEffect(Unit) {
                 routePermission = LocationFix.hasPermission(context)
                 if (routePermission) {
-                    val fix = LocationFix.lastKnown(context)
-                        ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
+                    val fix = LocationFix.nearest(context)
                     routeLocation = fix?.let { LatLng(it.latitude, it.longitude) }
                     mapViewModel.placeSearch.near = routeLocation
                 }
@@ -800,15 +779,14 @@ private fun SignedInNavigation(
              */
             fun centreOnMe() {
                 scope.launch {
-                    val cached = LocationFix.lastKnown(context)
-                    val fix = cached ?: LocationFix.fastest(context, LocationFix.QUICK_TIMEOUT_MS)
+                    val fix = LocationFix.nearest(context)
                     val fallback = mapState.members
                         .firstOrNull { it.userId == profile?.id && it.hasPosition }
 
                     val target = when {
                         fix != null -> fix.latitude to fix.longitude
                         fallback?.lat != null && fallback.lng != null ->
-                            fallback.lat!! to fallback.lng!!
+                            fallback.lat to fallback.lng
                         else -> null
                     }
                     if (target == null) {

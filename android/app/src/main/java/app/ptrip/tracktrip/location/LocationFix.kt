@@ -162,6 +162,20 @@ object LocationFix {
         }
 
     /**
+     * A position for a rider who has just asked for one, as fast as there is
+     * one to be had: the phone's cache if anything on it has looked recently,
+     * and otherwise whichever provider answers first.
+     *
+     * The one call behind every "where am I" on a screen — the button on the
+     * map with no trip, the same button on the trip map, and the arrival read
+     * that fills "use my current location". They had this pair of lines
+     * copied between them, which is how one of them came to be a version
+     * behind on the provider question.
+     */
+    suspend fun nearest(context: Context, timeoutMs: Long = QUICK_TIMEOUT_MS): Location? =
+        lastKnown(context) ?: fastest(context, timeoutMs)
+
+    /**
      * The last fix any app on the phone obtained, without waiting for a new one.
      *
      * Instant and often good enough to point a map at; the caller can ask for

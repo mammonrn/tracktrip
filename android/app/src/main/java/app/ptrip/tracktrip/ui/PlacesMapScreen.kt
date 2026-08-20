@@ -41,6 +41,7 @@ import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.ui.theme.AppLine
 import app.ptrip.tracktrip.ui.theme.AppPrimary
+import app.ptrip.tracktrip.ui.theme.AppPrimarySoft
 import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
@@ -144,9 +145,27 @@ fun PlacesMapScreen(
     // asks the phone where it is, and the answer arrives here rather than
     // being read out of `myLocation` at the moment of the press — which on a
     // screen that had never asked for the permission was always null.
+    /**
+     * Whether the camera is sitting where the button last put it.
+     *
+     * The press's other answer, and on most presses the only one anybody can
+     * see. Moving the map to where it already is changes no pixels, and a
+     * rider who has not panned is *always* already looking at themselves —
+     * this screen frames itself on them the moment their position arrives. So
+     * the first press was a half-step of zoom and every press after it was
+     * nothing at all, which is exactly how the button was reported: dead.
+     *
+     * The button says it instead. It goes tinted when the camera arrives and
+     * plain again the moment a finger drags the map away, so a press always
+     * ends in a state the rider can point at — and the state means something
+     * afterwards, rather than being a flash they had to be watching for.
+     */
+    var lockedOnMe by remember { mutableStateOf(false) }
+
     LaunchedEffect(centreOn) {
         val target = centreOn ?: return@LaunchedEffect
         moveTo(LatLng(target.lat, target.lng))
+        lockedOnMe = true
     }
 
     BackHandler(enabled = searching) {
@@ -228,7 +247,7 @@ fun PlacesMapScreen(
                     },
                     follow = null,
                     overview = null,
-                    onUserPan = {},
+                    onUserPan = { lockedOnMe = false },
                 )
 
                 // Go and find me.
@@ -256,8 +275,11 @@ fun PlacesMapScreen(
                 HudIconButton(
                     onClick = { if (!centringOnMe) onCenterOnMe() },
                     contentDescription = stringResource(
-                        if (centringOnMe) R.string.map_finding_me
-                        else R.string.map_center_on_me
+                        when {
+                            centringOnMe -> R.string.map_finding_me
+                            lockedOnMe -> R.string.map_centred_on_me
+                            else -> R.string.map_center_on_me
+                        }
                     ),
                     icon = {
                         if (centringOnMe) {
@@ -268,14 +290,18 @@ fun PlacesMapScreen(
                             )
                         } else {
                             HudPinIcon(
-                                tint = if (myLocation != null) AppPrimary else AppTextMuted
+                                tint = if (myLocation != null || lockedOnMe) AppPrimary
+                                       else AppTextMuted
                             )
                         }
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(12.dp)
-                        .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                        .background(
+                            if (lockedOnMe) AppPrimarySoft else AppSurface.copy(alpha = 0.92f),
+                            CircleShape,
+                        ),
                 )
             }
 
