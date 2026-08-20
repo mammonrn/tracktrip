@@ -212,6 +212,18 @@ class PlacesViewModel(
         }
     }
 
+    /**
+     * Says why "centre on me" did nothing.
+     *
+     * On the trip map this lives on the view model for the same reason it does
+     * here: the button is pressed on the screen but the answer comes back from
+     * the phone, one suspending call later, and a message held in the
+     * composable would be gone if the rider had scrolled the list in between.
+     */
+    fun onNoLocation(message: String) {
+        _uiState.update { it.copy(error = message) }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }

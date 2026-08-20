@@ -376,19 +376,56 @@ private fun SignedInNavigation(
 
             // Read, never reported. Nothing on this screen shares a position:
             // there is no trip to share it with. It is here to bias the search
-            // towards the region the rider is in, and to fill "use my current
-            // location" — both of which want a fix, not a feed.
+            // towards the region the rider is in, to fill "use my current
+            // location", and to answer the button that centres the map on the
+            // rider — all of which want a fix, not a feed.
             var mapPermission by remember { mutableStateOf(false) }
             var myLocation by remember { mutableStateOf<LatLng?>(null) }
-            LaunchedEffect(Unit) {
+            var centreOn by remember { mutableStateOf<MapFocus?>(null) }
+            var centreSequence by remember { mutableIntStateOf(0) }
+            val noLocationMessage = stringResource(R.string.map_no_location)
+
+            // One way to go and ask, used by the arrival effect and by the
+            // button. It re-reads rather than trusting whatever the effect
+            // found on the way in: a rider who granted the permission from
+            // the button, or who walked out of the car park since, is exactly
+            // who presses it.
+            val findMe: suspend (Boolean) -> Unit = { centre ->
                 mapPermission = LocationFix.hasPermission(context)
-                if (mapPermission) {
-                    val fix = LocationFix.lastKnown(context)
+                val fix = if (mapPermission) {
+                    LocationFix.lastKnown(context)
                         ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
-                    myLocation = fix?.let { LatLng(it.latitude, it.longitude) }
-                    placesViewModel.placeSearch.near = myLocation
+                } else {
+                    null
+                }
+                val here = fix?.let { LatLng(it.latitude, it.longitude) }
+                if (here != null) {
+                    myLocation = here
+                    placesViewModel.placeSearch.near = here
+                }
+                if (centre) {
+                    if (here == null) {
+                        placesViewModel.onNoLocation(noLocationMessage)
+                    } else {
+                        centreSequence += 1
+                        centreOn = MapFocus(here.lat, here.lng, centreSequence)
+                    }
                 }
             }
+
+            LaunchedEffect(Unit) { findMe(false) }
+
+            val centreScope = rememberCoroutineScope()
+
+            // The same request the sharing controls and the trip map's own
+            // "centre on me" use — asked only when the button is pressed
+            // without it. This screen deliberately does not ask on arrival:
+            // looking a place up needs no permission, and a dialog in front
+            // of a map nobody asked to be located on is a toll.
+            val requestLocation = rememberSharingPermissionRequest(
+                onGranted = { centreScope.launch { findMe(true) } },
+                onDenied = placesViewModel::onNoLocation,
+            )
 
             PlacesMapScreen(
                 state = placesState,
@@ -403,6 +440,14 @@ private fun SignedInNavigation(
                 onRemoveShared = placesViewModel::removeShared,
                 onRemovePersonal = placesViewModel::removePersonal,
                 onDismissError = placesViewModel::clearError,
+                centreOn = centreOn,
+                onCenterOnMe = {
+                    if (LocationFix.hasPermission(context)) {
+                        centreScope.launch { findMe(true) }
+                    } else {
+                        requestLocation()
+                    }
+                },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
