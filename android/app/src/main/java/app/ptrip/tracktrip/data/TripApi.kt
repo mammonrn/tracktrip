@@ -244,7 +244,15 @@ data class LevelProgress(
  * the types above and nothing more, leaving retries and token refresh to
  * [ApiClient].
  */
-class TripApi(private val client: ApiClient) {
+/**
+ * Open, and four of its reads with it, for one reason: `TripMapViewModel` has
+ * timing worth asserting on — what is on screen *while* a fetch is in flight,
+ * not only after it lands — and that cannot be tested against a call that
+ * always answers instantly. A test subclass overrides the handful of reads a
+ * view model makes on the way in and controls when they return; nothing here
+ * changes for the app, which uses this class exactly as it did.
+ */
+open class TripApi(private val client: ApiClient) {
 
     /**
      * The rider's own trips, or — for a super user asking — every trip on the
@@ -255,7 +263,7 @@ class TripApi(private val client: ApiClient) {
      * everybody else's rides would make their own app worse the day they were
      * promoted.
      */
-    suspend fun listTrips(all: Boolean = false): List<Trip> =
+    open suspend fun listTrips(all: Boolean = false): List<Trip> =
         JSONArray(client.get(if (all) "/trips?all=true" else "/trips")).map { it.toTrip() }
 
     suspend fun createTrip(name: String): Trip =
@@ -292,7 +300,7 @@ class TripApi(private val client: ApiClient) {
         JSONObject(client.post("/trips/$tripId/invites", JSONObject().put("email", email)))
             .toInvite()
 
-    suspend fun members(tripId: Long): List<MemberPosition> =
+    open suspend fun members(tripId: Long): List<MemberPosition> =
         JSONArray(client.get("/trips/$tripId/positions")).map { it.toMemberPosition() }
 
     suspend fun suggestedInvitees(tripId: Long): List<SuggestedInvitee> =
@@ -357,13 +365,13 @@ class TripApi(private val client: ApiClient) {
      * for the caller, and a trip of eight would otherwise be eight requests
      * from a phone that is already polling positions.
      */
-    suspend fun memberLevels(tripId: Long): Map<Long, RiderLevel> =
+    open suspend fun memberLevels(tripId: Long): Map<Long, RiderLevel> =
         JSONArray(client.get("/trips/$tripId/member-levels"))
             .map { it.toRiderLevel() }
             .associateBy { it.userId }
 
     /** The trip's planned stops and live drops. */
-    suspend fun waypoints(tripId: Long): TripWaypoints =
+    open suspend fun waypoints(tripId: Long): TripWaypoints =
         JSONObject(client.get("/trips/$tripId/waypoints")).toTripWaypoints()
 
     /**

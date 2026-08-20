@@ -52,6 +52,7 @@
     <!-- Edit trip -->
     <string name="edit_trip">แก้ไขทริป</string>
     <string name="edit_trip_save">บันทึก</string>
+    <string name="edit_trip_saved">บันทึกชื่อแล้ว</string>
     <string name="back">ย้อนกลับ</string>
 
     <!-- Trip detail -->

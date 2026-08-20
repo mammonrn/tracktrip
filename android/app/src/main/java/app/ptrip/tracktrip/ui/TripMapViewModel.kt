@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 
 data class TripMapUiState(
@@ -535,45 +536,69 @@ class TripMapViewModel(
     /**
      * Opens the route card on what the trip already has.
      *
-     * Seeded rather than blank, which is the whole of requirement four: after
-     * a route is confirmed, opening the card again shows it, and changing one
-     * end is one tap. The edit mechanism did not change — the way in did.
+     * Seeded rather than blank: after a route is confirmed, opening the card
+     * again shows it, and changing one end is one tap.
+     *
+     * ## Seeded twice, and the first time without waiting
+     *
+     * This used to `loadWaypoints()` first and seed afterwards, for a reason
+     * that is still good: a screen can open the list as soon as the *trip* has
+     * loaded, which on a cold start is before the waypoints ever have, and a
+     * draft seeded from an empty `waypoints` is a route missing its stops. A
+     * trip is shared, too — somebody may have added a stop since the last
+     * poll, and a rider about to re-order the route should be arranging what
+     * the route actually is.
+     *
+     * What it also did was hold the *old* draft on screen for the length of a
+     * network round trip. The old draft is empty — every way into this screen
+     * arrives just after `closeRouteSetup` or `confirmRoute` cleared it — so
+     * every visit to a trip with a route on it opened on "Choose a starting
+     * point" and stayed there until the server answered. On a slow connection
+     * that reads as the route having been lost, which is exactly the report
+     * this is answering, and it was never true: the stops were on the server
+     * the whole time and simply had not arrived yet.
+     *
+     * So the seed is split in two. The first is synchronous — before this
+     * function returns, so no frame is ever drawn against the empty draft —
+     * and uses whatever the trip and the last poll already put in state. The
+     * fetch still happens, and still decides: when it lands, the draft is
+     * seeded again from what came back. [RouteSetupRules.reseeded] is what
+     * stops that second seed from overwriting a rider who started editing
+     * while it was in flight.
+     *
+     * A failed fetch falls through to the first seed, which is what every
+     * other read on this screen does with a failure.
      */
     fun openRouteSetup() {
-        viewModelScope.launch {
-            // Re-read before seeding, rather than trusting whatever the last
-            // poll left behind. Two reasons, and the first is a race this
-            // feature would lose silently without it: the screen can open the
-            // list as soon as the *trip* has loaded, which on a cold start is
-            // before the waypoints have — and a list seeded from an empty
-            // `waypoints` is exactly the two-empty-ends bug this change is
-            // fixing, re-created one layer up.
-            //
-            // The second is that a trip is shared. Somebody may have added a
-            // stop since the last poll, and a rider about to re-order the
-            // route should be arranging what the route actually is.
-            //
-            // A failed fetch falls through to what is already in state, which
-            // is what every other read on this screen does.
-            loadWaypoints()
+        val opened = _uiState.updateAndGet { it.copy(routeDraft = seedFrom(it)) }.routeDraft
+        // On the trip's own route this asks for nothing: the summary reads the
+        // line already fetched for these two ends. See refreshRoutePreview.
+        refreshRoutePreview()
 
+        viewModelScope.launch {
+            loadWaypoints()
             _uiState.update {
-                it.copy(
-                    routeDraft = RouteSetupRules.fromTrip(
-                        it.trip?.origin,
-                        it.trip?.destination,
-                        // The stops the trip already has, so the list a rider
-                        // reopens is the route they saved rather than two
-                        // empty ends. This one argument is the bug fix:
-                        // without it the draft could only ever describe stops
-                        // it had made itself.
-                        it.waypoints.planned,
-                    ),
-                )
+                it.copy(routeDraft = RouteSetupRules.reseeded(it.routeDraft, opened, seedFrom(it)))
             }
             refreshRoutePreview()
         }
     }
+
+    /**
+     * The draft this trip describes right now, as far as this screen knows.
+     *
+     * Both seeds in [openRouteSetup] go through here so that "what the first
+     * one wrote" and "what the second one would write" are comparable — the
+     * whole of [RouteSetupRules.reseeded] rests on the two being the same
+     * function over different states.
+     */
+    private fun seedFrom(state: TripMapUiState): RouteDraft = RouteSetupRules.fromTrip(
+        state.trip?.origin,
+        state.trip?.destination,
+        // The stops the trip already has, so the list a rider reopens is the
+        // route they saved rather than two empty ends.
+        state.waypoints.planned,
+    )
 
     /**
      * Throws the draft away.

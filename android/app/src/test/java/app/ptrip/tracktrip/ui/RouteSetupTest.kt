@@ -375,6 +375,50 @@ class RouteSetupTest {
         // A stop is always a new one — there is no stop field to re-open.
         assertNull(RouteSetupRules.at(draft, RouteField.STOP))
     }
+    @Test
+    fun `a late fetch fills in a draft nobody has touched`() {
+        val opened = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
+        val fetched = RouteSetupRules.fromTrip(
+            endpoint(chiangMai),
+            endpoint(pai),
+            listOf(planned(1, 0, lampang)),
+        )
+
+        // The list opened on what the trip already had; the stops arrived a
+        // moment later. Nothing was edited in between, so the fuller answer
+        // wins.
+        assertEquals(fetched, RouteSetupRules.reseeded(opened, opened, fetched))
+    }
+
+    @Test
+    fun `a late fetch leaves an edited draft alone`() {
+        val opened = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
+        val edited = RouteSetupRules.with(opened, RouteField.TO, RoutePoint(lampang, "Lampang"))
+        val fetched = RouteSetupRules.fromTrip(
+            endpoint(chiangMai),
+            endpoint(pai),
+            listOf(planned(1, 0, lampang)),
+        )
+
+        // A slow connection is long enough to choose a destination, and having
+        // it replaced by the server's answer a moment afterwards is worse than
+        // the stale list the fetch was fixing.
+        assertEquals(edited, RouteSetupRules.reseeded(edited, opened, fetched))
+    }
+
+    @Test
+    fun `a fetch that adds nothing is not a change`() {
+        val opened = RouteSetupRules.fromTrip(
+            endpoint(chiangMai),
+            endpoint(pai),
+            listOf(planned(1, 0, lampang)),
+        )
+
+        // The ordinary case on a warm screen: the poll had the stops already,
+        // so both seeds agree and the draft is left exactly as it is.
+        assertEquals(opened, RouteSetupRules.reseeded(opened, opened, opened))
+    }
+
 }
 
 /**
@@ -410,4 +454,5 @@ class RouteEtaTest {
         // would draw a time in the past rather than an error.
         assertNull(RouteEta.split(-5))
     }
+
 }
