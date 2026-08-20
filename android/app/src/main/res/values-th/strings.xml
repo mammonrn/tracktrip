@@ -133,6 +133,9 @@
     <string name="map_center_on_me">กลับมาที่ตำแหน่งฉัน</string>
     <string name="map_overview">ดูเส้นทางทั้งหมด</string>
     <string name="map_progress_straight_line">เส้นตรง</string>
+    <string name="map_progress_by_road">ตามถนน</string>
+    <string name="map_trails_show">แสดงเส้นทางที่ผ่านมา</string>
+    <string name="map_trails_hide">ซ่อนเส้นทางที่ผ่านมา</string>
     <string name="map_no_position">ยังไม่มีตำแหน่ง</string>
     <string name="map_last_seen">ตำแหน่งล่าสุดที่ทราบ</string>
     <string name="map_you">%1$s (คุณ)</string>

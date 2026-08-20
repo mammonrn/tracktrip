@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,13 +33,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.ptrip.tracktrip.R
+import app.ptrip.tracktrip.data.LiveCadence
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.SuggestedInvitee
 import app.ptrip.tracktrip.data.Trip
+import app.ptrip.tracktrip.map.FixAge
 import app.ptrip.tracktrip.ui.theme.AppPrimary
 import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
+import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudChip
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -51,6 +55,15 @@ import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import app.ptrip.tracktrip.ui.theme.riderColor
+import kotlinx.coroutines.delay
+
+/**
+ * How often the ages on the member rows are recomputed.
+ *
+ * Twenty seconds: the numbers are whole minutes, so anything faster redraws
+ * the same text, and anything slower lets a row sit a minute behind itself.
+ */
+private const val MEMBER_AGE_TICK_MS = 20_000L
 
 @Composable
 fun TripDetailScreen(
@@ -67,12 +80,53 @@ fun TripDetailScreen(
     onShowQr: () -> Unit,
     onEndTrip: () -> Unit,
     onBack: () -> Unit,
+    /**
+     * Re-read the trip and its members. Called on a slow beat while this
+     * screen is on top, and defaulted to nothing for the previews.
+     *
+     * Driven from here rather than from the view model for the same reason the
+     * map's poll is: a view model outlives the screen — it is scoped to the
+     * activity and keyed by trip id — so a loop started inside one would go on
+     * fetching from behind three other screens. Started here, it stops when
+     * this screen is no longer composed.
+     */
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val trip = state.trip
     var confirmingEnd by remember { mutableStateOf(false) }
 
     var choosingDuration by remember { mutableStateOf(false) }
+
+    // The poll that keeps this screen from disagreeing with the map.
+    //
+    // Both read `battery_pct` off `GET /trips/:id/positions`; the map polls it
+    // and folds live socket frames in on top, and this screen used to ask
+    // exactly once per app launch. A rider who opened the members list, rode
+    // for two hours with the phone on a charger, and came back read 37% here
+    // against 76% on the map — one number, two ages, and nothing on screen to
+    // say which was which. See TripDetailViewModel.refresh.
+    //
+    // Twenty seconds, the same beat the map uses without a socket. There is no
+    // socket on this screen: it is a list somebody reads for a few seconds,
+    // not a map they ride behind, and a second WebSocket for it would be a
+    // connection per screen for a number that moves one per cent an hour.
+    LaunchedEffect(Unit) {
+        while (true) {
+            onRefresh()
+            delay(LiveCadence.POLL_MS)
+        }
+    }
+
+    // The wall clock, on its own beat, so the ages below count up between
+    // polls instead of sitting still and then jumping.
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(MEMBER_AGE_TICK_MS)
+            nowMs = System.currentTimeMillis()
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         HudTopBar(
@@ -115,7 +169,9 @@ fun TripDetailScreen(
                     modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
                 )
             }
-            items(state.members, key = { it.userId }) { member -> MemberRow(member) }
+            items(state.members, key = { it.userId }) { member ->
+                MemberRow(member, fixAgeMinutes = FixAge.minutesAgo(member.recordedAt, nowMs))
+            }
 
             // Inviting is owner-only on the backend, so a member is not shown
             // a control that would only ever answer 403.
@@ -276,8 +332,17 @@ private val SharingDuration.durationLabelRes: Int
         SharingDuration.UNTIL_STOPPED -> R.string.duration_until_stopped
     }
 
+/**
+ * One rider on the trip: their colour, name, role, and how their phone is
+ * doing.
+ *
+ * [fixAgeMinutes] is here because of what went wrong without it. The battery
+ * is not a live reading — it is whatever came up with this rider's last
+ * position report — and a bare "37%" reads as "now". Saying when the number is
+ * from turns a reading a rider might argue with into one they can act on.
+ */
 @Composable
-private fun MemberRow(member: MemberPosition) {
+private fun MemberRow(member: MemberPosition, fixAgeMinutes: Long? = null) {
     HudSurface {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HudDot(color = riderColor(member.userId))
@@ -298,18 +363,25 @@ private fun MemberRow(member: MemberPosition) {
                             append(" · ")
                             append(stringResource(R.string.not_tracking_yet))
                         }
+                        // How old everything to the right of this row is —
+                        // the battery included, since it arrives with the
+                        // position rather than on its own.
+                        fixAgeMinutes?.let { minutes ->
+                            append(" · ")
+                            append(
+                                if (minutes < 1) {
+                                    stringResource(R.string.map_fix_age_now)
+                                } else {
+                                    stringResource(R.string.map_fix_age_minutes, minutes)
+                                }
+                            )
+                        }
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = AppTextMuted,
                 )
             }
-            member.batteryPct?.let {
-                Text(
-                    text = "$it%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppTextMuted,
-                )
-            }
+            member.batteryPct?.let { HudBatteryReadout(percent = it) }
         }
     }
 }

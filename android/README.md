@@ -148,6 +148,66 @@ rider is one colour everywhere and stays that colour across refreshes and
 restarts. Panning follows an explicit tap, never the poll: re-centring every
 45 seconds would fight a rider who has dragged the map somewhere.
 
+### The route line
+
+With a road route fetched (`GET /directions` — see the backend README), the
+map draws it between the trip's start and finish: a wide white casing with the
+orange fill on top, the same trick a road atlas uses and the same one the
+progress bar down the edge of the map uses. A single coloured line over a
+daylight OSM tile disappears the moment it crosses a motorway drawn in a
+similar colour; with a casing the fill only has to contrast with its own
+outline.
+
+The route is fetched **once per pair of endpoints**, not once per poll —
+[`map/RouteRequests.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RouteRequests.kt) is that rule, and
+`RouteRequestsTest` is what holds it. When there is a route, the progress bar
+measures along it ([`map/RouteGeometry.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/RouteGeometry.kt)) and its caption
+reads "by road"; without one — no key on the server, no road between the
+points, or a rider more than 20 km off the line — it falls back to the
+straight-line measure and the caption reads "direct", exactly as before.
+
+### Trails
+
+Each rider's recent breadcrumbs are drawn behind them in their own colour,
+from `GET /trips/:id/positions/history`. The rules are in [`map/Breadcrumbs.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/Breadcrumbs.kt): the last **45
+minutes**, at most **120 points per rider**, topped up every 30 seconds by
+asking only for what is newer than the newest point already held.
+
+Forty-five minutes is a judgement, not a limit imposed by anything: the trail
+answers "which way did they come, and did they take the turn?", which is a
+question about the last few minutes, and a whole day drawn behind eight riders
+is a ball of wool rather than a map. The per-rider cap exists for the case the
+cadence does not describe — a phone that lost signal in the hills and flushes a
+backlog of fixes in one second.
+
+The window is also why the fetch passes `since`: the history endpoint is
+`ORDER BY recorded_at ASC ... LIMIT`, so a request without one returns the
+*oldest* points of the ride, which is the opposite of what a trail behind a
+moving pin needs.
+
+There is a toggle for it on the map, and the answer is remembered in
+`AppSettings`. On by default — a feature switched off by default is a feature
+nobody finds — but whether eight coloured lines help or clutter genuinely
+depends on where the group is, so it is a button on the map rather than a
+setting a screen away.
+
+### The progress bar down the edge
+
+Where the bar starts is worked out from the header's **measured** height
+([`map/ProgressBarLayout.kt`](
+app/src/main/java/app/ptrip/tracktrip/map/ProgressBarLayout.kt)), not from a
+constant. It used to be a flat 76dp inset, on the strength of the header being
+"about 68dp tall" — which it is, until the trip name wraps to two lines, or the
+subtitle carries "Sent 4 min ago", or a failed poll adds an error row, or the
+rider has turned the system font scale up. Any one of those pushed the header
+past the guess and put the bar's label plate underneath it.
+
+Below a floor the bar is not drawn at all rather than squeezed into a smear:
+the distance and its caption are on the header already.
+
 ## Language
 
 The language setting is stored in `SharedPreferences` and applied through
@@ -215,6 +275,33 @@ the server refuses positions over the socket outright — see the backend README
 for why one write path is worth keeping.
 
 ## Battery
+
+### Each rider's battery level, and why two screens once disagreed about it
+
+The battery percentage beside a rider's name is not a live reading. It is
+whatever their phone reported alongside its **last position fix**, stored in
+`member_positions.battery_pct` and served by `GET /trips/:id/positions` — the
+one endpoint both the map and the members list read.
+
+They still managed to show different numbers for the same rider, minutes
+apart: 76% on the map against 37% on the members list. Neither was wrong about
+the field; they were reading it at different *ages*. The map polls every twenty
+seconds and folds live socket frames in on top, while `TripDetailViewModel`
+called `refresh()` exactly once, from `init` — and that view model is scoped to
+the activity and keyed by trip id, so "once" meant once per app launch. Open
+the members list in the morning, ride all day with the phone on a charger on
+the handlebars, come back to it: 37% from before breakfast, sitting next to a
+map showing 76% from twenty seconds ago.
+
+The fix is two things. The members list polls on the same twenty-second beat
+(quietly — a background refresh never raises the loading flag or clears an
+error), and both screens now say **how old the reading is** next to it. The
+percentage itself is drawn by one shared component,
+`HudBatteryReadout` — an icon that fills, and a colour that goes red at 10%.
+Two screens each drawing their own `"$it%"` is the seam this drifted apart
+along, and there is only one now.
+
+### Keeping this phone alive long enough to report
 
 The foreground service is what lets the app read location with the phone in a
 pocket, and it is not enough on its own: Doze and app-standby still throttle a

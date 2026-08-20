@@ -472,6 +472,10 @@ private fun SignedInNavigation(
                     // moment this one ends.
                     tripsViewModel.refresh()
                 },
+                // Quiet: a background poll must not raise the loading flag or
+                // clear an error the rider has not read. See
+                // TripDetailViewModel.refresh for why this screen polls at all.
+                onRefresh = { detailViewModel.refresh(quiet = true) },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -634,6 +638,8 @@ private fun SignedInNavigation(
                     mapViewModel.place(placement, point.lat, point.lng, name)
                 },
                 onRemoveWaypoint = mapViewModel::removeWaypoint,
+                onRefreshTrail = mapViewModel::refreshTrail,
+                onToggleTrails = mapViewModel::toggleTrails,
                 // Only this trip's own reports: `sharing` is what the service
                 // is broadcasting, and it broadcasts to one trip at a time.
                 lastReportedAtMillis = sharing
@@ -737,6 +743,9 @@ private fun tripMapViewModelFactory(
             positionSocket = container.positionSocket,
             onSessionExpired = onSessionExpired,
             placeSearchApi = container.placeSearchApi,
+            routeApi = container.directionsApi,
+            trailsVisible = container.settings.mapTrailsVisible,
+            onTrailsVisibleChanged = { container.settings.mapTrailsVisible = it },
         )
     }
 

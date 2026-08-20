@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -14,6 +15,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.ptrip.tracktrip.location.BatteryLevel
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -335,5 +337,100 @@ fun HudSearchIcon(
             Offset(centre.x + edge, centre.y + edge),
             Offset(size.width * 0.86f, size.height * 0.86f),
         )
+    }
+}
+
+/**
+ * A battery, filled to the level it is reporting.
+ *
+ * Drawn rather than shipped, like the rest of the set, but unlike the rest it
+ * is not pure line work: the fill is the whole point. A percentage on its own
+ * is a number nobody parses at a glance — the bar inside this is what makes 37
+ * read as "nearly gone" without anybody having to read it at all.
+ *
+ * The outline stays [tint] whatever the level; only the fill goes red, so a
+ * low battery is a red *bar* rather than a red glyph that could be mistaken
+ * for an error.
+ */
+@Composable
+fun HudBatteryIcon(
+    percent: Int,
+    modifier: Modifier = Modifier,
+    tint: Color = AppTextMuted,
+    fill: Color = AppTextMuted,
+    iconSize: Dp = 16.dp,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val stroke = size.minDimension * 0.09f
+        // A battery lying on its side: a body, and a terminal nub on the right
+        // that is what stops the shape reading as a plain rounded rectangle.
+        val nubWidth = size.width * 0.09f
+        val bodyWidth = size.width - nubWidth - stroke
+        val bodyHeight = size.height * 0.54f
+        val top = (size.height - bodyHeight) / 2f
+        val left = stroke / 2f
+
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(left, top),
+            size = Size(bodyWidth, bodyHeight),
+            cornerRadius = CornerRadius(stroke * 1.6f, stroke * 1.6f),
+            style = Stroke(width = stroke),
+        )
+
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(left + bodyWidth + stroke * 0.5f, top + bodyHeight * 0.3f),
+            size = Size(nubWidth, bodyHeight * 0.4f),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+
+        // The fill sits inside the outline with a hair of clearance, so a full
+        // battery still reads as a battery rather than as a solid block.
+        val inset = stroke * 1.6f
+        val trackWidth = bodyWidth - inset * 2f
+        val fraction = BatteryLevel.fillFraction(percent)
+        if (trackWidth > 0f && fraction > 0f) {
+            drawRoundRect(
+                color = fill,
+                topLeft = Offset(left + inset, top + inset),
+                size = Size(trackWidth * fraction, bodyHeight - inset * 2f),
+                cornerRadius = CornerRadius(stroke, stroke),
+            )
+        }
+    }
+}
+
+/**
+ * The trail toggle: a dotted line behind a point.
+ *
+ * Dots rather than a solid line, because that is exactly what the toggle turns
+ * on — a rider's breadcrumbs, one per reported fix — and the icon showing the
+ * same thing the map draws is what makes the control guessable without a
+ * label.
+ */
+@Composable
+fun HudTrailIcon(
+    modifier: Modifier = Modifier,
+    tint: Color = AppPrimary,
+    iconSize: Dp = DEFAULT_ICON_SIZE,
+) {
+    Canvas(modifier = modifier.size(iconSize)) {
+        val dot = size.minDimension * 0.07f
+        // A shallow S, so the crumbs read as a road taken rather than as a
+        // dotted rule.
+        val path = listOf(
+            0.16f to 0.78f,
+            0.32f to 0.70f,
+            0.46f to 0.55f,
+            0.58f to 0.40f,
+            0.72f to 0.30f,
+        )
+        path.forEach { (x, y) ->
+            drawCircle(color = tint, radius = dot, center = at(x, y))
+        }
+        // The head of the trail: where the rider is now, drawn larger so the
+        // line has a direction.
+        drawCircle(color = tint, radius = dot * 2.1f, center = at(0.84f, 0.22f))
     }
 }

@@ -59,6 +59,12 @@ src/
     waypoints.js         # /trips/:id/waypoints
     positions.js          # /trips/:id/positions
     sharing.js             # /trips/:id/share/start, /share/stop
+    geocode.js              # GET /geocode/search (LocationIQ, proxied)
+    directions.js           # GET /directions (LocationIQ road routing, proxied)
+  geocode/
+    locationiq.js     # forward geocoding: URL, parsing, error mapping
+    directions.js     # road routing: URL, geometry parsing, line thinning
+    cache.js          # the short-lived answer cache both of them use
   ws/                # WebSocket server (stub)
 scripts/
   cleanup-history.js  # CLI wrapper for npm run cleanup
@@ -716,7 +722,7 @@ All variables are documented in `.env.example`:
 | `UPLOADS_DIR`             | Where uploaded avatars are written. Must be outside the repo (a deploy replaces the checkout) and must match the `root` in nginx's `location /uploads/` block. | `~/tracktrip/uploads` |
 | `HISTORY_RETENTION_DAYS`  | Days of `position_history` to keep for ended trips before cleanup deletes it. | `30`                     |
 | `SUPERUSER_EMAILS`        | Comma-separated emails granted the super-user role — see [Roles](#roles). The list is the authority: it is reconciled with `users.role` at every boot and sign-in, so removing an address revokes the role. | `krongkrangrn@gmail.com` |
-| `LOCATIONIQ_API_KEY`      | LocationIQ access token behind `GET /geocode/search`, the map's place search. Server-side only — see [Place search](#place-search). Unset is supported: that one route answers 503 and nothing else changes. | *(empty)* |
+| `LOCATIONIQ_API_KEY`      | LocationIQ access token behind `GET /geocode/search` (the map's place search) and `GET /directions` (the road route drawn between a trip's ends). Server-side only — see [Place search](#place-search) and [Road routing](#road-routing). Unset is supported: those two routes answer 503 and nothing else changes. | *(empty)* |
 | `LOCATIONIQ_COUNTRY_CODES`| Optional comma-separated ISO 3166-1 alpha-2 codes to bias searches towards, e.g. `th`. Unset searches the whole planet. | *(empty)* |
 
 Never commit a real `.env` file — it's excluded via `.gitignore`.
@@ -762,3 +768,56 @@ somebody else, so the phone asks this server and the server holds the token.
 shows that sentence under the search box. Nothing else on the server is
 affected. Filling the key in later needs no migration and no new build of the
 app: put it in `.env` on the VPS and `npm run pm2:restart`.
+
+## Road routing
+
+`GET /directions?from=<lat,lng>&to=<lat,lng>` answers with the road between two
+points: the line to draw on the map, how long it is, and roughly how long it
+takes. It is what turns the map's progress bar from "how much of the crow-flies
+gap have I closed" into "how much of the road is left", which on a mountain
+road are very different numbers.
+
+```
+GET /directions?from=18.78830,98.98530&to=19.35830,98.44060
+→ { "from": { "lat": 18.7883, "lng": 98.9853 },
+    "to":   { "lat": 19.3583, "lng": 98.4406 },
+    "cached": false,
+    "route": {
+      "points": [ { "lat": 18.7883, "lng": 98.9853 }, ... ],
+      "distance_km": 134.5,
+      "duration_min": 210
+    } }
+```
+
+Same key, same reasoning, same defences as place search — with the numbers
+turned up, because the traffic pattern is different:
+
+- **The app asks once per pair of endpoints**, not once per poll. The map polls
+  positions every twenty seconds; a route is a function of two coordinates the
+  trip owner set by hand, so it is re-fetched when either of them moves and at
+  no other time. A failed attempt waits five minutes before another is tried,
+  so a server with no key does not get three requests a minute for ever.
+  (`android/.../map/RouteRequests.kt`, and the test beside it.)
+- **The server caches a route for six hours**, against place search's ten
+  minutes. Every rider on a trip asks the same question — the road from this
+  trip's start to its finish — so eight riders cost one upstream request, and
+  a road between two towns does not change over an afternoon.
+- **Rate-limited to 6 a minute per rider**, tighter than search's twelve,
+  because nobody types a route.
+
+`overview=simplified` is what gets asked for, and the geometry is thinned to at
+most 600 points before it leaves this server: the line is drawn on a phone, not
+navigated. The distance is the routing service's own figure and is never
+re-measured from the thinned points — that would be quietly short.
+
+**"No road between these two points"** — a finish on an island, a coordinate in
+the sea — is `200` with `"route": null`, not an error, and is cached like any
+other answer.
+
+**Without `LOCATIONIQ_API_KEY` set** the route answers `503` and the app falls
+back to the straight line it drew before road routing existed, captioned
+"direct" exactly as it always was. Nothing is shown to the rider: they cannot
+act on a server's API key, and the map still works.
+
+Turn-by-turn navigation and alternative routes are deliberately not here. This
+phase draws one line and measures against it.

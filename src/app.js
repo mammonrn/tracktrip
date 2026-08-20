@@ -8,6 +8,7 @@ import { createWaypointsRouter } from './routes/waypoints.js';
 import { createPositionsRouter } from './routes/positions.js';
 import { createSharingRouter } from './routes/sharing.js';
 import { createGeocodeRouter } from './routes/geocode.js';
+import { createDirectionsRouter } from './routes/directions.js';
 import { syncSuperuserRoles } from './auth/roles.js';
 import { noopHub } from './ws/hub.js';
 
@@ -22,6 +23,11 @@ import { noopHub } from './ws/hub.js';
  * optional, and for a similar reason: a server with no LOCATIONIQ_API_KEY set
  * still runs, and that one route answers 503 saying so rather than the whole
  * app refusing to boot over a feature nobody on it is using yet.
+ *
+ * [routeBetween] is the road router behind `GET /directions`, on the same key
+ * and optional for the same reason. A server without it makes the map draw the
+ * straight line it drew before road routing existed, which is why the app
+ * treats its absence as a fallback rather than as a failure.
  */
 export function createApp({
   db,
@@ -29,8 +35,9 @@ export function createApp({
   verifyGoogleIdToken,
   hub = noopHub,
   searchPlaces = null,
-  // Where the place-search route writes its one line per search. Injected
-  // only so the tests can read it back instead of printing it.
+  routeBetween = null,
+  // Where the place-search and routing routes write their one line per call.
+  // Injected only so the tests can read it back instead of printing it.
   searchLogger = console,
 }) {
   // Before the first request, so no route can be served by a process whose
@@ -53,6 +60,7 @@ export function createApp({
   app.use(createPositionsRouter({ db, config, hub }));
   app.use(createSharingRouter({ db, config }));
   app.use(createGeocodeRouter({ db, config, search: searchPlaces, logger: searchLogger }));
+  app.use(createDirectionsRouter({ db, config, route: routeBetween, logger: searchLogger }));
   return app;
 }
 

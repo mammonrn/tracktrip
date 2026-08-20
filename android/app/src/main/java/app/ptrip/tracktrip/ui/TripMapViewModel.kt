@@ -7,14 +7,19 @@ import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.PlaceLookup
 import app.ptrip.tracktrip.data.PositionSocket
 import app.ptrip.tracktrip.data.RiderLevel
+import app.ptrip.tracktrip.data.RouteLine
+import app.ptrip.tracktrip.data.RouteLookup
 import app.ptrip.tracktrip.data.SessionExpiredException
+import app.ptrip.tracktrip.data.TrailPoint
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.TripApi
 import app.ptrip.tracktrip.data.TripEndpoint
 import app.ptrip.tracktrip.data.TripWaypoints
 import app.ptrip.tracktrip.data.Waypoint
+import app.ptrip.tracktrip.map.Breadcrumbs
 import app.ptrip.tracktrip.map.LatLng
 import app.ptrip.tracktrip.map.RideOrder
+import app.ptrip.tracktrip.map.RouteRequests
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +34,27 @@ data class TripMapUiState(
     val levels: Map<Long, RiderLevel> = emptyMap(),
     /** The trip's planned stops and live drops. Drawn, never listed as members. */
     val waypoints: TripWaypoints = TripWaypoints(),
+    /**
+     * The road between the trip's two ends, when the server managed to work
+     * one out.
+     *
+     * Null is the ordinary state and not an error: no destination set yet, a
+     * server with no LocationIQ key, an exhausted quota, or a pair of points
+     * with no road between them. Everything that reads it falls back to the
+     * straight line the map drew before road routing existed, and the label on
+     * the progress bar says which of the two is on screen.
+     */
+    val route: RouteLine? = null,
+    /**
+     * Where each rider has just been, oldest point first, keyed by rider.
+     *
+     * Empty when the trail is switched off, when nobody has moved far enough
+     * to have one, or when the fetch failed — all three draw nothing, which is
+     * the same thing the map did before trails existed.
+     */
+    val trails: Map<Long, List<LatLng>> = emptyMap(),
+    /** Whether the rider wants trails drawn. Remembered between rides. */
+    val trailsVisible: Boolean = true,
     /**
      * Whether [members] is ordered leader-first rather than by how recently
      * each rider reported.
@@ -87,6 +113,19 @@ class TripMapViewModel(
      * the screen has to check.
      */
     placeSearchApi: PlaceLookup? = null,
+    /**
+     * Road routing, or null in a preview or a test. Null behaves exactly like
+     * a server with no key: no route, and the straight line stays.
+     */
+    private val routeApi: RouteLookup? = null,
+    /**
+     * Whether trails start switched on, and where the answer is written back
+     * to. Defaulted so a preview or a test needs neither.
+     */
+    trailsVisible: Boolean = true,
+    private val onTrailsVisibleChanged: (Boolean) -> Unit = {},
+    /** The clock, injected so the trail window and the routing backoff can be tested. */
+    private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     /**
@@ -159,7 +198,7 @@ class TripMapViewModel(
         rememberFixes(listOf(position))
     }
 
-    private val _uiState = MutableStateFlow(TripMapUiState())
+    private val _uiState = MutableStateFlow(TripMapUiState(trailsVisible = trailsVisible))
     val uiState: StateFlow<TripMapUiState> = _uiState.asStateFlow()
 
     // After the state it writes to, not before it: an initialiser block runs
@@ -224,6 +263,10 @@ class TripMapViewModel(
 
                 loadLevels(members)
                 loadWaypoints()
+                // Not a fetch unless the trip's two ends have actually
+                // changed — see loadRoute for why that matters here more than
+                // anywhere else in the app.
+                loadRoute(trip)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
@@ -278,6 +321,142 @@ class TripMapViewModel(
             return
         }
         _uiState.update { it.copy(waypoints = waypoints) }
+    }
+
+    /**
+     * What [route] was fetched for, so a poll does not fetch it again.
+     *
+     * The single most important line in this file for the LocationIQ bill.
+     * [refresh] runs every twenty seconds; the road between a trip's start and
+     * its finish changes when the owner moves one of them, which is a handful
+     * of times a ride. Keyed on the pair of endpoints rather than on a boolean
+     * so that moving the finish re-fetches and moving nothing does not.
+     */
+    private var routeFor: Pair<LatLng, LatLng>? = null
+
+    /**
+     * When a failed routing attempt may be retried, or null when none has
+     * failed.
+     *
+     * See [RouteRequests] for why a failure is neither permanent nor retried
+     * on the next poll.
+     */
+    private var routeRetryAtMs: Long? = null
+
+    /**
+     * The road between the trip's two ends, fetched once per pair of ends.
+     *
+     * ## Why this is not folded into the poll
+     *
+     * Everything else on this screen is re-read every twenty seconds because
+     * it changes every twenty seconds. A route does not: it is a function of
+     * two coordinates the trip owner set by hand, and the quota behind it is
+     * 5,000 requests a day shared by every rider on the server. Asking on
+     * every poll would be roughly 180 requests an hour per rider watching a
+     * map, which would empty the day's budget before lunch.
+     *
+     * So the pair of endpoints is the key. Same pair, no request. A cleared
+     * destination drops the route rather than leaving the old one drawn, which
+     * would be a road to somewhere the trip is no longer going.
+     *
+     * Its failure is swallowed, like levels' and waypoints': the map falls
+     * back to the straight line it drew before routing existed, and the
+     * progress bar's caption already says which of the two it is showing.
+     */
+    private suspend fun loadRoute(trip: Trip?) {
+        val origin = trip?.origin?.let { LatLng(it.lat, it.lng) }
+        val destination = trip?.destination?.let { LatLng(it.lat, it.lng) }
+
+        if (origin == null || destination == null) {
+            routeFor = null
+            routeRetryAtMs = null
+            if (_uiState.value.route != null) _uiState.update { it.copy(route = null) }
+            return
+        }
+
+        val pair = origin to destination
+        // The rule that keeps this off the poll's beat, written down where it
+        // can be tested: see RouteRequests.
+        if (!RouteRequests.shouldFetch(pair, routeFor, routeRetryAtMs, now())) return
+
+        routeFor = pair
+        routeRetryAtMs = null
+
+        val api = routeApi ?: return
+        val line = try {
+            api.route(origin, destination)
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+            return
+        } catch (e: ApiException) {
+            routeRetryAtMs = now() + RouteRequests.RETRY_AFTER_MS
+            _uiState.update { it.copy(route = null) }
+            return
+        }
+        _uiState.update { it.copy(route = line) }
+    }
+
+    /**
+     * Every rider's breadcrumbs, held here rather than in the state.
+     *
+     * The state carries the drawn lines; this carries the points they are made
+     * of, with their ids and timestamps, because that is what the next top-up
+     * needs to ask for only what it has not already got. See [Breadcrumbs].
+     */
+    private var trailPoints: List<TrailPoint> = emptyList()
+
+    /**
+     * Tops the trail up.
+     *
+     * Driven by the screen on its own slow beat, not by [refresh]: a trail is
+     * a line that has already happened, and a rider cannot see that its near
+     * end is half a minute short. The first call asks for the whole window;
+     * every one after it asks only for what has arrived since the newest point
+     * already held, so the usual answer is a row or two per rider.
+     *
+     * Silent on failure, like everything else that is not a position: a map
+     * with pins on it is not broken because the history did not load.
+     */
+    fun refreshTrail() {
+        if (!_uiState.value.trailsVisible) return
+        viewModelScope.launch {
+            val nowMs = now()
+            val since = Breadcrumbs.sinceIso(nowMs, Breadcrumbs.newest(trailPoints))
+            val trail = try {
+                tripApi.trail(tripId, sinceIso = since)
+            } catch (e: SessionExpiredException) {
+                onSessionExpired()
+                return@launch
+            } catch (e: ApiException) {
+                return@launch
+            }
+
+            trailPoints = Breadcrumbs.merge(trailPoints, trail.points, nowMs)
+            // Recomputed even when nothing arrived: the window is a moving
+            // one, so the tail of every line ages out whether or not the head
+            // grew.
+            _uiState.update { it.copy(trails = Breadcrumbs.byRider(trailPoints, nowMs)) }
+        }
+    }
+
+    /**
+     * Turns the trail on or off, and remembers the answer.
+     *
+     * Switching off throws the points away rather than hiding them: they age
+     * out of the window anyway, and keeping a stale set to show instantly on
+     * the way back would draw a line that stops where the rider was when they
+     * pressed the button.
+     */
+    fun toggleTrails() {
+        val visible = !_uiState.value.trailsVisible
+        if (!visible) trailPoints = emptyList()
+        _uiState.update {
+            it.copy(trailsVisible = visible, trails = if (visible) it.trails else emptyMap())
+        }
+        onTrailsVisibleChanged(visible)
+        // Not refetched here: the screen's own loop is keyed on this flag and
+        // fires the moment it flips, so doing it here as well would be two
+        // requests for one button press.
     }
 
     /** Rolls each rider's fix forward, keeping the one before it. */
