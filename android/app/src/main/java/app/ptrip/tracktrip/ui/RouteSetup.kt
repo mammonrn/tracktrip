@@ -190,6 +190,29 @@ object RouteSetupRules {
         },
     )
 
+    /**
+     * Which draft survives a fetch that finished after the card was already
+     * open.
+     *
+     * [fromTrip] is called twice when the route list opens: once immediately,
+     * off the trip that is already in hand, and once more when the stops come
+     * back from the server. The second one exists because the first can be
+     * wrong — a screen can open the list before the waypoints have ever been
+     * fetched, and a draft seeded from an empty list is a route missing its
+     * stops.
+     *
+     * What it must not do is overwrite a rider. Fifteen hundred milliseconds
+     * of a slow connection is long enough to tap a row and choose somewhere,
+     * and having that replaced by the server's answer a moment later is worse
+     * than the stale list it was fixing.
+     *
+     * So the test is identity, not merge: the fetched draft wins only if what
+     * is on screen is still exactly what the first seed put there. Anything
+     * else means the rider has touched it, and then it is theirs.
+     */
+    fun reseeded(current: RouteDraft, opened: RouteDraft, fetched: RouteDraft): RouteDraft =
+        if (current == opened) fetched else current
+
     /** The draft with [picked] in [field] — replacing an end, appending a stop. */
     fun with(draft: RouteDraft, field: RouteField, picked: RoutePoint): RouteDraft = when (field) {
         RouteField.FROM -> draft.copy(from = picked)
