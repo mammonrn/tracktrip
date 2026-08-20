@@ -190,6 +190,78 @@ test('0006 adds sharing sessions and drops the is_sharing column it replaces', (
   }
 });
 
+test('0013 and 0014 upgrade a database that already breaks the rule they add', () => {
+  // The production case, and the one the choice of a trigger over a partial
+  // unique index turns on. An index is validated against existing rows when it
+  // is created, so on a database already holding a rider with two active trips
+  // the CREATE fails, the migration transaction rolls back, and — because
+  // migrations run at boot — the API does not start. Nobody would find out
+  // until the deploy either worked or took the server down.
+  const db = freshDb();
+  const cleanup = migrateUpTo(db, '0013');
+  try {
+    const poom = Number(
+      db.prepare("INSERT INTO users (google_sub, email) VALUES ('sub-poom', 'poom@gmail.com')").run()
+        .lastInsertRowid
+    );
+    const nut = Number(
+      db.prepare("INSERT INTO users (google_sub, email) VALUES ('sub-nut', 'nut@gmail.com')").run()
+        .lastInsertRowid
+    );
+    // Three trips, both riders on all of them, all still running — a state the
+    // API allowed for as long as it existed.
+    const tripIds = ['Chiang Mai loop', 'Pai run', 'Doi Inthanon'].map((name) => {
+      const tripId = Number(
+        db.prepare("INSERT INTO trips (name, owner_id, status) VALUES (?, ?, 'active')").run(name, poom)
+          .lastInsertRowid
+      );
+      db.prepare("INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'owner')").run(tripId, poom);
+      db.prepare("INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'member')").run(tripId, nut);
+      return tripId;
+    });
+
+    const applied = runMigrations(db, MIGRATIONS_DIR);
+    assert.ok(applied.includes('0013_one_active_trip.sql'));
+    assert.ok(applied.includes('0014_member_left_at.sql'));
+
+    // Nobody is evicted. Those are real trips with real positions in them, and
+    // picking one to close is a decision for whoever owns the data rather than
+    // for a migration running unattended at boot.
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM trip_members WHERE left_at IS NULL').get().n, 6);
+
+    // The rule holds from here on, though: a fourth trip is refused.
+    const fourth = Number(
+      db.prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Fourth', ?, 'active')").run(poom)
+        .lastInsertRowid
+    );
+    assert.throws(
+      () =>
+        db.prepare("INSERT INTO trip_members (trip_id, user_id, role) VALUES (?, ?, 'owner')").run(fourth, poom),
+      /one active trip per rider/
+    );
+
+    // And leaving is the way out of it, one trip at a time.
+    const now = new Date().toISOString();
+    db.prepare('UPDATE trip_members SET left_at = ? WHERE user_id = ? AND trip_id IN (?, ?)')
+      .run(now, nut, tripIds[0], tripIds[1]);
+    assert.equal(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM trip_members
+             JOIN trips ON trips.id = trip_members.trip_id
+            WHERE trip_members.user_id = ? AND trip_members.left_at IS NULL
+              AND trips.status = 'active'`
+        )
+        .get(nut).n,
+      1
+    );
+
+    assert.equal(runMigrations(db, MIGRATIONS_DIR).length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
 test('trips.status CHECK constraint rejects invalid values', () => {
   const db = freshDb();
   runMigrations(db, MIGRATIONS_DIR);

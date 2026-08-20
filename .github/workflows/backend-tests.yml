@@ -1,0 +1,74 @@
+name: Backend tests
+
+# Its own file rather than a job in build-apk.yml, because the paths filter is
+# the whole point and it lives at file level: build-apk.yml only runs when
+# android/** changes, and a backend job inside it would inherit exactly the
+# wrong trigger — silent on every change it exists to check.
+#
+# Until this existed, `npm test` had never run in CI. The only automated check
+# the repository had was the Android build, so every backend change — routes,
+# auth guards, migrations — was covered by whatever the developer remembered to
+# run before deploying.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/backend-tests.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/backend-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          # The floor `package.json` declares, and the version the VPS actually
+          # runs — DEPLOY.md says so, and says not to upgrade it, because other
+          # apps on that box depend on the Node it has. Testing on the floor is
+          # what makes CI catch the failure DEPLOY.md warns about: a dependency
+          # that quietly needs something newer, which on the server shows up as
+          # `npm ci` failing during a deploy rather than here.
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        # Plain `npm ci`, and deliberately not `--omit=dev`: supertest is a dev
+        # dependency and every route test imports it, so omitting dev
+        # dependencies does not slim the install down — it makes the suite
+        # unable to start. `npm ci` also fails outright when package-lock.json
+        # has drifted from package.json, which is the check a `npm install`
+        # here would skip.
+        run: npm ci
+
+      - name: Run tests
+        # `node --test`, which walks test/ and applies every migration to an
+        # in-memory database in each file's setup. Migrations are therefore
+        # already exercised by this step and there is no separate
+        # `npm run migrate` below — it would build a schema nothing then reads.
+        #
+        # What migrate.test.js adds on top is the part a fresh apply cannot
+        # cover: upgrading a database that predates a migration and holds data
+        # from before it, including one already breaking the rule 0013 adds.
+        # That is the deploy path, and it is asserted rather than hoped for.
+        run: npm test
