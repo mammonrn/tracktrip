@@ -345,57 +345,68 @@ class TripMapViewModel(
      * still wants to see where everyone was.
      */
     fun refresh() {
-        viewModelScope.launch {
-            try {
-                val trip = _uiState.value.trip
-                    ?: tripApi.listTrips().firstOrNull { it.id == tripId }
-                val members = tripApi.members(tripId)
+        viewModelScope.launch { reload() }
+    }
 
-                val tracked = members.map { member ->
-                    RideOrder.Tracked(
-                        userId = member.userId,
-                        position = member.latLng,
-                        previous = previousFix[member.userId],
-                    )
-                }
-                // Read the movement before recording it, or every rider would
-                // appear to have just arrived where they already were.
-                val order = RideOrder.leaderFirst(tracked)
-                rememberFixes(members)
+    /**
+     * The body of [refresh], as something a caller can wait for.
+     *
+     * [refresh] itself is fire-and-forget by design — it is called from a
+     * polling effect that must not be held up by a slow answer. [writeRoute]
+     * needs the opposite: it re-seeds the route list from what came back, and
+     * seeding from state that has not been refreshed yet would show the rider
+     * the route as it was *before* the stop they just confirmed.
+     */
+    private suspend fun reload() {
+        try {
+            val trip = _uiState.value.trip
+                ?: tripApi.listTrips().firstOrNull { it.id == tripId }
+            val members = tripApi.members(tripId)
 
-                val ordered = order?.let { ids ->
-                    val rank = ids.withIndex().associate { (index, id) -> id to index }
-                    members.sortedBy { rank[it.userId] ?: Int.MAX_VALUE }
-                } ?: members
-
-                _uiState.update {
-                    it.copy(
-                        loading = false,
-                        trip = trip,
-                        members = ordered,
-                        orderedByProgress = order != null,
-                        error = null,
-                    )
-                }
-
-                loadLevels(members)
-                loadWaypoints()
-                // Not a fetch unless the route has actually changed — see
-                // loadRoute for why that matters here more than anywhere else
-                // in the app.
-                loadRoute(trip)
-                // An open card's preview follows the trip as well as the
-                // rider: another member adding a planned stop changes the road
-                // the summary sheet is quoting, and the sheet sits directly
-                // above the button that saves it. Costs nothing when nothing
-                // moved — RouteRequests is the guard, the same one that keeps
-                // loadRoute off this beat.
-                if (!_uiState.value.routeDraft.isEmpty) refreshRoutePreview()
-            } catch (e: SessionExpiredException) {
-                onSessionExpired()
-            } catch (e: ApiException) {
-                _uiState.update { it.copy(loading = false, error = e.message) }
+            val tracked = members.map { member ->
+                RideOrder.Tracked(
+                    userId = member.userId,
+                    position = member.latLng,
+                    previous = previousFix[member.userId],
+                )
             }
+            // Read the movement before recording it, or every rider would
+            // appear to have just arrived where they already were.
+            val order = RideOrder.leaderFirst(tracked)
+            rememberFixes(members)
+
+            val ordered = order?.let { ids ->
+                val rank = ids.withIndex().associate { (index, id) -> id to index }
+                members.sortedBy { rank[it.userId] ?: Int.MAX_VALUE }
+            } ?: members
+
+            _uiState.update {
+                it.copy(
+                    loading = false,
+                    trip = trip,
+                    members = ordered,
+                    orderedByProgress = order != null,
+                    error = null,
+                )
+            }
+
+            loadLevels(members)
+            loadWaypoints()
+            // Not a fetch unless the route has actually changed — see
+            // loadRoute for why that matters here more than anywhere else
+            // in the app.
+            loadRoute(trip)
+            // An open card's preview follows the trip as well as the
+            // rider: another member adding a planned stop changes the road
+            // the summary sheet is quoting, and the sheet sits directly
+            // above the button that saves it. Costs nothing when nothing
+            // moved — RouteRequests is the guard, the same one that keeps
+            // loadRoute off this beat.
+            if (!_uiState.value.routeDraft.isEmpty) refreshRoutePreview()
+        } catch (e: SessionExpiredException) {
+            onSessionExpired()
+        } catch (e: ApiException) {
+            _uiState.update { it.copy(loading = false, error = e.message) }
         }
     }
 
@@ -688,30 +699,55 @@ class TripMapViewModel(
      * did not move costs no request at all, and the stops go on in the order
      * the rider added them because there is an order to read.
      *
-     * The draft is cleared here, before the writes, rather than by the screen:
-     * the screen closes the card the moment this is called, and a failure is
-     * reported as the line above the map like every other failure on this
-     * screen. Holding the card open over a failed save would leave a rider
-     * looking at a route they cannot tell apart from a saved one.
+     * ## Two confirms, because there are two screens
+     *
+     * Over the map the route list is a *card*, and the card closes on confirm.
+     * Nothing is left drawing the draft afterwards, and a draft left behind a
+     * closed card is a real bug of its own — [TripMapUiState.drawnWaypoints]
+     * prefers a non-empty draft over the trip's own stops, so the map would go
+     * on flying the rider's abandoned pins for the rest of the ride. That is
+     * [confirmRouteAndClose].
+     *
+     * On Edit trip the route list *is* the screen. Nothing closes, so clearing
+     * the draft there does not tidy anything away — it blanks the list the
+     * rider is looking at, straight back to "Choose a starting point" and
+     * "Choose where you're going", which are exactly the two lines an empty
+     * [RouteDraft] draws. That is this one, [confirmRoute], and it is the same
+     * shape of bug as the name's Save in `EditTripActions`: one call doing
+     * "write it" and "throw the draft away" for two screens that only agree
+     * about the first half.
+     *
+     * Nothing was ever lost on the server either time. The writes below are a
+     * PATCH per end and a POST per stop, and the route came back on the next
+     * read — the draft on this view model was the only thing that went.
+     *
+     * @param keepDraft whether the rider is still looking at the list. When
+     *   true the draft stays, and is re-seeded from the trip once the writes
+     *   have landed so the list settles on what is actually stored.
      */
-    fun confirmRoute() {
+    private fun writeRoute(keepDraft: Boolean) {
         val state = _uiState.value
         val trip = state.trip
         val draft = state.routeDraft
 
-        // Cleared first and unconditionally, before anything can return early.
-        // The screen closes the card the moment this is called, and a draft
-        // left behind a closed card would go on drawing its own flags over the
-        // trip's for the rest of the ride.
-        previewFor = null
-        previewRetryAtMs = null
+        // Cleared first and unconditionally, before anything can return early,
+        // for the screen that is closing. See the note above for why the other
+        // screen must not do this.
+        if (!keepDraft) {
+            previewFor = null
+            previewRetryAtMs = null
+        }
         _uiState.update {
-            it.copy(
-                routeDraft = RouteDraft(),
-                routePreview = null,
-                routePreviewLoading = false,
-                error = null,
-            )
+            if (keepDraft) {
+                it.copy(error = null)
+            } else {
+                it.copy(
+                    routeDraft = RouteDraft(),
+                    routePreview = null,
+                    routePreviewLoading = false,
+                    error = null,
+                )
+            }
         }
 
         if (trip == null || !draft.isComplete) return
@@ -735,7 +771,29 @@ class TripMapViewModel(
                 }
 
                 refreshTrip()
-                refresh()
+                // Awaited rather than [refresh], because what comes next reads
+                // the state it writes.
+                reload()
+
+                // The list a rider is still looking at settles on what the
+                // server now holds: stops that were only ever draft rows come
+                // back with ids, and an end the server normalised comes back
+                // as it stored it.
+                //
+                // [RouteSetupRules.reseeded] rather than a plain overwrite,
+                // and for the same reason [openRouteSetup] uses it: the writes
+                // are a round trip, and a rider who started another edit while
+                // it was out must not have it taken off them.
+                if (keepDraft) {
+                    _uiState.update {
+                        it.copy(routeDraft = RouteSetupRules.reseeded(
+                            current = it.routeDraft,
+                            opened = draft,
+                            fetched = seedFrom(it),
+                        ))
+                    }
+                    refreshRoutePreview()
+                }
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
@@ -743,6 +801,23 @@ class TripMapViewModel(
             }
         }
     }
+
+    /**
+     * Confirm, on a screen where the route list stays on view.
+     *
+     * Edit trip's Confirm. The route is written and then goes on being shown,
+     * because there is nothing here for clearing the draft to tidy away — see
+     * [writeRoute].
+     */
+    fun confirmRoute() = writeRoute(keepDraft = true)
+
+    /**
+     * Confirm, on a screen whose route card closes behind it.
+     *
+     * The trip map's Confirm, and the only one that discards the draft. See
+     * [writeRoute] for why the two are not one call.
+     */
+    fun confirmRouteAndClose() = writeRoute(keepDraft = false)
 
     /**
      * Reads this rider's own places.

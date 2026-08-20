@@ -663,6 +663,10 @@ private fun SignedInNavigation(
                 onPickRoutePoint = mapViewModel::pickRoutePoint,
                 onRemoveRouteRow = mapViewModel::removeRouteRow,
                 onMoveRoutePoint = mapViewModel::moveRoutePoint,
+                // Confirm here writes the route and leaves it on screen. The
+                // list *is* this screen, so the map's confirm — which throws
+                // the draft away because its card is closing — would blank the
+                // rows the rider just confirmed. See TripMapViewModel.
                 onConfirmRoute = mapViewModel::confirmRoute,
                 onBack = actions::leave,
                 modifier = modifier,
@@ -828,7 +832,10 @@ private fun SignedInNavigation(
                 onRemoveRouteStop = mapViewModel::removeRouteStop,
                 onRemoveRouteRow = mapViewModel::removeRouteRow,
                 onMoveRoutePoint = mapViewModel::moveRoutePoint,
-                onConfirmRoute = mapViewModel::confirmRoute,
+                // The card closes behind this one, so the draft goes with it:
+                // a draft left on the view model outranks the trip's own stops
+                // when the map draws its pins.
+                onConfirmRoute = mapViewModel::confirmRouteAndClose,
                 onAddSharedPlace = mapViewModel::addSharedPlace,
                 onRemoveSharedPlace = mapViewModel::removeSharedPlace,
                 onAddPersonalPlace = mapViewModel::addPersonalPlace,

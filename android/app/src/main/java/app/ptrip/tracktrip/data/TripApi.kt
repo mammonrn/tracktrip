@@ -245,12 +245,18 @@ data class LevelProgress(
  * [ApiClient].
  */
 /**
- * Open, and four of its reads with it, for one reason: `TripMapViewModel` has
+ * Open, and a handful of its calls with it, for one reason: `TripMapViewModel`
+ * has
  * timing worth asserting on — what is on screen *while* a fetch is in flight,
  * not only after it lands — and that cannot be tested against a call that
  * always answers instantly. A test subclass overrides the handful of reads a
  * view model makes on the way in and controls when they return; nothing here
  * changes for the app, which uses this class exactly as it did.
+ *
+ * The three route *writes* are open for the neighbouring reason: confirming a
+ * route is a write followed by a re-read, and what the rider is left looking
+ * at afterwards is the whole of the question — so a test needs a server that
+ * answers the re-read with what the write just sent it.
  */
 open class TripApi(private val client: ApiClient) {
 
@@ -383,11 +389,11 @@ open class TripApi(private val client: ApiClient) {
      * time would make "name the destination" indistinguishable from "wipe the
      * start". Owner-only on the server; the screen offers it to nobody else.
      */
-    suspend fun setOrigin(tripId: Long, endpoint: TripEndpoint?): Trip =
+    open suspend fun setOrigin(tripId: Long, endpoint: TripEndpoint?): Trip =
         patchEndpoint(tripId, "origin", endpoint)
 
     /** Sets where the trip is going, or clears it. See [setOrigin]. */
-    suspend fun setDestination(tripId: Long, endpoint: TripEndpoint?): Trip =
+    open suspend fun setDestination(tripId: Long, endpoint: TripEndpoint?): Trip =
         patchEndpoint(tripId, "destination", endpoint)
 
     private suspend fun patchEndpoint(tripId: Long, field: String, endpoint: TripEndpoint?): Trip {
@@ -407,7 +413,7 @@ open class TripApi(private val client: ApiClient) {
      * refuses it on a live drop rather than ignoring it, because a live point
      * has no place in a route nobody planned.
      */
-    suspend fun addWaypoint(
+    open suspend fun addWaypoint(
         tripId: Long,
         name: String,
         lat: Double,
