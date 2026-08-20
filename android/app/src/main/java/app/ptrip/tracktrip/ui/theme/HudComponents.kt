@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.ptrip.tracktrip.location.BatteryLevel
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
 import app.ptrip.tracktrip.ui.resolveMediaUrl
 import coil3.compose.AsyncImage
@@ -497,6 +498,46 @@ fun HudReadout(
             text = value,
             style = MaterialTheme.typography.titleMedium.merge(AppReadoutStyle),
             color = valueColor,
+        )
+    }
+}
+
+/**
+ * A rider's battery: the icon, then the number.
+ *
+ * One composable used by every screen that shows a battery, which is the point
+ * of it. The map and the member list each drew their own bare `"$it%"` once,
+ * and having two of them is how the two screens came to disagree about what a
+ * battery reading even was. There is one now, so a change to how a battery
+ * looks — or to what counts as low — lands on both.
+ *
+ * A reading outside 0..100 draws nothing at all rather than a battery filled
+ * to a nonsense level: it did not come from a battery, and an icon would be
+ * asserting that it did.
+ */
+@Composable
+fun HudBatteryReadout(percent: Int, modifier: Modifier = Modifier) {
+    if (!BatteryLevel.isValid(percent)) return
+
+    // Only the critical end is coloured. A low battery is worth noticing and
+    // gets a full-strength fill; a red one on every rider under twenty per
+    // cent would make the colour mean nothing by the second hour of a ride.
+    val fill = when {
+        BatteryLevel.isCritical(percent) -> AppDanger
+        BatteryLevel.isLow(percent) -> AppText
+        else -> AppTextMuted
+    }
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        HudBatteryIcon(percent = percent, fill = fill)
+        Text(
+            text = "$percent%",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (BatteryLevel.isCritical(percent)) AppDanger else AppTextMuted,
         )
     }
 }

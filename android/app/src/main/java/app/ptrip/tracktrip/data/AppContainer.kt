@@ -42,6 +42,15 @@ class AppContainer private constructor(context: Context) {
     val placeSearchApi: PlaceSearchApi by lazy { PlaceSearchApi(apiClient) }
 
     /**
+     * Road routing, proxied by this app's own backend, on the same metered key
+     * as place search and for the same reasons — see [DirectionsApi]. The
+     * object exists whether or not the server has a key: without one the
+     * endpoint answers 503, the map draws the straight line it always drew,
+     * and nobody is told anything.
+     */
+    val directionsApi: DirectionsApi by lazy { DirectionsApi(apiClient) }
+
+    /**
      * The live position feed. One per process, like the API client: it holds
      * an OkHttp client configured for long-lived connections, and a second
      * copy would mean a second connection pool for no gain.

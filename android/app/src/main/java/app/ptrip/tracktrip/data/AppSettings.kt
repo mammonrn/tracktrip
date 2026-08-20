@@ -61,11 +61,25 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_BATTERY_ASKED, false)
         set(value) = prefs.edit().putBoolean(KEY_BATTERY_ASKED, value).apply()
 
+    /**
+     * Whether the map draws each rider's recent trail behind them.
+     *
+     * On by default: the trail is the answer to "which way did they come, and
+     * did they take the turn?", which is the question a group riding apart
+     * actually asks, and a feature switched off by default is a feature nobody
+     * finds. Remembered because a rider who decided the lines cluttered their
+     * map means it for every ride, not just the one.
+     */
+    var mapTrailsVisible: Boolean
+        get() = prefs.getBoolean(KEY_MAP_TRAILS, true)
+        set(value) = prefs.edit().putBoolean(KEY_MAP_TRAILS, value).apply()
+
     private companion object {
         const val FILE_NAME = "tracktrip-settings"
         const val KEY_LANGUAGE = "language_tag"
         const val KEY_SHARING_MINUTES = "default_sharing_minutes"
         const val KEY_BATTERY_ASKED = "battery_exemption_asked"
+        const val KEY_MAP_TRAILS = "map_trails_visible"
 
         /** No value written yet. Not a duration anyone could choose. */
         const val ABSENT = -1

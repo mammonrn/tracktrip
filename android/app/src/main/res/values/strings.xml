@@ -132,6 +132,19 @@
     -->
     <string name="map_overview">See the whole route</string>
     <string name="map_progress_straight_line">direct</string>
+    <!--
+      The same bar, when the server managed to fetch a road route: the number
+      above it is then road distance measured along that route, not the gap to
+      the finish. The two are wildly different on a mountain road, so which one
+      is on screen is said rather than left to be guessed.
+    -->
+    <string name="map_progress_by_road">by road</string>
+    <!--
+      The trail toggle. Worded as what pressing it does, not as what is
+      currently true, because it is an icon button with no label beside it.
+    -->
+    <string name="map_trails_show">Show where everyone has been</string>
+    <string name="map_trails_hide">Hide where everyone has been</string>
     <string name="map_no_position">No position yet</string>
     <string name="map_last_seen">Last known position</string>
     <string name="map_you">%1$s (you)</string>

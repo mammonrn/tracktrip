@@ -66,13 +66,41 @@ class TripDetailViewModel(
     private val _uiState = MutableStateFlow(TripDetailUiState())
     val uiState: StateFlow<TripDetailUiState> = _uiState.asStateFlow()
 
-    init {
-        refresh()
-    }
-
-    fun refresh() {
+    /**
+     * Re-reads the trip and its members.
+     *
+     * ## Why this is now called by the screen, on a beat
+     *
+     * It used to be called exactly once, from this view model's `init`, and a
+     * view model here is scoped to the activity and keyed by trip id — so
+     * "once" meant once per app launch, not once per visit. Everything on the
+     * screen was therefore frozen at whatever the server said the first time
+     * it was opened, and it stayed frozen while a rider went to the map, came
+     * back, and read it again.
+     *
+     * The loop lives in the screen for the same reason the map's does: a view
+     * model outlives the screen, so a poll started here would go on fetching
+     * from behind three other screens.
+     *
+     * That is where the battery readings came apart. Both screens show the
+     * same field from the same endpoint — `battery_pct` off
+     * `GET /trips/:id/positions` — but the map polls it every twenty seconds
+     * and folds live socket frames in on top, while this one had not asked
+     * since the app started. Two screens, one number, hours apart: 37% here
+     * against 76% on the map, a phone that had spent the morning on a charger
+     * on the handlebars, and nothing on either screen to say that one of them
+     * was reading a value from before breakfast.
+     *
+     * [quiet] is for the poll: it skips the loading flag and leaves any error
+     * banner alone, so a background refresh cannot make the screen flicker or
+     * clear a message the rider has not read yet. The pull the rider asks for
+     * — opening the screen — is not quiet.
+     */
+    fun refresh(quiet: Boolean = false) {
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = null) }
+            if (!quiet) {
+                _uiState.update { it.copy(loading = true, error = null) }
+            }
             try {
                 // There is no GET /trips/:id, so the trip itself comes from
                 // the list. One extra call, and it keeps `role` — which the
@@ -92,6 +120,9 @@ class TripDetailViewModel(
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
+                // A failed poll leaves the last known members on screen rather
+                // than blanking the list — the same rule the map follows — and
+                // says what went wrong.
                 _uiState.update { it.copy(loading = false, error = e.message) }
             }
         }

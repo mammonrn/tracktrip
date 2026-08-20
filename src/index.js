@@ -7,6 +7,7 @@ import { verifyGoogleIdToken } from './auth/google.js';
 import { attachWebSocketServer } from './ws/index.js';
 import { PositionHub } from './ws/hub.js';
 import { createLocationIqSearch } from './geocode/locationiq.js';
+import { createLocationIqDirections } from './geocode/directions.js';
 
 const db = openDb();
 runMigrations(db);
@@ -24,11 +25,17 @@ const searchPlaces = createLocationIqSearch({
   countryCodes: config.locationIqCountryCodes || undefined,
 });
 
+// The same key, the same reasoning: built without one so the server still
+// boots, and the one route that needs it answers 503 on use.
+const routeBetween = createLocationIqDirections({ apiKey: config.locationIqApiKey });
+
 if (!config.locationIqApiKey) {
-  console.warn('LOCATIONIQ_API_KEY is not set — GET /geocode/search will answer 503.');
+  console.warn(
+    'LOCATIONIQ_API_KEY is not set — GET /geocode/search and GET /directions will answer 503.'
+  );
 }
 
-const app = createApp({ db, config, verifyGoogleIdToken, hub, searchPlaces });
+const app = createApp({ db, config, verifyGoogleIdToken, hub, searchPlaces, routeBetween });
 
 const server = http.createServer(app);
 attachWebSocketServer(server, { db, config, hub });

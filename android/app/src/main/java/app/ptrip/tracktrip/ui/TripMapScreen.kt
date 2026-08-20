@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,9 +43,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -58,10 +62,13 @@ import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.Trip
 import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.Bounds
+import app.ptrip.tracktrip.map.Breadcrumbs
 import app.ptrip.tracktrip.map.CameraRules
 import app.ptrip.tracktrip.map.CameraTarget
 import app.ptrip.tracktrip.map.FOLLOW_ZOOM
 import app.ptrip.tracktrip.map.MapCamera
+import app.ptrip.tracktrip.map.ProgressBarLayout
+import app.ptrip.tracktrip.map.RouteGeometry
 import app.ptrip.tracktrip.map.RouteProgress
 import app.ptrip.tracktrip.map.boundsAround
 import app.ptrip.tracktrip.map.centre
@@ -92,6 +99,7 @@ import app.ptrip.tracktrip.data.PlaceSearchProblem
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.RankIcon
+import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
@@ -105,6 +113,7 @@ import app.ptrip.tracktrip.ui.theme.HudRouteIcon
 import app.ptrip.tracktrip.ui.theme.HudSearchIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudTopBar
+import app.ptrip.tracktrip.ui.theme.HudTrailIcon
 import app.ptrip.tracktrip.ui.theme.riderColor
 import kotlinx.coroutines.delay
 import org.osmdroid.events.MapEventsReceiver
@@ -113,6 +122,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 
 /**
  * A point the map should move to, and a sequence number so that asking for the
@@ -168,6 +178,15 @@ fun TripMapScreen(
     onCenterOnMe: () -> Unit,
     onPlace: (MapPlacement, LatLng, String) -> Unit,
     onRemoveWaypoint: (Long) -> Unit,
+    /**
+     * Top the breadcrumb trail up, and turn it on or off.
+     *
+     * Two callbacks rather than one because they run on completely different
+     * beats: the top-up is a slow timer this screen owns, and the toggle is a
+     * button a rider presses. Defaulted so the previews need neither.
+     */
+    onRefreshTrail: () -> Unit = {},
+    onToggleTrails: () -> Unit = {},
     /**
      * What the place search is showing, and the two things a rider does to it.
      *
@@ -282,6 +301,32 @@ fun TripMapScreen(
         }
     }
 
+    // The breadcrumb trail, on its own much slower beat.
+    //
+    // Separate from the position poll on purpose: a trail is a line of things
+    // that have already happened, and nobody can see that its near end is half
+    // a minute short, whereas everybody can see a pin that is. Restarted when
+    // the toggle changes so switching it back on draws a line at once rather
+    // than at the next tick. See Breadcrumbs for the window and the cap.
+    LaunchedEffect(state.trailsVisible) {
+        if (!state.trailsVisible) return@LaunchedEffect
+        while (true) {
+            onRefreshTrail()
+            delay(Breadcrumbs.REFRESH_MS)
+        }
+    }
+
+    // How tall the floating header actually is, in dp, or null before it has
+    // been measured.
+    //
+    // Measured rather than assumed, because assuming it is what put the
+    // progress bar underneath it. See ProgressBarLayout: the header is a
+    // title, a subtitle, an optional error row and a speed readout, and every
+    // one of those grows with a long trip name, a wrapped subtitle, an error,
+    // or the system font scale.
+    var headerHeightDp by remember { mutableStateOf<Float?>(null) }
+    val density = LocalDensity.current
+
     // The wall clock, re-read on its own beat. The ages on the rows have to
     // keep counting up between polls — otherwise each one would sit still
     // until the next fetch and then jump.
@@ -298,11 +343,18 @@ fun TripMapScreen(
     // dragged; a rider then had no trip name and, worse, no way back.
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // BoxWithConstraints, not Box: the progress bar needs to know how
+            // much map there is before it can decide whether it fits under the
+            // header at all. See ProgressBarLayout.
+            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val mapHeightDp = maxHeight.value
+
                 RiderMap(
                     members = state.placed,
                     waypoints = state.waypoints.all,
                     trip = state.trip,
+                    route = state.route?.points.orEmpty(),
+                    trails = if (state.trailsVisible) state.trails else emptyMap(),
                     myLocation = myLocation,
                     focus = focus,
                     onMarkerTap = {
@@ -338,28 +390,46 @@ fun TripMapScreen(
                 // How far there is left to go, down the right-hand edge.
                 // Drawn only when there is something to measure — a trip with
                 // a destination, and a rider with a position to measure from.
-                RouteProgressBar(
-                    fraction = RouteProgress.fraction(
-                        origin = state.trip?.origin?.let { LatLng(it.lat, it.lng) },
-                        destination = destination,
-                        current = myLocation,
-                    ),
-                    remaining = RouteProgress.format(
-                        RouteProgress.remainingKm(destination, myLocation)
-                    ),
-                    // Taller than it was: the old insets gave up 168dp of a
-                    // screen the bar is the only thing on, and a short bar is
-                    // a short answer to "how much is left". The bottom inset
-                    // is what it is because the overview and centre-on-me
-                    // buttons live under it in the same corner.
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(
-                            end = 12.dp,
-                            top = PROGRESS_BAR_TOP_INSET,
-                            bottom = PROGRESS_BAR_BOTTOM_INSET,
+                //
+                // Two measures, and the label says which one is on screen.
+                // With a road route fetched, the rider is projected onto it
+                // and what is left is the road ahead of them; without one —
+                // no key on the server, no road between the points, a rider
+                // nowhere near the line — it is the straight-line measure the
+                // app has always shown, captioned "direct" exactly as before.
+                val routePoints = state.route?.points.orEmpty()
+                val alongRoute = if (myLocation != null && routePoints.size >= 2) {
+                    RouteGeometry.progress(routePoints, myLocation)
+                } else {
+                    null
+                }
+
+                // Only drawn when there is room for it under a header whose
+                // real height is measured rather than assumed — the old fixed
+                // 76dp inset is what put the label plate underneath the
+                // header on a long trip name, a wrapped subtitle, an error
+                // row, or a raised font scale.
+                if (ProgressBarLayout.fits(mapHeightDp, headerHeightDp)) {
+                    RouteProgressBar(
+                        fraction = alongRoute?.fraction ?: RouteProgress.fraction(
+                            origin = state.trip?.origin?.let { LatLng(it.lat, it.lng) },
+                            destination = destination,
+                            current = myLocation,
                         ),
-                )
+                        remaining = RouteProgress.format(
+                            alongRoute?.remainingKm
+                                ?: RouteProgress.remainingKm(destination, myLocation)
+                        ),
+                        byRoad = alongRoute != null,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(
+                                end = 12.dp,
+                                top = ProgressBarLayout.topInsetDp(headerHeightDp).dp,
+                                bottom = ProgressBarLayout.BOTTOM_INSET_DP.dp,
+                            ),
+                    )
+                }
 
                 // Bottom *left*, not bottom right, since the progress bar was
                 // made long enough to be read: the two used to share the
@@ -371,6 +441,29 @@ fun TripMapScreen(
                     modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    // Trails on or off.
+                    //
+                    // A control rather than a setting buried a screen away,
+                    // because whether eight coloured lines help or clutter
+                    // depends entirely on where the group is: threading a city
+                    // they are noise, on a mountain road with three riders out
+                    // of sight they are the whole point. The answer is
+                    // remembered between rides.
+                    HudIconButton(
+                        onClick = onToggleTrails,
+                        contentDescription = stringResource(
+                            if (state.trailsVisible) R.string.map_trails_hide
+                            else R.string.map_trails_show
+                        ),
+                        icon = {
+                            HudTrailIcon(
+                                tint = if (state.trailsVisible) AppPrimary else AppTextMuted
+                            )
+                        },
+                        modifier = Modifier
+                            .background(AppSurface.copy(alpha = 0.92f), CircleShape),
+                    )
+
                     // The whole journey at once: this rider and both ends of
                     // the trip. Its own control rather than the default,
                     // because the default while riding is the road ahead —
@@ -487,6 +580,14 @@ fun TripMapScreen(
 
         Column(modifier = Modifier.align(Alignment.TopStart)) {
             MapOverlayBar(
+                // Measured, and the progress bar down the right-hand edge
+                // starts below whatever this actually came out as. Only the
+                // bar itself is measured, not the search panel underneath it:
+                // the panel is meant to cover the top of the gauge while it is
+                // open, and a rider typing a place name is not riding.
+                modifier = Modifier.onSizeChanged { size ->
+                    headerHeightDp = with(density) { size.height.toDp() }.value
+                },
                 title = state.trip?.name ?: stringResource(R.string.map_title),
                 subtitle = stringResource(
                     R.string.map_riders_placed,
@@ -995,6 +1096,16 @@ private fun formatCoordinate(value: Double): String =
 private fun RouteProgressBar(
     fraction: Double?,
     remaining: String?,
+    /**
+     * Whether the numbers came from a road route rather than from the straight
+     * line between two points.
+     *
+     * It changes the caption and nothing else, which is the point: the two
+     * measures answer the same question to very different accuracies on a
+     * mountain road, and a rider who cannot tell which one they are reading
+     * cannot judge either.
+     */
+    byRoad: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (fraction == null && remaining == null) return
@@ -1051,9 +1162,12 @@ private fun RouteProgressBar(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = stringResource(R.string.map_progress_straight_line),
+                    text = stringResource(
+                        if (byRoad) R.string.map_progress_by_road
+                        else R.string.map_progress_straight_line
+                    ),
                     style = MaterialTheme.typography.labelSmall,
-                    color = AppTextMuted,
+                    color = if (byRoad) AppRouteProgress.copy(alpha = 0.85f) else AppTextMuted,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
@@ -1134,22 +1248,12 @@ private val PROGRESS_BAR_CASING = 2.dp
 /** The column's own width: the bar, its casing, and room for the round cap. */
 private val PROGRESS_BAR_TOTAL_WIDTH = PROGRESS_BAR_WIDTH + PROGRESS_BAR_CASING * 2
 
-/**
- * How far the bar starts below the top of the map.
- *
- * Just clear of the floating header, which is about 68dp tall. The search
- * panel opens *below* that and would cover the top of the bar — which is why
- * it is a panel that opens rather than a box that is always there.
- */
-private val PROGRESS_BAR_TOP_INSET = 76.dp
-
-/**
- * How far the bar stops short of the bottom.
- *
- * A margin now, not a clearance: the controls that used to sit in this corner
- * moved to the other one precisely so this number could be small.
- */
-private val PROGRESS_BAR_BOTTOM_INSET = 16.dp
+// Where the bar starts and stops now lives in ProgressBarLayout, worked out
+// from the header's measured height rather than from a constant that assumed
+// one. The constants that used to be here — a 76dp top inset "just clear of
+// the floating header, which is about 68dp tall" — are exactly what put the
+// bar's label plate underneath the header the moment the header was taller
+// than the guess.
 
 /**
  * The floating header: trip name, the way back, and this rider's own speed.
@@ -1246,6 +1350,14 @@ private fun RiderMap(
     members: List<MemberPosition>,
     waypoints: List<Waypoint>,
     trip: Trip?,
+    /**
+     * The road between the trip's two ends, or empty when there is none to
+     * draw. Empty is the ordinary state and draws nothing — the map looks
+     * exactly as it did before road routing existed.
+     */
+    route: List<LatLng>,
+    /** Each rider's recent breadcrumbs, keyed by rider. Empty draws nothing. */
+    trails: Map<Long, List<LatLng>>,
     myLocation: LatLng?,
     focus: MapFocus?,
     onMarkerTap: (Long) -> Unit,
@@ -1297,6 +1409,13 @@ private fun RiderMap(
     // one another — by this code or by the person reading the screen.
     val waypointMarkers = remember { mutableListOf<Marker>() }
     val endpointMarkers = remember { mutableListOf<Marker>() }
+
+    // The road, and everybody's breadcrumbs. Lines rather than markers, and
+    // kept in their own lists for the same reason the markers are: each is
+    // rebuilt on its own trigger, and a shared list would have one of them
+    // clearing the other's overlays.
+    val routeLines = remember { mutableListOf<Polyline>() }
+    val trailLines = remember { mutableMapOf<Long, Polyline>() }
 
     // Press and hold anywhere to place a point.
     //
@@ -1375,6 +1494,21 @@ private fun RiderMap(
     // they are keyed on the pair rather than redrawn with every poll.
     LaunchedEffect(trip?.origin, trip?.destination) {
         syncEndpoints(mapView, trip, endpointMarkers, originFallback, destinationFallback)
+    }
+
+    // The road between them, when the server managed to work one out. Changes
+    // only when the ends do, so it is keyed on the line itself.
+    LaunchedEffect(route) {
+        syncRouteLine(mapView, route, routeLines)
+    }
+
+    // Everybody's breadcrumbs, in their own colours. Redrawn wholesale on each
+    // top-up rather than appended to: osmdroid's Polyline holds its points as
+    // one list, and a line that grew by mutation would have to be invalidated
+    // by hand anyway — for a hundred-odd points, thirty seconds apart, it is
+    // not worth the class of bug that comes with it.
+    LaunchedEffect(trails) {
+        syncTrails(mapView, trails, trailLines)
     }
 
     // The opening camera: it follows this phone's own position while the trip
@@ -1532,6 +1666,128 @@ private fun syncMarkers(
     view.invalidate()
     return placed.associate { it.first.userId to it.second }
 }
+
+/**
+ * Draws the road between the trip's two ends.
+ *
+ * ## Two lines, not one
+ *
+ * The route is drawn twice: a wide white casing, then the orange fill on top
+ * of it. That is the same trick the progress bar down the edge of the map uses
+ * and it is here for the same reason — an OpenStreetMap daylight tile is pale,
+ * busy and full of coloured roads, and a single coloured line laid over it
+ * disappears the moment it crosses a motorway that happens to be drawn in a
+ * similar colour. With a casing the fill only ever has to contrast with its
+ * own outline.
+ *
+ * ## Underneath everything else
+ *
+ * Inserted at the bottom of the overlay list, below the long-press receiver's
+ * neighbours and every marker: the route is context, and a rider tapping a pin
+ * that happens to sit on the road must get the pin. It is also removed and
+ * re-added wholesale, which is cheap — this changes when the trip's ends do,
+ * which is a handful of times a ride.
+ */
+private fun syncRouteLine(
+    view: MapView,
+    route: List<LatLng>,
+    drawn: MutableList<Polyline>,
+) {
+    drawn.forEach { view.overlays.remove(it) }
+    drawn.clear()
+
+    if (route.size < 2) {
+        view.invalidate()
+        return
+    }
+
+    val points = route.map { GeoPoint(it.lat, it.lng) }
+    val casing = Polyline(view).apply {
+        setPoints(points)
+        outlinePaint.color = AppRouteProgressCasing.toArgb()
+        outlinePaint.strokeWidth = ROUTE_CASING_WIDTH_PX
+        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+        outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+        // The route is not a control. Without this osmdroid swallows taps that
+        // land on it and pops its own info window over the map.
+        setOnClickListener { _, _, _ -> false }
+    }
+    val fill = Polyline(view).apply {
+        setPoints(points)
+        outlinePaint.color = AppRouteProgress.toArgb()
+        outlinePaint.strokeWidth = ROUTE_LINE_WIDTH_PX
+        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+        outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+        setOnClickListener { _, _, _ -> false }
+    }
+
+    // Casing first so the fill lands on top of it, and both at the bottom of
+    // the pile so no marker is ever covered.
+    view.overlays.add(0, fill)
+    view.overlays.add(0, casing)
+    drawn += casing
+    drawn += fill
+    view.invalidate()
+}
+
+/**
+ * Draws each rider's breadcrumbs behind them, one line per rider.
+ *
+ * ## Why the colours are the rider colours
+ *
+ * A trail is only useful if you can tell whose it is at a glance, and the app
+ * already has an answer to "which colour is Nut?" — their pin, their dot in
+ * the member list, and now their trail, all from [riderColor] on the same user
+ * id. A separate palette would mean learning a second one.
+ *
+ * The lines are drawn thinner and part-transparent, and below the route and
+ * every marker: they are where somebody *was*, and they must never compete
+ * with where everybody is.
+ */
+private fun syncTrails(
+    view: MapView,
+    trails: Map<Long, List<LatLng>>,
+    drawn: MutableMap<Long, Polyline>,
+) {
+    (drawn.keys - trails.keys).toList().forEach { userId ->
+        drawn.remove(userId)?.let { view.overlays.remove(it) }
+    }
+
+    trails.forEach { (userId, points) ->
+        if (points.size < 2) return@forEach
+        val line = drawn[userId] ?: Polyline(view).also {
+            drawn[userId] = it
+            // Bottom of the pile, under the route and under every pin.
+            view.overlays.add(0, it)
+            it.outlinePaint.strokeWidth = TRAIL_LINE_WIDTH_PX
+            it.outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+            it.outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+            it.outlinePaint.color = riderColor(userId).copy(alpha = TRAIL_ALPHA).toArgb()
+            it.setOnClickListener { _, _, _ -> false }
+        }
+        line.setPoints(points.map { GeoPoint(it.lat, it.lng) })
+    }
+
+    view.invalidate()
+}
+
+/** The coloured part of the drawn route, in pixels. */
+private const val ROUTE_LINE_WIDTH_PX = 12f
+
+/** Its white casing, wide enough to stand clear on both sides. */
+private const val ROUTE_CASING_WIDTH_PX = 20f
+
+/** A trail: thinner than the route, because it is history rather than plan. */
+private const val TRAIL_LINE_WIDTH_PX = 7f
+
+/**
+ * How solid a trail is.
+ *
+ * Part-transparent so that eight of them crossing in a town centre stay
+ * readable as separate lines rather than as one dark smear, and so the road
+ * names underneath survive.
+ */
+private const val TRAIL_ALPHA = 0.65f
 
 /**
  * Draws the trip's waypoints, replacing whatever was drawn before.
@@ -1739,12 +1995,9 @@ private fun MemberMapRow(
             )
         }
 
-        member.batteryPct?.let {
-            Text(
-                text = "$it%",
-                style = MaterialTheme.typography.labelSmall,
-                color = AppTextMuted,
-            )
-        }
+        // The same component the member list uses, deliberately: the two
+        // screens each drew their own bare "$it%" once, which is the seam the
+        // battery readings drifted apart along.
+        member.batteryPct?.let { HudBatteryReadout(percent = it) }
     }
 }
