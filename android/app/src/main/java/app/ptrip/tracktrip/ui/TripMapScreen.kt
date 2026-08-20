@@ -1288,7 +1288,7 @@ private fun VisibilityChoice(
 private const val SHORTCUT_LABEL_MAX_LENGTH = 24
 
 /** The heading over the picker: which field it is filling. */
-private val RouteField.pickHeadingRes: Int
+internal val RouteField.pickHeadingRes: Int
     get() = when (this) {
         RouteField.FROM -> R.string.map_route_pick_from
         RouteField.TO -> R.string.map_route_pick_to
@@ -1345,7 +1345,7 @@ private fun routePointLabel(picked: RoutePoint): String =
  * actually does is save two coordinates to a trip. So it says what it does.
  */
 @Composable
-private fun RouteListSheet(
+internal fun RouteListSheet(
     draft: RouteDraft,
     /**
      * Every coordinate the route touches, in order — what the straight-line
@@ -1366,6 +1366,15 @@ private fun RouteListSheet(
     onMoveRow: (Int, Int) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * Whether to mention the long press.
+     *
+     * True over the map, where pressing and holding really does drop a stop,
+     * and false on the trip's own edit screen, where there is no map under the
+     * list to point at. An instruction for a gesture the rider cannot make is
+     * worse than no instruction.
+     */
+    showLongPressHint: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val rowCount = RouteSetupRules.rowCount(draft)
@@ -1505,10 +1514,10 @@ private fun RouteListSheet(
             )
         }
 
-        // The long press is the one gesture on this screen with nothing on the
+        // The long press is the one gesture on the map with nothing on the
         // screen to suggest it, so the sheet says so — for a rider who would
         // rather point at the map than type a name.
-        if (canAddStops) {
+        if (canAddStops && showLongPressHint) {
             Text(
                 text = stringResource(R.string.map_route_stop_hint),
                 style = MaterialTheme.typography.labelSmall,
@@ -1879,7 +1888,7 @@ private fun routeDurationText(route: RouteLine?): String? {
  * either way — which is why picking them opens no dialog at all.
  */
 @Composable
-private fun StopNameDialog(
+internal fun StopNameDialog(
     point: LatLng,
     /**
      * What the field starts with, so confirming takes no typing at all.

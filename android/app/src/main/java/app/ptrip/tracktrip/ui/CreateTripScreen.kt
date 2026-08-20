@@ -29,9 +29,6 @@ import app.ptrip.tracktrip.ui.theme.HudSurface
 import app.ptrip.tracktrip.ui.theme.HudTopBar
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 
-/** Matches the backend's 1–60 characters after trimming. */
-private const val TRIP_NAME_MAX_LENGTH = 60
-
 @Composable
 fun CreateTripScreen(
     creating: Boolean,
@@ -42,7 +39,7 @@ fun CreateTripScreen(
 ) {
     var name by remember { mutableStateOf("") }
     val trimmed = name.trim()
-    val canSubmit = trimmed.isNotEmpty() && trimmed.length <= TRIP_NAME_MAX_LENGTH && !creating
+    val canSubmit = TripNameRules.isValid(name) && !creating
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         HudTopBar(
@@ -55,7 +52,7 @@ fun CreateTripScreen(
         HudSurface {
             OutlinedTextField(
                 value = name,
-                onValueChange = { if (it.length <= TRIP_NAME_MAX_LENGTH) name = it },
+                onValueChange = { if (it.length <= TripNameRules.MAX_LENGTH) name = it },
                 label = { Text(stringResource(R.string.trip_name_label)) },
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -64,7 +61,7 @@ fun CreateTripScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                text = "${trimmed.length}/$TRIP_NAME_MAX_LENGTH",
+                text = "${trimmed.length}/${TripNameRules.MAX_LENGTH}",
                 style = MaterialTheme.typography.labelSmall,
                 color = AppTextMuted,
                 modifier = Modifier.padding(top = 6.dp),

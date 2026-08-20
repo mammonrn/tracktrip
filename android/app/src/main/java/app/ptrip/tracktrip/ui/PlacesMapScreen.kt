@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +45,7 @@ import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
 import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudError
+import app.ptrip.tracktrip.ui.theme.HudIconButton
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudSearchIcon
 import app.ptrip.tracktrip.ui.theme.HudTopBar
@@ -75,6 +78,16 @@ fun PlacesMapScreen(
     state: PlacesUiState,
     searchState: PlaceSearchState,
     myLocation: LatLng?,
+    /**
+     * Where to put the camera, when something outside this screen has decided.
+     *
+     * The "centre on me" button's answer, which arrives late: the button has
+     * to go and ask the phone where it is, and [myLocation] on its own cannot
+     * carry the difference between "here is a fix" and "here is a fix *and*
+     * the rider just asked to be taken to it". The sequence number is what
+     * makes pressing it twice move the map twice.
+     */
+    centreOn: MapFocus?,
     hasLocationPermission: Boolean,
     currentUserId: Long?,
     onSearchQueryChanged: (String) -> Unit,
@@ -84,6 +97,11 @@ fun PlacesMapScreen(
     onRemoveShared: (Long) -> Unit,
     onRemovePersonal: (Long) -> Unit,
     onDismissError: () -> Unit,
+    /**
+     * Go and find this rider — asking for the location permission first if
+     * this screen has never had it. The answer comes back as [centreOn].
+     */
+    onCenterOnMe: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -109,6 +127,15 @@ fun PlacesMapScreen(
         focus = MapFocus(point.lat, point.lng, sequence)
     }
 
+    // Centring from outside, the same way the trip map does it: the button
+    // asks the phone where it is, and the answer arrives here rather than
+    // being read out of `myLocation` at the moment of the press — which on a
+    // screen that had never asked for the permission was always null.
+    LaunchedEffect(centreOn) {
+        val target = centreOn ?: return@LaunchedEffect
+        moveTo(LatLng(target.lat, target.lng))
+    }
+
     BackHandler(enabled = searching) {
         searching = false
         onSearchCleared()
@@ -116,10 +143,20 @@ fun PlacesMapScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
+            // Padded like every other header in the app.
+            //
+            // The padding is the caller's job here rather than HudTopBar's:
+            // every screen with one wraps it in a column that is already
+            // inset by 16dp, and this was the only screen that could not,
+            // because the map underneath is deliberately full-bleed. The
+            // result was a back button and a title flush against the edge of
+            // the glass, over a search bar that was not.
             HudTopBar(
                 title = stringResource(R.string.places_title),
                 subtitle = stringResource(R.string.places_drop_hint),
                 onBack = onBack,
+                backContentDescription = stringResource(R.string.back),
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
 
             state.error?.let { message ->
@@ -179,6 +216,34 @@ fun PlacesMapScreen(
                     follow = null,
                     overview = null,
                     onUserPan = {},
+                )
+
+                // Go and find me.
+                //
+                // The trip map has had this since there was a trip map, and
+                // splitting this screen off left it behind — so the only way
+                // to a rider's own position here was to open the search and
+                // pick "use my current location", which is a picker two taps
+                // deep for the one place they are definitely standing.
+                //
+                // One state, not the trip map's two: there is no route to fit
+                // and nothing to follow on a screen with no ride on it, so the
+                // button always means the same thing and always looks the
+                // same. Tinted only once there is a fix — grey says "I would
+                // have to go and ask", which is exactly what pressing it then
+                // does, permission dialog and all.
+                HudIconButton(
+                    onClick = onCenterOnMe,
+                    contentDescription = stringResource(R.string.map_center_on_me),
+                    icon = {
+                        HudPinIcon(
+                            tint = if (myLocation != null) AppPrimary else AppTextMuted
+                        )
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp)
+                        .background(AppSurface.copy(alpha = 0.92f), CircleShape),
                 )
             }
 

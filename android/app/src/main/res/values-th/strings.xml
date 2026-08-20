@@ -48,6 +48,10 @@
     <string name="trip_name_label">ชื่อทริป</string>
     <string name="create_trip">สร้าง</string>
     <string name="cancel">ยกเลิก</string>
+
+    <!-- Edit trip -->
+    <string name="edit_trip">แก้ไขทริป</string>
+    <string name="edit_trip_save">บันทึก</string>
     <string name="back">ย้อนกลับ</string>
 
     <!-- Trip detail -->

@@ -35,6 +35,10 @@
     <string name="cancel">Cancel</string>
     <string name="back">Back</string>
 
+    <!-- Edit trip -->
+    <string name="edit_trip">Edit trip</string>
+    <string name="edit_trip_save">Save</string>
+
     <!-- Trip detail -->
     <string name="members_title">Members</string>
     <string name="invite_title">Invite a rider</string>

@@ -23,6 +23,7 @@ class ScreenTokenTest {
         Screen.ScanQr,
         Screen.Places,
         Screen.TripDetail(42L),
+        Screen.EditTrip(42L),
         Screen.TripQr(42L),
         Screen.TripMap(42L),
     )
@@ -43,6 +44,10 @@ class ScreenTokenTest {
         // TripMap without its id would open somebody else's ride.
         assertEquals(Screen.TripMap(7L), screenFromToken("tripMap:7"))
         assertEquals(Screen.TripDetail(1234567890123L), screenFromToken("tripDetail:1234567890123"))
+        assertEquals(Screen.EditTrip(7L), screenFromToken("editTrip:7"))
+        // The two trip screens are one prefix apart, and restoring the wrong
+        // one would drop a rider onto a rename form they never opened.
+        assertNull(screenFromToken("editTrip:not-a-number"))
     }
 
     @Test

@@ -78,6 +78,11 @@ fun TripDetailScreen(
     onSendInvite: () -> Unit,
     onUseSuggestion: (SuggestedInvitee) -> Unit,
     onShowQr: () -> Unit,
+    /**
+     * Opens the trip's own details — its name, and the way through to the
+     * route. Owner-only, so the button that calls it is too.
+     */
+    onEditTrip: () -> Unit,
     onEndTrip: () -> Unit,
     onBack: () -> Unit,
     /**
@@ -229,6 +234,21 @@ fun TripDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                }
+
+                // Everything about the trip except who is on it: its name,
+                // and a way through to the route.
+                //
+                // Owner-only, matching `PATCH /trips/:id`. Offered on a
+                // finished trip as well as a running one, unlike the controls
+                // below it — naming a ride afterwards is when people do it,
+                // and the server allows it for the same reason.
+                if (trip.isOwner) {
+                    HudSecondaryButton(
+                        text = stringResource(R.string.edit_trip),
+                        onClick = onEditTrip,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
                 }
 
                 if (trip.isOwner && trip.isActive) {
@@ -543,6 +563,7 @@ private fun TripDetailPreview() {
             onSendInvite = {},
             onUseSuggestion = {},
             onShowQr = {},
+            onEditTrip = {},
             onEndTrip = {},
             onBack = {},
         )

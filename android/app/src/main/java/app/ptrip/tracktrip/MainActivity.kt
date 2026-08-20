@@ -46,6 +46,7 @@ import app.ptrip.tracktrip.ui.AppLocale
 import app.ptrip.tracktrip.ui.BackStack
 import app.ptrip.tracktrip.ui.CreateTripScreen
 import app.ptrip.tracktrip.ui.CreateTripViewModel
+import app.ptrip.tracktrip.ui.EditTripScreen
 import app.ptrip.tracktrip.ui.JoinTripViewModel
 import app.ptrip.tracktrip.ui.joinCodeFrom
 import app.ptrip.tracktrip.ui.joinWebLinkFor
@@ -375,19 +376,56 @@ private fun SignedInNavigation(
 
             // Read, never reported. Nothing on this screen shares a position:
             // there is no trip to share it with. It is here to bias the search
-            // towards the region the rider is in, and to fill "use my current
-            // location" — both of which want a fix, not a feed.
+            // towards the region the rider is in, to fill "use my current
+            // location", and to answer the button that centres the map on the
+            // rider — all of which want a fix, not a feed.
             var mapPermission by remember { mutableStateOf(false) }
             var myLocation by remember { mutableStateOf<LatLng?>(null) }
-            LaunchedEffect(Unit) {
+            var centreOn by remember { mutableStateOf<MapFocus?>(null) }
+            var centreSequence by remember { mutableIntStateOf(0) }
+            val noLocationMessage = stringResource(R.string.map_no_location)
+
+            // One way to go and ask, used by the arrival effect and by the
+            // button. It re-reads rather than trusting whatever the effect
+            // found on the way in: a rider who granted the permission from
+            // the button, or who walked out of the car park since, is exactly
+            // who presses it.
+            val findMe: suspend (Boolean) -> Unit = { centre ->
                 mapPermission = LocationFix.hasPermission(context)
-                if (mapPermission) {
-                    val fix = LocationFix.lastKnown(context)
+                val fix = if (mapPermission) {
+                    LocationFix.lastKnown(context)
                         ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
-                    myLocation = fix?.let { LatLng(it.latitude, it.longitude) }
-                    placesViewModel.placeSearch.near = myLocation
+                } else {
+                    null
+                }
+                val here = fix?.let { LatLng(it.latitude, it.longitude) }
+                if (here != null) {
+                    myLocation = here
+                    placesViewModel.placeSearch.near = here
+                }
+                if (centre) {
+                    if (here == null) {
+                        placesViewModel.onNoLocation(noLocationMessage)
+                    } else {
+                        centreSequence += 1
+                        centreOn = MapFocus(here.lat, here.lng, centreSequence)
+                    }
                 }
             }
+
+            LaunchedEffect(Unit) { findMe(false) }
+
+            val centreScope = rememberCoroutineScope()
+
+            // The same request the sharing controls and the trip map's own
+            // "centre on me" use — asked only when the button is pressed
+            // without it. This screen deliberately does not ask on arrival:
+            // looking a place up needs no permission, and a dialog in front
+            // of a map nobody asked to be located on is a toll.
+            val requestLocation = rememberSharingPermissionRequest(
+                onGranted = { centreScope.launch { findMe(true) } },
+                onDenied = placesViewModel::onNoLocation,
+            )
 
             PlacesMapScreen(
                 state = placesState,
@@ -402,6 +440,14 @@ private fun SignedInNavigation(
                 onRemoveShared = placesViewModel::removeShared,
                 onRemovePersonal = placesViewModel::removePersonal,
                 onDismissError = placesViewModel::clearError,
+                centreOn = centreOn,
+                onCenterOnMe = {
+                    if (LocationFix.hasPermission(context)) {
+                        centreScope.launch { findMe(true) }
+                    } else {
+                        requestLocation()
+                    }
+                },
                 onBack = { backStack.pop() },
                 modifier = modifier,
             )
@@ -510,6 +556,12 @@ private fun SignedInNavigation(
                     detailViewModel.createJoinCode()
                     backStack.push(Screen.TripQr(screen.tripId))
                 },
+                onEditTrip = {
+                    // Any failure from a previous visit stays on the form it
+                    // happened on, not on the one being opened.
+                    detailViewModel.clearRenameError()
+                    backStack.push(Screen.EditTrip(screen.tripId))
+                },
                 onEndTrip = {
                     detailViewModel.endTrip()
                     // The list shows each trip's status, so it is stale the
@@ -521,6 +573,91 @@ private fun SignedInNavigation(
                 // TripDetailViewModel.refresh for why this screen polls at all.
                 onRefresh = { detailViewModel.refresh(quiet = true) },
                 onBack = { backStack.pop() },
+                modifier = modifier,
+            )
+        }
+
+        is Screen.EditTrip -> {
+            // The same view model the member list uses, on the same key, so
+            // the trip is already loaded when this opens and the new name is
+            // on the screen behind before the rider gets back to it — no
+            // second fetch, and no window where the two disagree.
+            val detailViewModel: TripDetailViewModel = viewModel(
+                key = "trip-${screen.tripId}",
+                factory = tripDetailViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
+
+            // And the map's, on *its* key, for the same reason: the route list
+            // on this screen is the map's route list, editing the map's draft.
+            // A second instance here would give the two screens a draft each,
+            // which is precisely the disagreement the shared list avoids.
+            //
+            // It is not free. TripMapViewModel opens this trip's position
+            // socket in its `init`, so reaching the route list from here starts
+            // a live feed for a screen that draws no positions — and, being
+            // scoped to the activity, it outlives the visit. A rider who opens
+            // the map at all pays that anyway; this brings it forward. Worth
+            // revisiting if the route ever needs its own view model, but not
+            // worth a second copy of the route logic to avoid today.
+            val mapViewModel: TripMapViewModel = viewModel(
+                key = "map-${screen.tripId}",
+                factory = tripMapViewModelFactory(container, screen.tripId, onSignOut),
+            )
+            val mapState by mapViewModel.uiState.collectAsStateWithLifecycle()
+            val routeSearchState by mapViewModel.placeSearch.state.collectAsStateWithLifecycle()
+
+            val context = LocalContext.current
+            var routePermission by remember { mutableStateOf(false) }
+            var routeLocation by remember { mutableStateOf<LatLng?>(null) }
+            LaunchedEffect(Unit) {
+                routePermission = LocationFix.hasPermission(context)
+                if (routePermission) {
+                    val fix = LocationFix.lastKnown(context)
+                        ?: LocationFix.current(context, LocationFix.QUICK_TIMEOUT_MS)
+                    routeLocation = fix?.let { LatLng(it.latitude, it.longitude) }
+                    mapViewModel.placeSearch.near = routeLocation
+                }
+            }
+
+            // Leaving throws the draft away rather than letting it sit on the
+            // view model: the map opens the list by seeding it from the trip,
+            // and a stale draft left here is what it would find.
+            val leave: () -> Unit = {
+                mapViewModel.closeRouteSetup()
+                mapViewModel.placeSearch.clear()
+                backStack.pop()
+            }
+
+            EditTripScreen(
+                trip = detailState.trip,
+                saving = detailState.renamePending,
+                error = detailState.renameError,
+                onSave = { name ->
+                    detailViewModel.rename(name) {
+                        // The trip list shows every name, so it is stale the
+                        // moment one changes.
+                        tripsViewModel.refresh()
+                        leave()
+                    }
+                },
+                routeDraft = mapState.routeDraft,
+                routePlan = mapState.summaryPlan,
+                routeLine = mapState.draftRoute,
+                routePreviewLoading = mapState.routePreviewLoading,
+                searchState = routeSearchState,
+                personalPlaces = mapState.personalPlaces,
+                myLocation = routeLocation,
+                hasLocationPermission = routePermission,
+                currentUserId = profile?.id,
+                onOpenRouteSetup = mapViewModel::openRouteSetup,
+                onSearchQueryChanged = mapViewModel.placeSearch::onQueryChanged,
+                onSearchCleared = mapViewModel.placeSearch::clear,
+                onPickRoutePoint = mapViewModel::pickRoutePoint,
+                onRemoveRouteRow = mapViewModel::removeRouteRow,
+                onMoveRoutePoint = mapViewModel::moveRoutePoint,
+                onConfirmRoute = mapViewModel::confirmRoute,
+                onBack = leave,
                 modifier = modifier,
             )
         }
