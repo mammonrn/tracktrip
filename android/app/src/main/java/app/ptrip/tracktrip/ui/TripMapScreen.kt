@@ -551,12 +551,26 @@ fun TripMapScreen(
                     },
                     onWaypointTap = { waypoint ->
                         val draftIndex = RouteSetupRules.draftIndex(waypoint.id)
+                        val draftStop = draftIndex?.let { state.routeDraft.stops.getOrNull(it) }
                         if (draftIndex != null) {
-                            // A stop that only this draft holds. Nothing was
-                            // ever sent, so it comes straight back off the
-                            // list rather than through a confirmation about
-                            // making it disappear from everyone's map.
-                            onRemoveRouteStop(draftIndex)
+                            // A stop on the open route list. It comes off the
+                            // list rather than off the trip — the server hears
+                            // about it when the rider confirms, like every
+                            // other edit on this card — so there is no
+                            // confirmation to ask for and nothing to undo.
+                            //
+                            // Gated all the same: a saved stop follows the
+                            // waypoints route's rule, so a member tapping
+                            // somebody else's pin would be queueing a delete
+                            // that comes back 403.
+                            val mayRemove = draftStop != null &&
+                                RouteSetupRules.canAddStops(state.trip?.isActive == true) &&
+                                RouteSetupRules.canRemoveStop(
+                                    stop = draftStop,
+                                    isOwner = state.trip?.isOwner == true,
+                                    currentUserId = currentUserId,
+                                )
+                            if (mayRemove) onRemoveRouteStop(draftIndex)
                         } else {
                             val allowed = MapPlacementRules.canRemoveWaypoint(
                                 isOwner = state.trip?.isOwner == true,
@@ -808,6 +822,7 @@ fun TripMapScreen(
                 loading = state.routePreviewLoading,
                 canEditEnds = RouteSetupRules.canEditEnds(state.trip?.isOwner == true),
                 canAddStops = RouteSetupRules.canAddStops(state.trip?.isActive == true),
+                currentUserId = currentUserId,
                 onPick = { tapped ->
                     picking = tapped
                     onSearchCleared()
@@ -899,7 +914,7 @@ fun TripMapScreen(
             point = stop.point,
             suggestedName = stringResource(
                 R.string.map_route_stop_default_name,
-                RouteSetupRules.nextStopNumber(state.waypoints.all, state.routeDraft),
+                RouteSetupRules.nextStopNumber(state.routeDraft),
             ),
             onName = { name ->
                 onPickRoutePoint(RouteField.STOP, stop.copy(label = name.trim()))
@@ -1190,6 +1205,8 @@ private fun RouteListSheet(
     loading: Boolean,
     canEditEnds: Boolean,
     canAddStops: Boolean,
+    /** Whoever is signed in — the author half of who may remove a saved stop. */
+    currentUserId: Long?,
     /** Tapping a row: fill this part of the route. */
     onPick: (RouteField) -> Unit,
     /** The cross on a row, by row index rather than by stop index. */
@@ -1277,6 +1294,7 @@ private fun RouteListSheet(
                     index = index,
                     canEditEnds = canEditEnds,
                     canAddStops = canAddStops,
+                    currentUserId = currentUserId,
                     dragging = dragging == index,
                     dragOffset = if (dragging == index) dragOffset else 0f,
                     canDrag = RouteSetupRules.canMoveRow(draft, index, canEditEnds),
@@ -1431,6 +1449,8 @@ private fun RouteListRow(
     index: Int,
     canEditEnds: Boolean,
     canAddStops: Boolean,
+    /** Whoever is signed in — the author half of who may remove a saved stop. */
+    currentUserId: Long?,
     dragging: Boolean,
     dragOffset: Float,
     canDrag: Boolean,
@@ -1444,7 +1464,8 @@ private fun RouteListRow(
     val picked = RouteSetupRules.pointAtRow(draft, index)
     val stopNumber = RouteSetupRules.stopIndexAtRow(draft, index)?.plus(1)
     val editable = if (field == RouteField.STOP) canAddStops else canEditEnds
-    val removable = RouteSetupRules.canRemoveRow(draft, index, canEditEnds, canAddStops)
+    val removable =
+        RouteSetupRules.canRemoveRow(draft, index, canEditEnds, canAddStops, currentUserId)
 
     Row(
         verticalAlignment = Alignment.CenterVertically,

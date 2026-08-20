@@ -73,6 +73,58 @@ export function validateWaypointInput(body) {
   return { value: { name: trimmedName, lat, lng, type, order_index: null } };
 }
 
+/**
+ * Validates a PATCH body: the fields of a waypoint that may be changed after
+ * it exists.
+ *
+ * ## Why this is not the same validator as [validateWaypointInput]
+ *
+ * A create says what a waypoint *is*; a patch says what about it changed, and
+ * the difference is what an absent field means. Absent on a create is an
+ * error; absent on a patch is "leave it". So every field here is optional and
+ * a body with none of them is refused outright — a PATCH that changes nothing
+ * is a request somebody meant to fill in.
+ *
+ * `lat`/`lng` and `type` are deliberately **not** patchable. Moving a saved
+ * waypoint somewhere else is not an edit, it is a different stop; and a
+ * planned waypoint that turned into a live one would silently leave the route
+ * it was ordered inside. Both are a delete and a create, which the client
+ * already does.
+ */
+export function validateWaypointPatch(body) {
+  const payload = body || {};
+  const value = {};
+
+  const hasName = Object.prototype.hasOwnProperty.call(payload, 'name');
+  const hasOrder = Object.prototype.hasOwnProperty.call(payload, 'order_index');
+
+  if (!hasName && !hasOrder) {
+    return { error: 'name or order_index is required' };
+  }
+
+  if (hasName) {
+    if (typeof payload.name !== 'string') {
+      return { error: 'name is required' };
+    }
+    const trimmedName = payload.name.trim();
+    if (trimmedName.length < NAME_MIN_LENGTH || trimmedName.length > NAME_MAX_LENGTH) {
+      return {
+        error: `name must be between ${NAME_MIN_LENGTH} and ${NAME_MAX_LENGTH} characters`,
+      };
+    }
+    value.name = trimmedName;
+  }
+
+  if (hasOrder) {
+    if (!Number.isInteger(payload.order_index) || payload.order_index < 0) {
+      return { error: 'order_index must be a non-negative integer' };
+    }
+    value.order_index = payload.order_index;
+  }
+
+  return { value };
+}
+
 export function createWaypointsRouter({ db, config }) {
   const router = Router();
   router.use('/trips/:id/waypoints', requireAuth(db, config), requireTripMembership(db));
@@ -126,6 +178,86 @@ export function createWaypointsRouter({ db, config }) {
       planned: planned.map(serializeWaypoint),
       live: live.map(serializeWaypoint),
     });
+  });
+
+  /**
+   * Changes a waypoint that already exists — in practice, its position in the
+   * planned route.
+   *
+   * ## Why this exists
+   *
+   * Until now a route could only be appended to. The app held the stops a
+   * rider was arranging in local state and wrote them with one POST each, so
+   * re-ordering was something that happened on the phone and nowhere else:
+   * leaving the trip and coming back showed a list with no stops in it at all,
+   * because there was nothing to load them *into*. Ordering has to be
+   * writable for the list to be the real route rather than a sketch of it.
+   *
+   * ## Who may
+   *
+   * The trip's owner only, and this is stricter than the delete below on
+   * purpose. Re-ordering one stop renumbers the ones around it — a member
+   * dragging their own stop up two places has to rewrite two stops that are
+   * not theirs, and an author-only rule would let the first of those writes
+   * succeed and the second come back 403, leaving the route half-renumbered
+   * with no way for the rider to tell. The route between the ends is the
+   * owner's, the same way `PATCH /trips/:id` is; adding a stop and removing
+   * your own are what a member gets.
+   *
+   * `order_index` is not made unique. A client rewriting a whole route sends
+   * one PATCH per moved stop, and any intermediate state would collide with
+   * itself under a unique index — the ordering is a sort key, and ties fall
+   * back to `id` exactly as the GET says.
+   */
+  router.patch('/trips/:id/waypoints/:wpId', requireActiveTrip(), (req, res) => {
+    const waypointId = Number(req.params.wpId);
+    if (!Number.isInteger(waypointId) || waypointId <= 0) {
+      return res.status(400).json({ error: 'invalid waypoint id' });
+    }
+
+    const { error, value } = validateWaypointPatch(req.body);
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    const waypoint = db
+      .prepare('SELECT * FROM trip_waypoints WHERE id = ? AND trip_id = ?')
+      .get(waypointId, req.trip.id);
+    if (!waypoint) {
+      return res.status(404).json({ error: 'waypoint not found' });
+    }
+
+    if (req.trip.owner_id !== req.user.id) {
+      return res
+        .status(403)
+        .json({ error: 'only the trip owner can change a waypoint' });
+    }
+
+    // Ordering means nothing on a live waypoint — those are chronological, and
+    // the column is NULL for every one of them. Accepting it would write a
+    // number nothing reads and imply an order that does not exist.
+    if (value.order_index !== undefined && waypoint.type !== 'planned') {
+      return res
+        .status(400)
+        .json({ error: 'order_index can only be set on a planned waypoint' });
+    }
+
+    const fields = [];
+    const args = [];
+    if (value.name !== undefined) {
+      fields.push('name = ?');
+      args.push(value.name);
+    }
+    if (value.order_index !== undefined) {
+      fields.push('order_index = ?');
+      args.push(value.order_index);
+    }
+    args.push(waypointId);
+
+    db.prepare(`UPDATE trip_waypoints SET ${fields.join(', ')} WHERE id = ?`).run(...args);
+
+    const updated = db.prepare('SELECT * FROM trip_waypoints WHERE id = ?').get(waypointId);
+    res.json(serializeWaypoint(updated));
   });
 
   router.delete('/trips/:id/waypoints/:wpId', requireActiveTrip(), (req, res) => {

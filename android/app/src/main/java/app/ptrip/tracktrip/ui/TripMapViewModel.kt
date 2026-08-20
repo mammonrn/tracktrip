@@ -119,7 +119,7 @@ data class TripMapUiState(
         )
 
     /** The route the open card describes, including stops it has not saved yet. */
-    val draftPlan: RoutePlan? get() = RouteSetupRules.plan(routeDraft, waypoints.all)
+    val draftPlan: RoutePlan? get() = RouteSetupRules.plan(routeDraft)
 
     /**
      * The route the summary sheet measures: the draft's when there is one, and
@@ -158,9 +158,20 @@ data class TripMapUiState(
      */
     val drawnRoute: List<LatLng> get() = draftRoute?.points.orEmpty()
 
-    /** Every stop the map draws: the trip's, plus the ones only this draft holds. */
+    /**
+     * Every stop the map draws.
+     *
+     * With the route list open, the draft *is* the planned route — it was
+     * seeded from the trip's stops, so drawing both would put two pins on
+     * every one of them. The trip's live waypoints stay: those are dropped
+     * while riding and are not part of the road anybody planned, so no draft
+     * ever holds them.
+     *
+     * With it closed, the trip's own, exactly as before.
+     */
     val drawnWaypoints: List<Waypoint>
-        get() = waypoints.all + RouteSetupRules.draftWaypoints(routeDraft)
+        get() = if (routeDraft.isEmpty) waypoints.all
+        else waypoints.live + RouteSetupRules.draftWaypoints(routeDraft)
 }
 
 /** A member's fix as plain coordinates, or null if they have not reported. */
@@ -508,10 +519,39 @@ class TripMapViewModel(
      * end is one tap. The edit mechanism did not change — the way in did.
      */
     fun openRouteSetup() {
-        _uiState.update {
-            it.copy(routeDraft = RouteSetupRules.fromTrip(it.trip?.origin, it.trip?.destination))
+        viewModelScope.launch {
+            // Re-read before seeding, rather than trusting whatever the last
+            // poll left behind. Two reasons, and the first is a race this
+            // feature would lose silently without it: the screen can open the
+            // list as soon as the *trip* has loaded, which on a cold start is
+            // before the waypoints have — and a list seeded from an empty
+            // `waypoints` is exactly the two-empty-ends bug this change is
+            // fixing, re-created one layer up.
+            //
+            // The second is that a trip is shared. Somebody may have added a
+            // stop since the last poll, and a rider about to re-order the
+            // route should be arranging what the route actually is.
+            //
+            // A failed fetch falls through to what is already in state, which
+            // is what every other read on this screen does.
+            loadWaypoints()
+
+            _uiState.update {
+                it.copy(
+                    routeDraft = RouteSetupRules.fromTrip(
+                        it.trip?.origin,
+                        it.trip?.destination,
+                        // The stops the trip already has, so the list a rider
+                        // reopens is the route they saved rather than two
+                        // empty ends. This one argument is the bug fix:
+                        // without it the draft could only ever describe stops
+                        // it had made itself.
+                        it.waypoints.planned,
+                    ),
+                )
+            }
+            refreshRoutePreview()
         }
-        refreshRoutePreview()
     }
 
     /**
@@ -643,23 +683,9 @@ class TripMapViewModel(
                 }
 
                 if (RouteSetupRules.canAddStops(trip.isActive)) {
-                    var order = RouteSetupRules.nextOrderIndex(state.waypoints.planned)
-                    draft.stops.forEach { stop ->
-                        val name = stop.label.trim()
-                        // The server refuses an unnamed waypoint, so an
-                        // unnamed one is never sent. The picker will not
-                        // produce one — this is the guard behind that.
-                        if (!RouteSetupRules.isStopNameValid(name)) return@forEach
-                        tripApi.addWaypoint(
-                            tripId = tripId,
-                            name = name,
-                            lat = stop.point.lat,
-                            lng = stop.point.lng,
-                            type = Waypoint.TYPE_PLANNED,
-                            orderIndex = order,
-                        )
-                        order += 1
-                    }
+                    applyWaypointEdits(
+                        RouteSetupRules.waypointEdits(state.waypoints.all, draft.stops)
+                    )
                 }
 
                 refreshTrip()
@@ -737,6 +763,64 @@ class TripMapViewModel(
     }
 
     /**
+     * Writes the difference between the trip's stops and the list the rider
+     * confirmed.
+     *
+     * ## Why a failure here does not abort the rest
+     *
+     * A trip is shared, and the list a rider has been arranging can be minutes
+     * old by the time they press confirm — a stop they crossed off may already
+     * have been deleted by somebody else, and a stop they moved may be gone
+     * too. Both come back 404. Treating that as an error would abandon the
+     * remaining edits half way through and leave the route in a state matching
+     * neither what the rider saw nor what the trip had.
+     *
+     * So a 404 on a stop is taken as "somebody got there first", which is the
+     * truth, and the sync carries on. Anything else — a 403, a network
+     * failure — is real and is reported, once, after the rest have been
+     * attempted. `refresh()` then replaces the whole list with what the server
+     * actually holds, so whatever happened, what the rider sees next is true.
+     */
+    private suspend fun applyWaypointEdits(edits: List<WaypointEdit>) {
+        var failure: ApiException? = null
+
+        for (edit in edits) {
+            try {
+                when (edit) {
+                    is WaypointEdit.Remove -> tripApi.deleteWaypoint(tripId, edit.id)
+                    is WaypointEdit.Move ->
+                        tripApi.updateWaypoint(
+                            tripId = tripId,
+                            waypointId = edit.id,
+                            name = edit.name,
+                            orderIndex = edit.orderIndex,
+                        )
+                    is WaypointEdit.Add ->
+                        tripApi.addWaypoint(
+                            tripId = tripId,
+                            name = edit.stop.label,
+                            lat = edit.stop.point.lat,
+                            lng = edit.stop.point.lng,
+                            type = Waypoint.TYPE_PLANNED,
+                            orderIndex = edit.orderIndex,
+                        )
+                }
+            } catch (e: SessionExpiredException) {
+                // Not survivable and not this loop's to soften: everything
+                // after it would fail the same way.
+                throw e
+            } catch (e: ApiException) {
+                // Somebody else removed it first. That is an outcome, not a
+                // fault, and the refresh afterwards will show the truth.
+                if (e.status == 404) continue
+                if (failure == null) failure = e
+            }
+        }
+
+        failure?.let { throw it }
+    }
+
+    /**
      * The road along the draft's ends, for the summary sheet.
      *
      * ## Why this is not simply another call to the directions API
@@ -757,7 +841,7 @@ class TripMapViewModel(
     private fun refreshRoutePreview() {
         val state = _uiState.value
         val draft = state.routeDraft
-        val plan = RouteSetupRules.plan(draft, state.waypoints.all)
+        val plan = RouteSetupRules.plan(draft)
 
         val alreadyTheTrips = plan != null &&
             RouteSetupRules.matchesTrip(
@@ -807,7 +891,7 @@ class TripMapViewModel(
                 // while this was in flight, and a road drawn through points
                 // they just replaced is the search-as-you-type bug wearing a
                 // different hat.
-                if (RouteSetupRules.plan(it.routeDraft, it.waypoints.all) != plan) it
+                if (RouteSetupRules.plan(it.routeDraft) != plan) it
                 else it.copy(routePreview = line, routePreviewLoading = false)
             }
         }

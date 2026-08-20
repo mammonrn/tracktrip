@@ -5,6 +5,7 @@ import supertest from 'supertest';
 import { createApp } from '../src/app.js';
 import { runMigrations, MIGRATIONS_DIR } from '../src/db/migrate.js';
 import { signAccessToken } from '../src/auth/jwt.js';
+import { validateWaypointPatch } from '../src/routes/waypoints.js';
 
 const JWT_SECRET = 'test-secret';
 
@@ -65,6 +66,13 @@ function post(app, tripId, token, body) {
 }
 
 const validPlanned = { name: 'Gas stop', lat: 18.79, lng: 98.98, type: 'planned', order_index: 0 };
+
+function patch(app, tripId, token, waypointId, body) {
+  return supertest(app)
+    .patch(`/trips/${tripId}/waypoints/${waypointId}`)
+    .set('Authorization', `Bearer ${token}`)
+    .send(body);
+}
 
 test('POST creates a planned waypoint and GET returns it', async () => {
   const { app, tripId, memberToken, memberId } = setup();
@@ -347,4 +355,150 @@ test('unknown trip returns 404, malformed trip id returns 400', async () => {
     .get('/trips/abc/waypoints')
     .set('Authorization', `Bearer ${memberToken}`);
   assert.equal(malformed.status, 400);
+});
+
+
+// --- changing a waypoint that already exists --------------------------------
+//
+// Until this existed a route could only be appended to, so the order stops
+// were arranged in lived on the phone and nowhere else: leaving the trip and
+// coming back showed a list with no stops in it. Ordering has to be writable
+// for the list to be the route rather than a sketch of it.
+
+test('a patch says what changed, and a patch that changes nothing is refused', () => {
+  assert.deepEqual(validateWaypointPatch({ order_index: 3 }).value, { order_index: 3 });
+  assert.deepEqual(validateWaypointPatch({ name: '  Fuel  ' }).value, { name: 'Fuel' });
+  assert.deepEqual(validateWaypointPatch({ name: 'Fuel', order_index: 1 }).value, {
+    name: 'Fuel',
+    order_index: 1,
+  });
+
+  // Absent on a create is an error; absent on a patch is "leave it". A body
+  // with nothing in it is a request somebody meant to fill in.
+  assert.match(validateWaypointPatch({}).error, /name or order_index is required/);
+  assert.match(validateWaypointPatch(undefined).error, /name or order_index is required/);
+  // Fields that are not patchable do not make a body meaningful.
+  assert.match(validateWaypointPatch({ lat: 18.79 }).error, /name or order_index is required/);
+});
+
+test('a patch will not take a bad name or a bad order', () => {
+  assert.match(validateWaypointPatch({ name: '   ' }).error, /name must be/);
+  assert.match(validateWaypointPatch({ name: 'x'.repeat(61) }).error, /name must be/);
+  assert.match(validateWaypointPatch({ order_index: -1 }).error, /order_index must be/);
+  assert.match(validateWaypointPatch({ order_index: 1.5 }).error, /order_index must be/);
+  assert.match(validateWaypointPatch({ order_index: '2' }).error, /order_index must be/);
+});
+
+test('the trip owner re-orders a stop', async () => {
+  const { app, tripId, ownerToken, memberToken } = setup();
+
+  const first = await post(app, tripId, memberToken, { ...validPlanned, name: 'A', order_index: 0 });
+  const second = await post(app, tripId, memberToken, { ...validPlanned, name: 'B', order_index: 1 });
+
+  const moved = await patch(app, tripId, ownerToken, first.body.id, { order_index: 1 });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.order_index, 1);
+
+  await patch(app, tripId, ownerToken, second.body.id, { order_index: 0 });
+
+  const list = await supertest(app)
+    .get(`/trips/${tripId}/waypoints`)
+    .set('Authorization', `Bearer ${ownerToken}`);
+
+  // The GET orders by order_index, so the swap is what a reopened route list
+  // will read back.
+  assert.deepEqual(list.body.planned.map((w) => w.name), ['B', 'A']);
+});
+
+test('a member cannot re-order, even their own stop', async () => {
+  // Stricter than delete, on purpose: re-ordering one stop renumbers the ones
+  // around it, so an author-only rule would let the first write succeed and
+  // the second come back 403 — leaving the route half-renumbered with no way
+  // for the rider to tell.
+  const { app, tripId, memberToken } = setup();
+  const mine = await post(app, tripId, memberToken, validPlanned);
+
+  const refused = await patch(app, tripId, memberToken, mine.body.id, { order_index: 2 });
+  assert.equal(refused.status, 403);
+
+  const list = await supertest(app)
+    .get(`/trips/${tripId}/waypoints`)
+    .set('Authorization', `Bearer ${memberToken}`);
+  assert.equal(list.body.planned[0].order_index, 0);
+});
+
+test('somebody who is not on the trip cannot patch its waypoints', async () => {
+  const { app, tripId, memberToken, outsiderToken } = setup();
+  const created = await post(app, tripId, memberToken, validPlanned);
+
+  const refused = await patch(app, tripId, outsiderToken, created.body.id, { order_index: 1 });
+  // The membership guard runs before the ownership one, so this is a 403 from
+  // requireTripMembership rather than from the route.
+  assert.equal(refused.status, 403);
+});
+
+test('a waypoint from another trip is not found, not forbidden', async () => {
+  const { db, app, tripId, ownerId, ownerToken } = setup();
+  const otherTrip = Number(
+    db
+      .prepare("INSERT INTO trips (name, owner_id, status) VALUES ('Elsewhere', ?, 'active')")
+      .run(ownerId).lastInsertRowid
+  );
+  const stray = Number(
+    db
+      .prepare(
+        `INSERT INTO trip_waypoints (trip_id, name, lat, lng, type, order_index, added_by)
+         VALUES (?, 'Stray', 18, 98, 'planned', 0, ?)`
+      )
+      .run(otherTrip, ownerId).lastInsertRowid
+  );
+
+  const refused = await patch(app, tripId, ownerToken, stray, { order_index: 1 });
+  assert.equal(refused.status, 404);
+});
+
+test('ordering is refused on a live waypoint', async () => {
+  const { app, tripId, ownerToken, memberToken } = setup();
+  const live = await post(app, tripId, memberToken, {
+    name: 'Photo stop',
+    lat: 18.79,
+    lng: 98.98,
+    type: 'live',
+  });
+
+  // Live waypoints are chronological and their order_index is NULL. A number
+  // there would be read by nothing and imply an order that does not exist.
+  const refused = await patch(app, tripId, ownerToken, live.body.id, { order_index: 0 });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /planned/);
+
+  // Renaming one is still fine.
+  const renamed = await patch(app, tripId, ownerToken, live.body.id, { name: 'Viewpoint' });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.body.name, 'Viewpoint');
+  assert.equal(renamed.body.order_index, null);
+});
+
+test('a bad waypoint id is refused before anything is read', async () => {
+  const { app, tripId, ownerToken } = setup();
+  assert.equal((await patch(app, tripId, ownerToken, 'nope', { order_index: 1 })).status, 400);
+  assert.equal((await patch(app, tripId, ownerToken, 0, { order_index: 1 })).status, 400);
+  assert.equal((await patch(app, tripId, ownerToken, 999999, { order_index: 1 })).status, 404);
+});
+
+test('two stops may share an order index while a route is being rewritten', async () => {
+  // A client rewriting a whole route sends one PATCH per moved stop, and any
+  // intermediate state collides with itself under a unique index. The ordering
+  // is a sort key; ties fall back to id, exactly as the GET says.
+  const { app, tripId, ownerToken, memberToken } = setup();
+  const first = await post(app, tripId, memberToken, { ...validPlanned, name: 'A', order_index: 0 });
+  await post(app, tripId, memberToken, { ...validPlanned, name: 'B', order_index: 1 });
+
+  const collided = await patch(app, tripId, ownerToken, first.body.id, { order_index: 1 });
+  assert.equal(collided.status, 200);
+
+  const list = await supertest(app)
+    .get(`/trips/${tripId}/waypoints`)
+    .set('Authorization', `Bearer ${ownerToken}`);
+  assert.equal(list.body.planned.length, 2);
 });

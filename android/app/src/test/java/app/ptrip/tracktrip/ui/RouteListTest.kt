@@ -1,5 +1,7 @@
 package app.ptrip.tracktrip.ui
 
+import app.ptrip.tracktrip.data.TripEndpoint
+import app.ptrip.tracktrip.data.Waypoint
 import app.ptrip.tracktrip.map.LatLng
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -171,7 +173,7 @@ class RouteListTest {
         // And the road, which is what the sheet quotes over the confirm button.
         assertEquals(
             listOf(chiangMai, lampang, maeRim, pai),
-            RouteSetupRules.plan(moved, emptyList())?.points,
+            RouteSetupRules.plan(moved)?.points,
         )
     }
 
@@ -198,32 +200,65 @@ class RouteListTest {
     }
 
     @Test
-    fun `only a rider who may set the ends may drag one`() {
-        // PATCH /trips/:id is owner-only, so a member dragging a stop into the
-        // start would be offered a re-order whose save comes back 403 — which
-        // reads as a broken app rather than as a rule.
+    fun `re-ordering the route belongs to whoever owns it`() {
+        // Stricter than it was, and it had to become stricter the moment a
+        // drag started being written. Moving one stop renumbers the ones
+        // around it, so a member dragging their own stop up two places
+        // rewrites two stops that are not theirs — the server refuses those,
+        // and the rider is left with a route half renumbered and no way to
+        // tell which half. So the order of the route is the owner's, exactly
+        // as its two ends already were.
         assertEquals(0..3, RouteSetupRules.movableRows(route, canEditEnds = true))
-        assertEquals(1..2, RouteSetupRules.movableRows(route, canEditEnds = false))
+        assertTrue(RouteSetupRules.movableRows(route, canEditEnds = false).isEmpty())
 
         assertTrue(RouteSetupRules.canMoveRow(route, 0, canEditEnds = true))
+        assertTrue(RouteSetupRules.canMoveRow(route, 1, canEditEnds = true))
+        // Not even their own, and not even a stop in the middle.
         assertFalse(RouteSetupRules.canMoveRow(route, 0, canEditEnds = false))
-        // A member may still order their own stops.
-        assertTrue(RouteSetupRules.canMoveRow(route, 1, canEditEnds = false))
+        assertFalse(RouteSetupRules.canMoveRow(route, 1, canEditEnds = false))
+    }
+
+    @Test
+    fun `a member still removes their own stop, and not anybody else's`() {
+        // The other half of the rule, which did *not* get stricter: DELETE
+        // .../waypoints/:id allows the trip's owner or whoever added it.
+        val mine = RoutePoint(maeRim, "Mae Rim", savedId = 5L, addedBy = 7L)
+        val theirs = RoutePoint(lampang, "Lampang", savedId = 6L, addedBy = 8L)
+        val fresh = RoutePoint(pai, "Pai")
+
+        assertTrue(RouteSetupRules.canRemoveStop(mine, isOwner = false, currentUserId = 7L))
+        assertFalse(RouteSetupRules.canRemoveStop(theirs, isOwner = false, currentUserId = 7L))
+        // The owner may remove any of them.
+        assertTrue(RouteSetupRules.canRemoveStop(theirs, isOwner = true, currentUserId = 7L))
+        // A stop nothing has been written for is nobody's but the rider's own.
+        assertTrue(RouteSetupRules.canRemoveStop(fresh, isOwner = false, currentUserId = 7L))
+        assertTrue(RouteSetupRules.canRemoveStop(fresh, isOwner = false, currentUserId = null))
+
+        val draft = RouteDraft(
+            from = at(chiangMai, "Chiang Mai"),
+            to = at(pai, "Pai"),
+            stops = listOf(mine, theirs),
+        )
+        assertTrue(
+            RouteSetupRules.canRemoveRow(draft, 1, canEditEnds = false, canAddStops = true, currentUserId = 7L)
+        )
+        assertFalse(
+            RouteSetupRules.canRemoveRow(draft, 2, canEditEnds = false, canAddStops = true, currentUserId = 7L)
+        )
     }
 
     @Test
     fun `a route with nothing to re-order offers no drag at all`() {
         val ends = RouteDraft(from = at(chiangMai, "Chiang Mai"), to = at(pai, "Pai"))
 
-        // Two rows and no ends to touch is one row that could move, and one
-        // row cannot be re-ordered against itself. An empty range is what
-        // stops the screen arming a gesture that can only fail.
+        // Not a member's, whatever the shape.
         assertTrue(RouteSetupRules.movableRows(ends, canEditEnds = false).isEmpty())
         assertFalse(RouteSetupRules.canMoveRow(ends, 1, canEditEnds = false))
 
         val oneStop = ends.copy(stops = listOf(at(maeRim, "Mae Rim")))
         assertTrue(RouteSetupRules.movableRows(oneStop, canEditEnds = false).isEmpty())
-        // The owner can still move it: for them the ends are in the range.
+        // The owner can move it: for them the ends are in the range, so a stop
+        // has somewhere to go even when it is the only one.
         assertTrue(RouteSetupRules.canMoveRow(oneStop, 1, canEditEnds = true))
     }
 
@@ -272,4 +307,207 @@ class RouteListTest {
             RouteSetupRules.fromOrdered(listOf(at(chiangMai, "Chiang Mai"))),
         )
     }
+    // --- the route survives leaving the screen ------------------------------
+
+    private fun planned(id: Long, order: Int, at: LatLng, name: String, by: Long? = 7L) =
+        Waypoint(
+            id = id,
+            name = name,
+            lat = at.lat,
+            lng = at.lng,
+            type = Waypoint.TYPE_PLANNED,
+            orderIndex = order,
+            addedBy = by,
+        )
+
+    @Test
+    fun `reopening a trip shows the stops it actually has`() {
+        // The bug, at the level it can be tested. A draft seeded from the two
+        // ends alone had nothing to load saved stops into, so a rider who
+        // added two, left the trip and came back saw From and To with nothing
+        // between them — while the pins were still on the map.
+        val saved = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            planned(12, order = 1, at = lampang, name = "Lampang"),
+        )
+
+        val draft = RouteSetupRules.fromTrip(
+            origin = TripEndpoint(chiangMai.lat, chiangMai.lng, "Chiang Mai"),
+            destination = TripEndpoint(pai.lat, pai.lng, "Pai"),
+            saved = saved,
+        )
+
+        assertEquals(listOf("Mae Rim", "Lampang"), draft.stops.map { it.label })
+        assertEquals(listOf(11L, 12L), draft.stops.map { it.savedId })
+        assertEquals(4, RouteSetupRules.rowCount(draft))
+        assertEquals(
+            listOf("Chiang Mai", "Mae Rim", "Lampang", "Pai"),
+            RouteSetupRules.ordered(draft)!!.map { it.label },
+        )
+    }
+
+    @Test
+    fun `a live drop never lands on the route list`() {
+        // It is not part of the road anybody planned, and putting it on the
+        // list would let a re-order give it an order_index the server refuses.
+        val mixed = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            Waypoint(12, "Coffee", pai.lat, pai.lng, Waypoint.TYPE_LIVE, orderIndex = null),
+        )
+
+        val draft = RouteSetupRules.fromTrip(null, null, mixed)
+        assertEquals(listOf("Mae Rim"), draft.stops.map { it.label })
+    }
+
+    @Test
+    fun `a list nobody touched is worth no writes at all`() {
+        val saved = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            planned(12, order = 1, at = lampang, name = "Lampang"),
+        )
+        val draft = RouteSetupRules.fromTrip(null, null, saved)
+
+        // The common case: open the list, change one end, confirm. Nothing
+        // about the stops moved, so nothing about them is sent.
+        assertEquals(emptyList<WaypointEdit>(), RouteSetupRules.waypointEdits(saved, draft.stops))
+    }
+
+    @Test
+    fun `a drag becomes one patch per stop that actually moved`() {
+        val saved = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            planned(12, order = 1, at = lampang, name = "Lampang"),
+        )
+        val draft = RouteSetupRules.fromTrip(
+            TripEndpoint(chiangMai.lat, chiangMai.lng, null),
+            TripEndpoint(pai.lat, pai.lng, null),
+            saved,
+        )
+        val swapped = RouteSetupRules.moved(draft, from = 2, to = 1)
+
+        assertEquals(
+            listOf(
+                WaypointEdit.Move(12L, 0, "Lampang"),
+                WaypointEdit.Move(11L, 1, "Mae Rim"),
+            ),
+            RouteSetupRules.waypointEdits(saved, swapped.stops),
+        )
+    }
+
+    @Test
+    fun `a reopened list posts only what is new`() {
+        // The other half of the bug: a seeded list confirmed as it was would,
+        // under the old one-POST-per-stop commit, have duplicated every stop
+        // that was already there. Every visit to the screen would double the
+        // route.
+        val saved = listOf(planned(11, order = 0, at = maeRim, name = "Mae Rim"))
+        val draft = RouteSetupRules.fromTrip(null, null, saved)
+        val withNew = RouteSetupRules.with(draft, RouteField.STOP, RoutePoint(lampang, "Lampang"))
+
+        val edits = RouteSetupRules.waypointEdits(saved, withNew.stops)
+        assertEquals(1, edits.size)
+        val add = edits.single() as WaypointEdit.Add
+        assertEquals("Lampang", add.stop.label)
+        assertEquals(1, add.orderIndex)
+    }
+
+    @Test
+    fun `crossing a saved stop off deletes it, and deletes come first`() {
+        val saved = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            planned(12, order = 1, at = lampang, name = "Lampang"),
+        )
+        val draft = RouteSetupRules.fromTrip(null, null, saved)
+        // Cross off the first, and add a new one after the second.
+        val edited = RouteSetupRules
+            .withoutStop(draft, 0)
+            .let { RouteSetupRules.with(it, RouteField.STOP, RoutePoint(pai, "Pai")) }
+
+        val edits = RouteSetupRules.waypointEdits(saved, edited.stops)
+
+        // Removal first, so a route that shrank never briefly holds more stops
+        // than the rider is looking at.
+        assertEquals(WaypointEdit.Remove(11L), edits.first())
+        // Lampang slid up into index 0, so it moved.
+        assertTrue(edits.contains(WaypointEdit.Move(12L, 0, "Lampang")))
+        assertTrue(edits.any { it is WaypointEdit.Add && it.orderIndex == 1 })
+    }
+
+    @Test
+    fun `arbitrary order indexes on the server come out renumbered`() {
+        // The server does not require them to be contiguous, and a route that
+        // has been edited for a while will not be. The rows are the truth, so
+        // the write is 0..n-1 with no gaps.
+        val saved = listOf(
+            planned(11, order = 4, at = maeRim, name = "Mae Rim"),
+            planned(12, order = 9, at = lampang, name = "Lampang"),
+        )
+        val draft = RouteSetupRules.fromTrip(null, null, saved)
+
+        assertEquals(
+            listOf(
+                WaypointEdit.Move(11L, 0, "Mae Rim"),
+                WaypointEdit.Move(12L, 1, "Lampang"),
+            ),
+            RouteSetupRules.waypointEdits(saved, draft.stops),
+        )
+    }
+
+    @Test
+    fun `a stop somebody else deleted while the list was open is not resurrected`() {
+        // The list is minutes old by the time confirm is pressed, and the trip
+        // is shared. Re-adding a stop that has since been deleted would put it
+        // back behind the other rider's back.
+        val saved = listOf(planned(11, order = 0, at = maeRim, name = "Mae Rim"))
+        val stale = listOf(
+            RoutePoint(maeRim, "Mae Rim", savedId = 11L),
+            RoutePoint(lampang, "Lampang", savedId = 99L),
+        )
+
+        val edits = RouteSetupRules.waypointEdits(saved, stale)
+        assertTrue(edits.none { it is WaypointEdit.Add })
+        assertTrue(edits.none { it is WaypointEdit.Remove })
+        // 99 is simply dropped; 11 did not move.
+        assertEquals(emptyList<WaypointEdit>(), edits)
+    }
+
+    @Test
+    fun `an unnamed stop is never sent`() {
+        // The server refuses an unnamed waypoint, so one is never offered to
+        // it. The picker will not produce one; this is the guard behind that.
+        val edits = RouteSetupRules.waypointEdits(
+            emptyList(),
+            listOf(RoutePoint(maeRim, "   "), RoutePoint(lampang, "Lampang")),
+        )
+
+        assertEquals(1, edits.size)
+        assertEquals("Lampang", (edits.single() as WaypointEdit.Add).stop.label)
+    }
+
+    @Test
+    fun `renaming a saved stop is a patch, not a delete and a create`() {
+        val saved = listOf(planned(11, order = 0, at = maeRim, name = "Mae Rim"))
+        val renamed = listOf(RoutePoint(maeRim, "Mae Rim fuel", savedId = 11L))
+
+        assertEquals(
+            listOf(WaypointEdit.Move(11L, 0, "Mae Rim fuel")),
+            RouteSetupRules.waypointEdits(saved, renamed),
+        )
+    }
+
+    @Test
+    fun `a live waypoint is never touched by the sync`() {
+        // It is not on the list, so "not in the list" must not read as
+        // "the rider crossed it off".
+        val saved = listOf(
+            planned(11, order = 0, at = maeRim, name = "Mae Rim"),
+            Waypoint(12, "Coffee", pai.lat, pai.lng, Waypoint.TYPE_LIVE, orderIndex = null),
+        )
+        val draft = RouteSetupRules.fromTrip(null, null, saved)
+
+        val edits = RouteSetupRules.waypointEdits(saved, draft.stops)
+        assertTrue(edits.none { it is WaypointEdit.Remove && it.id == 12L })
+        assertEquals(emptyList<WaypointEdit>(), edits)
+    }
+
 }

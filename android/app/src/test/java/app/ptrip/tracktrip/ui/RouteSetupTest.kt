@@ -61,7 +61,7 @@ class RouteSetupTest {
         assertTrue(draft.isComplete)
         assertEquals(
             listOf(chiangMai, pai),
-            RouteSetupRules.plan(draft, emptyList())?.points,
+            RouteSetupRules.plan(draft)?.points,
         )
     }
 
@@ -112,7 +112,7 @@ class RouteSetupTest {
         val draft = RouteSetupRules.fromTrip(null, null)
 
         assertTrue(draft.isEmpty)
-        assertNull(RouteSetupRules.plan(draft, emptyList()))
+        assertNull(RouteSetupRules.plan(draft))
     }
 
     @Test
@@ -130,12 +130,23 @@ class RouteSetupTest {
     @Test
     fun `a trip's own stops are on both sides, so they change nothing`() {
         val saved = listOf(planned(1, order = 0, at = lampang))
-        val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai))
+        // Seeded from the trip, which is what opening the list now does — the
+        // stop is in the draft rather than only on the trip.
+        val draft = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai), saved)
 
         // The stop is already on the trip and already on its fetched route.
-        // Opening the card to look at it must not re-ask for the same road.
+        // Opening the list to look at it must not re-ask for the same road.
         assertTrue(
             RouteSetupRules.matchesTrip(draft, saved, endpoint(chiangMai), endpoint(pai))
+        )
+
+        // And moving it *is* a different road, which is the half that only
+        // became expressible once the saved stops lived in the draft.
+        val reordered = draft.copy(
+            stops = draft.stops + RoutePoint(nan, "Nan"),
+        )
+        assertFalse(
+            RouteSetupRules.matchesTrip(reordered, saved, endpoint(chiangMai), endpoint(pai))
         )
     }
 
@@ -199,13 +210,18 @@ class RouteSetupTest {
             planned(1, order = 0, at = lampang),
             planned(2, order = 1, at = pai),
         )
+        // Seeded from the trip, then a stop added — which is what a rider who
+        // reopens a saved route and appends to it produces.
         val draft = RouteSetupRules
-            .fromTrip(endpoint(chiangMai), endpoint(pai))
+            .fromTrip(endpoint(chiangMai), endpoint(pai), saved)
             .let { RouteSetupRules.with(it, RouteField.STOP, RoutePoint(nan, "Nan")) }
 
-        val plan = RouteSetupRules.plan(draft, saved)
+        val plan = RouteSetupRules.plan(draft)
 
         assertEquals(chiangMai, plan?.from)
+        // The trip's own stops are in the draft now, so the plan reads only
+        // the draft. Threading the two lists together — which is what this did
+        // — is what made a saved stop unable to move relative to a new one.
         assertEquals(listOf(lampang, pai, nan), plan?.via)
         assertEquals(pai, plan?.to)
         assertEquals(listOf(chiangMai, lampang, pai, nan, pai), plan?.points)
@@ -213,8 +229,8 @@ class RouteSetupTest {
 
     @Test
     fun `a half-set draft has no plan to ask for`() {
-        assertNull(RouteSetupRules.plan(RouteDraft(from = RoutePoint(chiangMai)), emptyList()))
-        assertNull(RouteSetupRules.plan(RouteDraft(), emptyList()))
+        assertNull(RouteSetupRules.plan(RouteDraft(from = RoutePoint(chiangMai))))
+        assertNull(RouteSetupRules.plan(RouteDraft()))
     }
 
     @Test
@@ -264,27 +280,34 @@ class RouteSetupTest {
     fun `the next stop is numbered from what is already on the route`() {
         // What the naming dialog prefills after a press and hold, so the whole
         // gesture is: hold, confirm. Nothing to type.
-        assertEquals(1, RouteSetupRules.nextStopNumber(emptyList(), RouteDraft()))
+        assertEquals(1, RouteSetupRules.nextStopNumber(RouteDraft()))
 
+        // The draft's own length is the whole count, because the trip's saved
+        // stops are seeded into it. Adding the trip's count on top — which is
+        // what this used to do — numbered the fourth stop on a route of three
+        // as "Stop 7".
         val saved = listOf(planned(1, order = 0, at = lampang), planned(2, order = 1, at = pai))
-        assertEquals(3, RouteSetupRules.nextStopNumber(saved, RouteDraft()))
+        val reopened = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai), saved)
+        assertEquals(3, RouteSetupRules.nextStopNumber(reopened))
 
-        // The trip's stops and the draft's are one sequence on the route, so
-        // they are one sequence in the numbering too.
-        val withDraft = RouteDraft(stops = listOf(RoutePoint(nan, "Nan")))
-        assertEquals(4, RouteSetupRules.nextStopNumber(saved, withDraft))
+        val withOneMore =
+            RouteSetupRules.with(reopened, RouteField.STOP, RoutePoint(nan, "Nan"))
+        assertEquals(4, RouteSetupRules.nextStopNumber(withOneMore))
     }
 
     @Test
     fun `a live drop is not counted in the stop numbering`() {
         // It is not on the route, so it is not a stop number. Counting it
-        // would leave a gap in the sequence a rider can see in the sheet.
+        // would leave a gap in the sequence a rider can see in the sheet —
+        // and it never reaches the draft, which is where the count comes from.
         val mixed = listOf(
             planned(1, order = 0, at = lampang),
             Waypoint(2, "Coffee", pai.lat, pai.lng, Waypoint.TYPE_LIVE, orderIndex = null),
         )
+        val seeded = RouteSetupRules.fromTrip(endpoint(chiangMai), endpoint(pai), mixed)
 
-        assertEquals(2, RouteSetupRules.nextStopNumber(mixed, RouteDraft()))
+        assertEquals(1, seeded.stops.size)
+        assertEquals(2, RouteSetupRules.nextStopNumber(seeded))
     }
 
     @Test
