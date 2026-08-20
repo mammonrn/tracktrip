@@ -203,7 +203,6 @@
       only one that works for a spot with no name, and the only one that works
       at all on a server with no search key configured.
     -->
-    <string name="map_search_places">Search for a place</string>
     <string name="map_search_label">Search for a place</string>
     <string name="map_search_placeholder">Town, road, petrol station…</string>
     <string name="map_search_empty">No place by that name.</string>
@@ -233,6 +232,43 @@
     <string name="map_search_failed">Couldn\'t search for places just now.</string>
     <!-- The clear button inside the search field. A glyph, so not translated. -->
     <string name="map_search_clear_symbol" translatable="false">✕</string>
+
+    <!--
+      Setting a route up: two fields, "From" and "To", the way every map app
+      asks. Tapping one is how a rider says what the next point they choose is
+      for, which is why nothing afterwards asks them again.
+    -->
+    <string name="map_route_setup">Set up a route</string>
+    <string name="map_route_from">From</string>
+    <string name="map_route_to">To</string>
+    <string name="map_route_from_hint">Choose a starting point</string>
+    <string name="map_route_to_hint">Choose where you\'re going</string>
+    <string name="map_route_ends_locked">Only the rider who created this trip can set the start and the finish.</string>
+    <!-- The heading over the picker, so it always says which field it is filling. -->
+    <string name="map_route_pick_from">Where does the ride start?</string>
+    <string name="map_route_pick_to">Where are you going?</string>
+    <string name="map_route_pick_stop">Add a stop</string>
+    <string name="map_route_pick_hint">Or press and hold anywhere on the map to choose a point.</string>
+    <!-- Back out of the picker to the two fields. A glyph, so not translated. -->
+    <string name="map_route_back_symbol" translatable="false">‹</string>
+    <!--
+      The sheet that appears once both ends are set. The button says "Confirm
+      route" and not "Start" on purpose: this app has no turn-by-turn
+      navigation, and "Start" on a screen shaped like this one is read by
+      anyone who has used Google Maps as "begin guiding me".
+    -->
+    <string name="map_route_summary_title">Your route</string>
+    <string name="map_route_ends">%1$s → %2$s</string>
+    <string name="map_route_measuring">Working out the route…</string>
+    <string name="map_route_duration_minutes">%1$d min</string>
+    <string name="map_route_duration_hours">%1$d hr</string>
+    <string name="map_route_duration_hours_minutes">%1$d hr %2$d min</string>
+    <string name="map_route_confirm">Confirm route</string>
+    <string name="map_route_add_stops">Add stops</string>
+    <string name="map_route_stops">Stops</string>
+    <string name="map_route_stop_number">%1$d.</string>
+    <string name="map_route_stop_name_title">Name this stop</string>
+    <string name="map_route_stop_add">Add stop</string>
 
     <!-- Location permission -->
     <string name="location_permission_rationale">PTrips needs location access to share where you are with the riders on your trip. Without it there is nothing to send, so sharing stays off.</string>

@@ -629,6 +629,11 @@ private fun SignedInNavigation(
                 searchState = searchState,
                 onSearchQueryChanged = mapViewModel.placeSearch::onQueryChanged,
                 onSearchCleared = mapViewModel.placeSearch::clear,
+                onOpenRouteSetup = mapViewModel::openRouteSetup,
+                onCloseRouteSetup = mapViewModel::closeRouteSetup,
+                onPickRoutePoint = mapViewModel::pickRoutePoint,
+                onRemoveRouteStop = mapViewModel::removeRouteStop,
+                onConfirmRoute = mapViewModel::confirmRoute,
                 hasLocationPermission = hasLocationPermission,
                 onRefresh = mapViewModel::refresh,
                 onCenterOnMe = {
