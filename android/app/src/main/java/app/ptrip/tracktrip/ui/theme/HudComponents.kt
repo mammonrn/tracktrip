@@ -57,6 +57,18 @@ import coil3.compose.AsyncImage
  * shadow rather than ringed by a glow.
  */
 
+/**
+ * How much air a button keeps inside itself, above and below its label.
+ *
+ * Ten rather than twelve. Material's own minimum height for a button is 40dp
+ * and a `labelLarge` line is about twenty of those, so ten is the largest
+ * padding that still lands on that minimum — anything more makes the button
+ * taller than the design system's floor for no gain in legibility, and a
+ * screen with four of them stacked reads as a wall. Below ten the button
+ * would stop shrinking anyway: the minimum height takes over.
+ */
+private val BUTTON_VERTICAL_PADDING = 10.dp
+
 /** The shadow under a card. Small and soft: a lift, not a drop. */
 private val CARD_ELEVATION = 2.dp
 
@@ -91,7 +103,10 @@ fun HudPrimaryButton(
             pressedElevation = CARD_ELEVATION,
             disabledElevation = 0.dp,
         ),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(
+            horizontal = 24.dp,
+            vertical = BUTTON_VERTICAL_PADDING,
+        ),
         modifier = modifier,
     ) {
         if (loading) {
@@ -115,21 +130,39 @@ fun HudSecondaryButton(
     enabled: Boolean = true,
     loading: Boolean = false,
     accent: Color = AppPrimary,
+    /**
+     * Drops the outline, leaving the label alone in its accent.
+     *
+     * For an action that has to be *there* without being loud — the owner's
+     * controls under the two a rider actually came for. An outline is what
+     * makes a button read as a box, and four boxes down one edge of a screen
+     * carry the same weight however they are coloured.
+     */
+    quiet: Boolean = false,
 ) {
     val active = enabled && !loading
     OutlinedButton(
         onClick = onClick,
         enabled = active,
         shape = AppCardShape,
-        border = BorderStroke(
-            width = 1.dp,
-            brush = SolidColor(if (active) accent.copy(alpha = 0.5f) else AppLine),
-        ),
+        border = if (quiet) {
+            null
+        } else {
+            BorderStroke(
+                width = 1.dp,
+                brush = SolidColor(if (active) accent.copy(alpha = 0.5f) else AppLine),
+            )
+        },
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = accent,
             disabledContentColor = AppTextMuted,
         ),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(
+            // A quiet button has no edge to hold its label off, so it needs
+            // less of one: the text itself is the control.
+            horizontal = if (quiet) 12.dp else 20.dp,
+            vertical = BUTTON_VERTICAL_PADDING,
+        ),
         modifier = modifier,
     ) {
         if (loading) {
@@ -155,6 +188,7 @@ fun HudDangerButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
+    quiet: Boolean = false,
 ) {
     HudSecondaryButton(
         text = text,
@@ -163,6 +197,7 @@ fun HudDangerButton(
         enabled = enabled,
         loading = loading,
         accent = AppDanger,
+        quiet = quiet,
     )
 }
 

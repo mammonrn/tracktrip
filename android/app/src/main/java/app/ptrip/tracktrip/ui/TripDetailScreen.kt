@@ -45,6 +45,7 @@ import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudBatteryReadout
 import app.ptrip.tracktrip.ui.theme.HudChip
 import app.ptrip.tracktrip.ui.theme.HudDangerButton
+import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudDot
 import app.ptrip.tracktrip.ui.theme.HudError
 import app.ptrip.tracktrip.ui.theme.HudLoading
@@ -205,7 +206,23 @@ fun TripDetailScreen(
         }
 
         if (trip != null) {
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
+            // Four controls in a stack, and they used to read as one slab of
+            // buttons: identical widths, identical weights, gaps of 12dp, 12dp
+            // and then 4dp — so "End this trip" sat all but touching "Edit
+            // trip", the two most dangerous inches on the screen.
+            //
+            // Two things separate them now. The spacing is one rhythm rather
+            // than four ad-hoc paddings, and it comes from the Column instead
+            // of from each button's own modifier, so nothing can drift again.
+            // And the owner's controls are set below a divider and drawn
+            // [quiet][HudSecondaryButton] — no outline, just the label in its
+            // accent. Editing a name and ending a ride are things an owner
+            // goes looking for; they do not need to shout at a rider who came
+            // here to start sharing.
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 // The map is the point of the trip while it is running, and
                 // the record of it afterwards — so it is offered either way,
                 // and the wording changes rather than the button disappearing.
@@ -215,7 +232,7 @@ fun TripDetailScreen(
                         else R.string.view_final_positions
                     ),
                     onClick = onOpenMap,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 // Sharing is the thing a rider comes to this screen to start,
@@ -244,10 +261,13 @@ fun TripDetailScreen(
                 // below it — naming a ride afterwards is when people do it,
                 // and the server allows it for the same reason.
                 if (trip.isOwner) {
+                    HudDivider(modifier = Modifier.padding(top = 4.dp))
+
                     HudSecondaryButton(
                         text = stringResource(R.string.edit_trip),
                         onClick = onEditTrip,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        quiet = true,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
 
@@ -257,10 +277,9 @@ fun TripDetailScreen(
                             text = stringResource(R.string.end_trip_confirm),
                             style = MaterialTheme.typography.bodySmall,
                             color = AppTextMuted,
-                            modifier = Modifier.padding(top = 12.dp),
                         )
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             HudDangerButton(
@@ -278,7 +297,8 @@ fun TripDetailScreen(
                         HudDangerButton(
                             text = stringResource(R.string.end_trip),
                             onClick = { confirmingEnd = true },
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            quiet = true,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
