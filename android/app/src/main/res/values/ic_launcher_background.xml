@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1A73E8</color>
+    <!--
+      The ground the mark sits on, and the layer a launcher slides against the
+      foreground when the home screen is panned.
+
+      AppPrimarySoft, the same tint the app uses behind anything it has marked
+      as yours — so the icon is made of the app's own two colours rather than a
+      third one invented for the launcher. Light rather than the primary blue
+      it used to be: the mark is that blue, and blue on blue is a silhouette.
+    -->
+    <color name="ic_launcher_background">#E8F0FE</color>
 </resources>

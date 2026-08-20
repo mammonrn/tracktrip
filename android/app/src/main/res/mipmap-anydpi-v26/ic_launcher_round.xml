@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon, in the two layers Android 8 and up expects.
+
+  The foreground is the mark alone — the pin, the paper plane and the dashed
+  path it flies. The wordmark and the "RIDE TOGETHER" line that sit under it in
+  the full logo are deliberately not here: only the middle 72dp of these 108dp
+  is guaranteed to survive a launcher's mask, and the whole logo is half again
+  as tall as it is wide, so fitting the tagline in would have shrunk it to two
+  pixels of cap height on an mdpi icon and taken the pin down with it. The app's
+  name is already written under the icon by the launcher itself.
+
+  The mark is drawn onto the 66dp keyline circle, centred on its own ink rather
+  than on its bounding box, so nothing of it is clipped by a circle, a squircle
+  or a rounded square.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>
