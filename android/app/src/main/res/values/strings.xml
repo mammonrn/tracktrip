@@ -47,9 +47,9 @@
     <string name="invite_sent_to">Invited %1$s</string>
     <string name="invite_hint">They\'ll see the invitation in their own trip list next time they open the app. Nothing is emailed.</string>
     <string name="not_tracking_yet">not tracking yet</string>
-    <string name="start_sharing">Open live tracking</string>
-    <string name="view_final_positions">View final positions</string>
-    <string name="end_trip">End this trip</string>
+    <string name="start_sharing">Tracking</string>
+    <string name="view_final_positions">Final positions</string>
+    <string name="end_trip">End trip</string>
     <string name="end_trip_confirm">End trip? This stops location sharing for everyone in the group.</string>
     <string name="end_trip_yes">End trip</string>
 
@@ -95,7 +95,7 @@
     <string name="sharing_on">Sharing location</string>
     <string name="sharing_off">Not sharing</string>
     <string name="sharing_on_trip">Sharing · %1$s</string>
-    <string name="sharing_start">Share my location</string>
+    <string name="sharing_start">Share location</string>
     <string name="sharing_stop">Stop sharing</string>
     <string name="sharing_choose_duration">Share my location for…</string>
     <string name="sharing_until">Until %1$s</string>
@@ -350,7 +350,7 @@
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">Ridden with before</string>
-    <string name="qr_invite_action">Invite with QR</string>
+    <string name="qr_invite_action">QR code</string>
     <string name="qr_invite_title">Invite with QR</string>
     <string name="qr_invite_intro">Show this code to someone standing next to you and they can join the trip without swapping email addresses.</string>
     <string name="qr_generate">Show a code</string>
@@ -363,7 +363,7 @@
     <string name="qr_camera_needed">Scanning needs the camera.</string>
     <string name="qr_camera_denied">Camera access is off for PTrips. Turn it on in Android\'s app settings, then try again.</string>
     <string name="qr_camera_allow">Allow camera</string>
-    <string name="invite_share_link">Share invite link</string>
+    <string name="invite_share_link">Share link</string>
     <string name="invite_share_subject">Join my trip on PTrips</string>
     <string name="invite_share_body">Join my trip \"%1$s\" on PTrips.\n\nCode: %2$s\nOpen: %3$s\n\nThe code works for 15 minutes.</string>
     <string name="invite_share_chooser">Share invite</string>

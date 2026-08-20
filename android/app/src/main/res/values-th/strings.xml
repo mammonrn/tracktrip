@@ -62,9 +62,9 @@
     <string name="invite_sent_to">เชิญ %1$s แล้ว</string>
     <string name="invite_hint">เขาจะเห็นคำเชิญในรายการทริปของตัวเองตอนเปิดแอปครั้งถัดไป ระบบไม่ได้ส่งอีเมลออกไป</string>
     <string name="not_tracking_yet">ยังไม่ได้แชร์ตำแหน่ง</string>
-    <string name="start_sharing">เปิดแผนที่สด</string>
-    <string name="view_final_positions">ดูตำแหน่งสุดท้าย</string>
-    <string name="end_trip">จบทริปนี้</string>
+    <string name="start_sharing">แผนที่สด</string>
+    <string name="view_final_positions">ตำแหน่งสุดท้าย</string>
+    <string name="end_trip">จบทริป</string>
     <string name="end_trip_confirm">จบทริปเลยไหม? ทุกคนในกลุ่มจะหยุดแชร์ตำแหน่งทันที</string>
     <string name="end_trip_yes">จบทริป</string>
 
@@ -125,7 +125,7 @@
     <string name="sharing_on">กำลังแชร์ตำแหน่ง</string>
     <string name="sharing_off">ไม่ได้แชร์</string>
     <string name="sharing_on_trip">กำลังแชร์ · %1$s</string>
-    <string name="sharing_start">แชร์ตำแหน่งของฉัน</string>
+    <string name="sharing_start">แชร์ตำแหน่ง</string>
     <string name="sharing_stop">หยุดแชร์</string>
     <string name="sharing_choose_duration">แชร์ตำแหน่งเป็นเวลา…</string>
     <string name="sharing_until">ถึง %1$s</string>
@@ -256,7 +256,7 @@
 
     <!-- Invitations and QR -->
     <string name="invite_suggestions">เคยร่วมทริปกันมาก่อน</string>
-    <string name="qr_invite_action">เชิญด้วย QR</string>
+    <string name="qr_invite_action">QR โค้ด</string>
     <string name="qr_invite_title">เชิญด้วย QR</string>
     <string name="qr_invite_intro">ให้คนที่อยู่ตรงหน้าสแกนโค้ดนี้ เข้าร่วมทริปได้เลยโดยไม่ต้องแลกอีเมลกัน</string>
     <string name="qr_generate">สร้างโค้ด</string>
@@ -269,7 +269,7 @@
     <string name="qr_camera_needed">การสแกนต้องใช้กล้อง</string>
     <string name="qr_camera_denied">สิทธิ์กล้องถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android แล้วลองใหม่</string>
     <string name="qr_camera_allow">อนุญาตให้ใช้กล้อง</string>
-    <string name="invite_share_link">แชร์ลิงก์เชิญ</string>
+    <string name="invite_share_link">แชร์ลิงก์</string>
     <string name="invite_share_subject">มาร่วมทริปของฉันบน PTrips</string>
     <string name="invite_share_body">มาร่วมทริป \"%1$s\" ของฉันบน PTrips\n\nโค้ด: %2$s\nเปิด: %3$s\n\nโค้ดใช้ได้ 15 นาที</string>
     <string name="invite_share_chooser">แชร์คำเชิญ</string>
