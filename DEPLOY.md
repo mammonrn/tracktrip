@@ -398,6 +398,24 @@ app" case in the table above. The key is never written to the log.
 
 ---
 
+## Shipping a signed release APK
+
+The APK is built by a GitHub Action, not on this server — nothing about a
+release touches the VPS.
+
+**Actions → Build signed release APK → Run workflow.** It runs on demand only;
+there is no push or tag trigger, deliberately. The signed APK comes back as the
+`tracktrip-release-apk` artifact and the run summary shows the version and the
+signing fingerprint.
+
+It needs four repository secrets — `RELEASE_KEYSTORE_BASE64`,
+`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` — and the
+workflow stops with their names if any is missing. Setting them up, the PKCS12
+password trap, and how to build the same APK locally are all in
+[android/README.md](android/README.md#building-a-release-apk-in-ci).
+
+---
+
 ## Nightly backups to Google Drive
 
 [`scripts/backup-to-drive.sh`](scripts/backup-to-drive.sh) puts one zip on

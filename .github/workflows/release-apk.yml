@@ -1,0 +1,265 @@
+name: Build signed release APK
+
+# Deliberately `workflow_dispatch` and nothing else.
+#
+# A release is a thing somebody decides to make, not a side effect of pushing.
+# Every automatic trigger — push, tag, schedule — would sign an artefact with
+# the real release key without anybody having asked for one that minute, and
+# the key is the one secret in this repository whose misuse cannot be undone:
+# an app signed by it is, to Android, this app.
+#
+# The debug APK is built on every push by build-apk.yml. That is the one you
+# want for testing; this is the one you hand to a rider.
+on:
+  workflow_dispatch:
+
+# Read-only. This job checks out code, builds it, and uploads an artifact — it
+# has no reason to be able to write to the repository, and a workflow holding a
+# signing key is the last place to leave a token broader than its job.
+permissions:
+  contents: read
+
+jobs:
+  build-release-apk:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Setup: identical to build-apk.yml, deliberately ──────────────────
+      # Two workflows that build the same project should fail the same way.
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle wrapper
+        # Verifies gradle-wrapper.jar matches a known-good release, so a
+        # tampered wrapper can't execute arbitrary code in CI. It matters more
+        # here than in the debug workflow: this job has the release key in its
+        # environment, and the wrapper runs before anything else does.
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android
+
+      # ── The key ───────────────────────────────────────────────────────────
+
+      - name: Check the release secrets are set
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        # Named up front rather than left to Gradle. build.gradle.kts already
+        # refuses to build an unsigned release, but its message talks about
+        # android/local.properties — a file that does not exist on a runner and
+        # that nobody is going to go and edit here. This says the thing that is
+        # actually wrong: a repository secret is missing.
+        #
+        # Only emptiness is ever tested. No value is printed, compared in a way
+        # that could leak by timing, or written anywhere but the file below.
+        run: |
+          missing=""
+          [ -n "${RELEASE_KEYSTORE_BASE64:-}" ] || missing="$missing RELEASE_KEYSTORE_BASE64"
+          [ -n "${RELEASE_STORE_PASSWORD:-}" ]  || missing="$missing RELEASE_STORE_PASSWORD"
+          [ -n "${RELEASE_KEY_ALIAS:-}" ]       || missing="$missing RELEASE_KEY_ALIAS"
+          [ -n "${RELEASE_KEY_PASSWORD:-}" ]    || missing="$missing RELEASE_KEY_PASSWORD"
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing — set them under Settings › Secrets and variables › Actions. See android/README.md, \"Building a release APK in CI\"."
+            exit 1
+          fi
+          echo "All four release secrets are present."
+
+      - name: Decode the release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        # Into RUNNER_TEMP, never the workspace: RUNNER_TEMP is outside the
+        # checkout, so nothing here can be picked up by an artifact glob, and
+        # `git status` in a later step cannot report it.
+        #
+        # The keystore's *bytes* are secret. Its size and SHA-256 are not —
+        # they are what tells "the secret is corrupted" from "the password is
+        # wrong", which are the two failures that otherwise look identical.
+        run: |
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          if [ ! -s "$RUNNER_TEMP/release.jks" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 is set but did not decode to a file. Re-generate it as ONE unbroken line — 'base64 -w0 release.jks' on Linux/macOS — with no BEGIN/END header lines, and update the secret."
+            exit 1
+          fi
+          echo "Decoded keystore: $(stat -c%s "$RUNNER_TEMP/release.jks") bytes, SHA-256 $(sha256sum "$RUNNER_TEMP/release.jks" | cut -d' ' -f1)"
+
+      - name: Verify the keystore opens
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        # Opening the keystore here rather than letting AGP fail two minutes
+        # later, which is the same trade build-apk.yml makes for the debug key:
+        # a one-line cause instead of a Gradle stack trace, and the failures
+        # that look identical from outside told apart.
+        #
+        # The PKCS12 check is here because it cost a real debugging session.
+        # `keytool -genkeypair` on a modern JDK produces PKCS12 unless told
+        # otherwise, and **PKCS12 cannot hold a key password different from the
+        # store password** — keytool prints "Ignoring user-specified -keypass
+        # value" and carries on, so the keystore ends up with the store
+        # password on the key. Gradle then fails with "Get Key failed: Given
+        # final block not properly padded", which reads like a corrupt file
+        # rather than a password mismatch.
+        #
+        # `keytool -certreq` does not catch it either: on PKCS12 it accepts the
+        # wrong key password happily. Comparing the two secrets is what catches
+        # it, and the comparison prints nothing either way.
+        #
+        # scripts/create-release-keystore.sh makes a JKS, which does support
+        # two passwords, so a keystore from that script is unaffected.
+        run: |
+          set +x
+          TYPE="$(keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+                    -storepass "$RELEASE_STORE_PASSWORD" 2>/dev/null \
+                  | sed -n 's/^Keystore type: //p')"
+          echo "Keystore type: ${TYPE:-unknown}"
+
+          if [ "$TYPE" = "PKCS12" ] && [ "$RELEASE_STORE_PASSWORD" != "$RELEASE_KEY_PASSWORD" ]; then
+            echo "::error::This is a PKCS12 keystore and RELEASE_STORE_PASSWORD differs from RELEASE_KEY_PASSWORD. PKCS12 cannot carry two different passwords — whatever was passed as -keypass when it was created was ignored, and the key actually uses the store password. Set RELEASE_KEY_PASSWORD to the same value as RELEASE_STORE_PASSWORD, or re-create the keystore as JKS (scripts/create-release-keystore.sh)."
+            exit 1
+          fi
+
+          # -v, because the short listing does not print "Alias name:" and the
+          # alias check below reads for exactly that. build-apk.yml uses -v for
+          # the same reason.
+          if ! keytool -list -v -keystore "$RUNNER_TEMP/release.jks" \
+                 -storepass "$RELEASE_STORE_PASSWORD" >/tmp/ks.out 2>&1; then
+            grep -v '^Picked up' /tmp/ks.out | head -5
+            if grep -qi 'password was incorrect\|failed to decrypt\|BadPadding' /tmp/ks.out; then
+              echo "::error::The keystore decoded fine but RELEASE_STORE_PASSWORD is wrong."
+            else
+              echo "::error::The decoded file could not be opened as a keystore. RELEASE_KEYSTORE_BASE64 is probably corrupted or truncated — re-export it with 'base64 -w0'."
+            fi
+            exit 1
+          fi
+
+          if ! grep -qi "Alias name: $RELEASE_KEY_ALIAS" /tmp/ks.out; then
+            echo "::error::No alias named in RELEASE_KEY_ALIAS exists in this keystore. The aliases it does contain are listed below."
+            grep -i 'Alias name:' /tmp/ks.out
+            exit 1
+          fi
+
+          echo "Keystore opens and contains the configured alias."
+
+      - name: Write android/local.properties
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        # The build reads its signing config from this file and only from this
+        # file — see android/app/build.gradle.kts. The file is gitignored, so
+        # it never exists on a fresh checkout and has to be written here.
+        #
+        # No `sdk.dir` line: setup-android exports ANDROID_HOME, and AGP falls
+        # back to it when the property is absent. That is what build-apk.yml
+        # already relies on, since it writes no local.properties at all.
+        #
+        # Three rules in this step, all of them about not leaking:
+        #   * the values arrive as env vars, so the secret text never appears
+        #     in the rendered script the log prints;
+        #   * a quoted heredoc delimiter would stop expansion, so it is
+        #     deliberately unquoted — and nothing here is echoed;
+        #   * the file is never cat'd, diffed or uploaded, here or later.
+        run: |
+          cat > android/local.properties <<EOF
+          RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks
+          RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD
+          RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS
+          RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD
+          EOF
+          echo "Wrote android/local.properties ($(wc -l < android/local.properties) lines)."
+
+      # ── Build ─────────────────────────────────────────────────────────────
+
+      - name: Run unit tests
+        working-directory: android
+        # Before the APK, like build-apk.yml, and for a sharper reason here: an
+        # artefact signed with the release key is one somebody may install. A
+        # failing test should stop it existing rather than be discovered after
+        # it has been handed out.
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Report signing certificate
+        # Proof that the APK is signed, and by which certificate. Fingerprints
+        # are public — they are what gets registered in Google Cloud Console —
+        # so printing them leaks nothing and settles "did this actually get
+        # signed with the release key?" without downloading the artifact.
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          APK="$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
+          echo "APK: $APK"
+
+          case "$APK" in
+            *unsigned*)
+              echo "::error::The APK came out unsigned. build.gradle.kts should have refused this build outright, so something is wrong with the signing config rather than with the key."
+              exit 1
+              ;;
+          esac
+
+          "$APKSIGNER" verify --print-certs "$APK" | grep -iE 'DN:|SHA-1 digest|SHA-256 digest' | tee /tmp/certs.txt
+          SHA1="$(grep -im1 'SHA-1 digest' /tmp/certs.txt | sed 's/.*: //' | tr -d ' \r' | tr 'a-z' 'A-Z' | sed 's/../&:/g; s/:$//')"
+          VERSION="$(grep -E '^ +versionName' android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+          CODE="$(grep -E '^ +versionCode' android/app/build.gradle.kts | head -1 | sed 's/[^0-9]//g')"
+          {
+            echo "### Signed release APK"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Application id | \`app.ptrip.tracktrip\` |"
+            echo "| versionName | \`$VERSION\` |"
+            echo "| versionCode | \`$CODE\` |"
+            echo "| Signing SHA-1 | \`$SHA1\` |"
+            echo ""
+            echo "This SHA-1 must be registered in Google Cloud Console against package"
+            echo "\`app.ptrip.tracktrip\`, or Google Sign-In will refuse this build."
+            echo ""
+            echo "**Bump \`versionCode\` before the next release.** Android compares only that"
+            echo "number; shipping twice on \`$CODE\` means riders cannot update over this build."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracktrip-release-apk
+          # Scoped to the APK. Nothing from RUNNER_TEMP is in the workspace and
+          # local.properties is not under this path, so neither can be swept up.
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── Cleanup ───────────────────────────────────────────────────────────
+
+      - name: Remove the keystore and local.properties
+        if: always()
+        # `always()`, so a failed build does not leave these sitting around for
+        # whatever runs next.
+        #
+        # Defence in depth rather than the actual protection: a GitHub-hosted
+        # runner is destroyed after the job, so this changes nothing there. It
+        # is what makes the job safe on a *self-hosted* runner, which is
+        # reused, and it is one line — the wrong thing to leave until the day
+        # somebody adds one.
+        run: |
+          rm -f "$RUNNER_TEMP/release.jks" android/local.properties
+          echo "Removed the decoded keystore and android/local.properties."
