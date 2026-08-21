@@ -76,6 +76,11 @@ test/                 # node:test unit tests
 data/                 # SQLite DB file lives here (gitignored)
 deploy/
   nginx-api.ptrip.app.conf  # nginx reverse proxy site config
+.claude/             # Claude Code wiring for the graft code index (dev only)
+  settings.json       # hooks + statusline
+  skills/graft/       # how the agent is told to query the index
+  helpers/            # the hook scripts themselves
+.mcp.json            # registers graft's MCP server (dev only)
 ```
 
 ## API
@@ -852,6 +857,41 @@ npm run cleanup -- --confirm   # actually deletes
 Only history belonging to trips with `status = 'ended'` and an `ended_at`
 older than the retention window is affected; active trips are never
 touched. Wire this into a cron/PM2 scheduled job on the VPS once deployed.
+
+## Code index for AI sessions (graft)
+
+[graft](https://github.com/NanoNets/Graft) parses this repo — `src/`, `android/`,
+`test/`, `scripts/` — into a graph of who-calls-what plus one small markdown card
+per file, and Claude Code queries that instead of grepping and reading source. A
+question like "which files does the invite flow run through" is answered from the
+graph in one call with exact `file:line`, at roughly a tenth of the tokens that
+reading `src/routes/invites.js`, `src/routes/trips.js` and `src/trips/serialize.js`
+whole would cost.
+
+Nothing here runs on the server. It touches no dependency in `package.json`, so
+`npm ci` on the VPS installs exactly what it did before; the files above are inert
+to `node` and pm2. It is safe to ignore entirely if you don't use Claude Code.
+
+**You do not need to set it up.** Sessions run on a throwaway container, so a
+`SessionStart` hook (`.claude/helpers/graft-session-start.cjs`) installs the
+`@nanonets/graft` npm package and builds the graph when the machine doesn't have
+one — about ten seconds, no API key, no cost. The graph lands in `graft/`, which
+is gitignored: it is generated output, a rebuild takes ~4 seconds, and a committed
+copy would go stale the moment anyone landed a commit without regenerating it,
+leaving the agent confidently citing line numbers that had moved.
+
+To use it by hand, install it once and query it:
+
+```bash
+npm install -g @nanonets/graft
+graft ask "how does joining a trip work" --source   # locate + read the code
+graft grep "invite"                                 # every occurrence, grouped by symbol
+graft callers requireTripMembership --depth 2       # what breaks if I change this
+graft map                                           # architectural overview
+```
+
+Every command re-parses changed files first, so answers describe the working
+tree, uncommitted edits included.
 
 ## Deploying (Ubuntu 24.04 VPS, alongside other Node apps + an existing nginx)
 
