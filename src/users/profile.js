@@ -11,17 +11,18 @@
  * "Rider 7" for everyone else on the trip.
  */
 
+import {
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_PATTERN,
+  normalizeUsername,
+  usernameKey,
+} from './username.js';
+
 export const DISPLAY_NAME_MIN_LENGTH = 1;
 export const DISPLAY_NAME_MAX_LENGTH = 40;
 export const NAME_MAX_LENGTH = 40;
-export const USERNAME_MIN_LENGTH = 3;
-export const USERNAME_MAX_LENGTH = 20;
-
-/**
- * Letters, digits, underscore and dot. No leading or trailing dot, and no two
- * in a row — those are the shapes that read as one name but sort as another.
- */
-const USERNAME_PATTERN = /^[a-zA-Z0-9_](?:[a-zA-Z0-9_]|\.(?![.]))*[a-zA-Z0-9_]$/;
+export { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH, usernameKey };
 
 /**
  * Digits with optional separators, and an optional leading +.
@@ -78,6 +79,15 @@ function validateOptionalName(value, field) {
   return { value: trimmed };
 }
 
+/**
+ * Normalised before it is measured or matched, which is the order that matters.
+ *
+ * `สำ` typed as NIKHAHIT + SARA AA is three code points and as SARA AM it is
+ * two, so a length check on the raw string would answer differently for two
+ * spellings of one word. Both the count and the pattern therefore run on
+ * [normalizeUsername]'s output, and that output is what gets stored — see
+ * src/users/username.js for what it does and does not fold.
+ */
 function validateUsername(value) {
   if (value === null) {
     return { value: null };
@@ -85,21 +95,22 @@ function validateUsername(value) {
   if (typeof value !== 'string') {
     return { error: 'username must be a string or null' };
   }
-  const trimmed = value.trim();
-  if (trimmed === '') {
+  const normalized = normalizeUsername(value);
+  if (normalized === '') {
     return { value: null };
   }
-  if (trimmed.length < USERNAME_MIN_LENGTH || trimmed.length > USERNAME_MAX_LENGTH) {
+  if (normalized.length < USERNAME_MIN_LENGTH || normalized.length > USERNAME_MAX_LENGTH) {
     return {
       error: `username must be between ${USERNAME_MIN_LENGTH} and ${USERNAME_MAX_LENGTH} characters`,
     };
   }
-  if (!USERNAME_PATTERN.test(trimmed)) {
+  if (!USERNAME_PATTERN.test(normalized)) {
     return {
-      error: 'username may use letters, digits, underscores and single dots between them',
+      error:
+        'username may use Thai or English letters, digits, underscores and single dots between them',
     };
   }
-  return { value: trimmed };
+  return { value: normalized };
 }
 
 function validatePhone(value) {
@@ -196,16 +207,26 @@ export function validateProfilePatch(body) {
 /**
  * Whether some other rider already holds this username.
  *
- * Matched case-insensitively, against the same expression the unique index
- * uses — so this and the database agree on what a collision is, and the
- * 409 arrives instead of a constraint error.
+ * Compared on `username_key` — the column migration 0015 added — rather than
+ * on `lower(username)`, and the difference is not academic. SQLite's `lower()`
+ * is ASCII-only in the build this app ships against: it lowercases `POOM` and
+ * leaves `ÉCOLE` alone, so a comparison built on it silently stops being
+ * case-insensitive outside A-Z. For Thai it does nothing at all, and Thai's
+ * collision problem is one `lower()` was never going to reach — two different
+ * sequences of code points that draw the same glyphs.
+ *
+ * The key is computed in JavaScript by [usernameKey] and written next to the
+ * username, so this query and the unique index behind it compare exactly what
+ * that function decided. As before, this only chooses which error the rider
+ * sees; the index is still the authority.
  */
 export function usernameTaken(db, username, userId) {
-  if (username === null || username === undefined) {
+  const key = usernameKey(username);
+  if (key === null) {
     return false;
   }
   const clash = db
-    .prepare('SELECT 1 FROM users WHERE lower(username) = lower(?) AND id != ?')
-    .get(username, userId);
+    .prepare('SELECT 1 FROM users WHERE username_key = ? AND id != ?')
+    .get(key, userId);
   return Boolean(clash);
 }

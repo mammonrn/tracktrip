@@ -262,6 +262,63 @@ test('0013 and 0014 upgrade a database that already breaks the rule they add', (
   }
 });
 
+test('0015 backfills username_key from the ASCII usernames already stored', () => {
+  const db = freshDb();
+  const cleanup = migrateUpTo(db, '0015');
+
+  // A database as it stands before this migration: usernames set, and every
+  // one of them ASCII, because validateUsername has only ever accepted
+  // [a-zA-Z0-9_.] and PATCH /me is the column's only writer.
+  const insert = db.prepare(
+    'INSERT INTO users (google_sub, email, display_name, username) VALUES (?, ?, ?, ?)'
+  );
+  insert.run('sub-a', 'a@gmail.com', 'A', 'Poom');
+  insert.run('sub-b', 'b@gmail.com', 'B', 'rider.two');
+  insert.run('sub-c', 'c@gmail.com', 'C', null);
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 3);
+
+  runMigrations(db, MIGRATIONS_DIR);
+  cleanup();
+
+  // Every row keeps its username exactly as the rider typed it, and gains the
+  // folded key beside it. For ASCII the fold is lower(), which is why the
+  // backfill can be plain SQL — see the migration.
+  const rows = db.prepare('SELECT username, username_key FROM users ORDER BY id').all();
+  assert.deepEqual(rows, [
+    { username: 'Poom', username_key: 'poom' },
+    { username: 'rider.two', username_key: 'rider.two' },
+    { username: null, username_key: null },
+  ]);
+
+  // The old expression index is gone and the new one is on the column.
+  const indexes = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+    .all()
+    .map((row) => row.name);
+  assert.ok(!indexes.includes('idx_users_username_lower'));
+  assert.ok(indexes.includes('idx_users_username_key'));
+});
+
+test('0015 leaves the uniqueness guarantee at least as strong as it found it', () => {
+  const db = freshDb();
+  runMigrations(db, MIGRATIONS_DIR);
+
+  const insert = db.prepare(
+    'INSERT INTO users (google_sub, email, display_name, username, username_key) VALUES (?, ?, ?, ?, ?)'
+  );
+  insert.run('sub-a', 'a@gmail.com', 'A', 'Poom', 'poom');
+
+  // The case rule the old index carried, still carried.
+  assert.throws(() => insert.run('sub-b', 'b@gmail.com', 'B', 'poom', 'poom'), /UNIQUE/);
+
+  // And riders with no username still coexist, because SQLite ignores NULLs
+  // in a unique index.
+  insert.run('sub-c', 'c@gmail.com', 'C', null, null);
+  insert.run('sub-d', 'd@gmail.com', 'D', null, null);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 3);
+});
+
 test('trips.status CHECK constraint rejects invalid values', () => {
   const db = freshDb();
   runMigrations(db, MIGRATIONS_DIR);

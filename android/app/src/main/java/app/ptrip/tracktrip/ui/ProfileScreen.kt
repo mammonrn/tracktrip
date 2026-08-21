@@ -125,6 +125,7 @@ private fun ProfileForm(
     var firstName by remember(user) { mutableStateOf(user.firstName.orEmpty()) }
     var lastName by remember(user) { mutableStateOf(user.lastName.orEmpty()) }
     var username by remember(user) { mutableStateOf(user.username.orEmpty()) }
+    val usernameValid = UsernameRules.isValid(username)
     var phone by remember(user) { mutableStateOf(user.phone.orEmpty()) }
     var birthDate by remember(user) { mutableStateOf(user.birthDate.orEmpty()) }
 
@@ -199,11 +200,21 @@ private fun ProfileForm(
                 onValueChange = { lastName = it },
                 label = stringResource(R.string.profile_last_name),
             )
+            // The only field on this form the server can refuse on shape, so
+            // the only one that says so before the round trip. See
+            // [UsernameRules] for why the phone checks shape but never
+            // collisions: whether a name is *taken* needs the whole table, and
+            // that answer still arrives as a 409.
             ProfileField(
                 value = username,
                 onValueChange = { username = it },
                 label = stringResource(R.string.profile_username),
-                supporting = stringResource(R.string.profile_username_hint),
+                supporting = if (usernameValid) {
+                    stringResource(R.string.profile_username_hint)
+                } else {
+                    stringResource(R.string.profile_username_invalid)
+                },
+                isError = !usernameValid,
             )
             ProfileField(
                 value = phone,
@@ -237,6 +248,11 @@ private fun ProfileForm(
                     )
                 },
                 loading = state.saving,
+                // Off while the username is a shape the server would refuse.
+                // The alternative is a request whose answer is already known,
+                // and a rider watching a spinner to be told what the line under
+                // the field is already telling them.
+                enabled = usernameValid,
                 modifier = Modifier.weight(1f),
             )
             HudSecondaryButton(
@@ -378,6 +394,16 @@ private fun ProfileField(
     label: String,
     supporting: String? = null,
     keyboardType: KeyboardType = KeyboardType.Text,
+    /**
+     * Turns the field and its supporting line red.
+     *
+     * The text is not filtered as it is typed, deliberately. An `InputFilter`
+     * that swallowed the character a rider pressed would be a keyboard that
+     * ignores them — worse on a Thai keyboard than on any other, because a
+     * word is several presses and the rejected one may be the third of five.
+     * Let them finish the word, then say what is wrong with it.
+     */
+    isError: Boolean = false,
 ) {
     OutlinedTextField(
         value = value,
@@ -385,6 +411,7 @@ private fun ProfileField(
         label = { Text(label) },
         placeholder = { Text(stringResource(R.string.profile_optional)) },
         supportingText = supporting?.let { hint -> { Text(hint) } },
+        isError = isError,
         singleLine = true,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             keyboardType = keyboardType,

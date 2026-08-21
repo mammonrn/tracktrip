@@ -3,7 +3,7 @@ import multer from 'multer';
 import { requireAuth } from '../auth/middleware.js';
 import { serializeUser } from '../auth/serializeUser.js';
 import { progressFor } from '../users/levels.js';
-import { validateProfilePatch, usernameTaken } from '../users/profile.js';
+import { validateProfilePatch, usernameKey, usernameTaken } from '../users/profile.js';
 import {
   ALLOWED_AVATAR_MIME_TYPES,
   AVATAR_MAX_BYTES,
@@ -80,6 +80,14 @@ export function createMeRouter({ db, config }) {
       if (usernameTaken(db, updates.username, req.user.id)) {
         return res.status(409).json({ error: 'that username is already taken' });
       }
+
+      // Written in the same statement as the username itself, never after it.
+      // The unique index is on this column, so a username that landed without
+      // its key would be a row nothing can collide with — an unclaimed name
+      // that is nonetheless taken. Assigning it here rather than inside
+      // validateProfilePatch keeps that validator about what a *caller* may
+      // send: `username_key` is not a field anybody is allowed to set.
+      updates.username_key = usernameKey(updates.username);
     }
 
     const fields = Object.keys(updates);
