@@ -1608,46 +1608,90 @@ A debug keystore isn't really a secret — its password is the publicly known
 `android` and it has no security value — but keeping it out of the repo avoids
 confusing it with the release keystore, which genuinely must never be shared.
 
-## Signing a release *in CI* (still not done, deliberately)
+## Building a release APK in CI
 
-Local release signing is wired up — see [Building a release
-APK](#building-a-release-apk). What is still not done, and is a separate
-decision rather than an unfinished one, is letting **GitHub** sign a release.
-The keystore must not touch CI until somebody deliberately puts it there, and
-the caution at the bottom of this section is the reason to think twice. When
-you're ready:
+`.github/workflows/release-apk.yml` builds the same signed APK on a GitHub
+runner, using the release keystore from repository secrets.
 
-1. Base64-encode the keystore so it survives as a text secret:
-   ```bash
-   base64 -w0 ~/keystores/tracktrip-release.jks > keystore.b64
-   ```
-   (on macOS: `base64 -i ~/keystores/tracktrip-release.jks -o keystore.b64`)
+**Run it from the Actions tab**: *Actions → Build signed release APK → Run
+workflow → Run workflow*. Pick the branch if you want a release off something
+other than `main`.
 
-2. Add four repository secrets under
-   **Settings → Secrets and variables → Actions**:
+It is `workflow_dispatch` **only** — no push, no tag, no schedule. A release is
+a thing somebody decides to make, not a side effect of pushing, and this is the
+one workflow that holds a key whose misuse cannot be undone. The debug APK is
+still built on every push by `build-apk.yml`; that is the one for testing, this
+is the one you hand to a rider.
 
-   | Secret | Value |
-   |---|---|
-   | `KEYSTORE_BASE64` | contents of `keystore.b64` |
-   | `KEYSTORE_PASSWORD` | the store password |
-   | `KEY_ALIAS` | `tracktrip` |
-   | `KEY_PASSWORD` | the key password |
+> A `workflow_dispatch` workflow only appears in the Actions tab once it is on
+> the **default branch**. Until this is merged to `main` there is no button to
+> press.
 
-   Then delete `keystore.b64` — don't leave it lying around.
+### The four secrets
 
-3. In `app/build.gradle.kts`, teach the existing `signingConfigs.release` block
-   to fall back to those environment variables when `local.properties` has
-   nothing — it currently reads the file and only the file. Keep the guard that
-   fails a release build when neither source has all four values.
+Under **Settings → Secrets and variables → Actions**:
 
-4. In the workflow, decode the secret into a file before building:
-   ```yaml
-   - name: Decode keystore
-     run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
-   ```
-   then run `./gradlew assembleRelease` with the passwords passed as `env:`.
+| Secret | Value |
+|---|---|
+| `RELEASE_KEYSTORE_BASE64` | the keystore, base64 as one unbroken line |
+| `RELEASE_STORE_PASSWORD` | the store password |
+| `RELEASE_KEY_ALIAS` | the alias inside the keystore |
+| `RELEASE_KEY_PASSWORD` | the key password |
 
-Two cautions: GitHub masks secrets in logs but anyone who can push a workflow
-change to the repo can exfiltrate them, so limit who has write access. And
-keep the local `.jks` as the source of truth — the base64 secret is a copy,
-not a backup.
+```bash
+base64 -w0 ~/keystores/tracktrip-release.jks > keystore.b64   # Linux
+base64 -i ~/keystores/tracktrip-release.jks -o keystore.b64   # macOS
+```
+
+One line, no `BEGIN`/`END` headers, no wrapping. Delete `keystore.b64`
+afterwards — don't leave it lying around. Keep the local `.jks` as the source
+of truth: the secret is a copy, not a backup.
+
+The workflow names any that are missing and stops before doing anything else,
+rather than letting Gradle fail later talking about a `local.properties` file
+that does not exist on a runner.
+
+### ⚠️ PKCS12 keystores cannot have two different passwords
+
+If your keystore is **PKCS12** — which is what `keytool -genkeypair` produces
+unless told otherwise — then `RELEASE_KEY_PASSWORD` **must equal**
+`RELEASE_STORE_PASSWORD`. PKCS12 has nowhere to put a separate key password:
+`keytool` prints `Ignoring user-specified -keypass value` when the keystore is
+created and carries on, so the key silently ends up using the store password.
+
+The failure it causes does not look like a password problem at all:
+
+```
+com.android.ide.common.signing.KeytoolException: Failed to read key ... :
+Get Key failed: Given final block not properly padded.
+```
+
+The workflow checks for this before building and says so plainly. Note that
+`keytool -certreq` does *not* catch it — on PKCS12 it accepts the wrong key
+password without complaint.
+
+[`scripts/create-release-keystore.sh`](../scripts/create-release-keystore.sh)
+creates a **JKS**, which does support two passwords, so a keystore from that
+script is unaffected.
+
+### What it produces
+
+The APK is uploaded as the **`tracktrip-release-apk`** artifact (30 days), and
+the run summary carries the application id, versionName, versionCode and the
+signing SHA-1 — so you can confirm what was built and which certificate signed
+it without downloading anything. That SHA-1 has to be registered in Google
+Cloud Console against `app.ptrip.tracktrip` or Google Sign-In refuses the
+build.
+
+The decoded keystore lives in `$RUNNER_TEMP`, outside the checkout, so no
+artifact glob can reach it; the `local.properties` the workflow writes is never
+printed, and both are deleted in a final `always()` step. On a GitHub-hosted
+runner that deletion changes nothing — the machine is destroyed — but it is
+what makes the job safe on a self-hosted one, which is reused.
+
+### The remaining caution
+
+GitHub masks secrets in logs, but **anyone who can push a workflow change can
+exfiltrate them**. Limit who has write access to this repository, and treat
+adding the key to CI as the trade it is: convenience now, a wider blast radius
+if the account is ever compromised.
