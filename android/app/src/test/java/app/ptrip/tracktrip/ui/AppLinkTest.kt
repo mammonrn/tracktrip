@@ -134,10 +134,38 @@ class AppLinkTest {
 
             val fingerprints = target.getJSONArray("sha256_cert_fingerprints")
             assertTrue("entry $i has no fingerprint", fingerprints.length() > 0)
+
+            (0 until fingerprints.length()).forEach { j ->
+                val fingerprint = fingerprints.getString(j)
+                // The statement-list spec asks for the *uppercase* SHA-256
+                // fingerprint written as colon-separated pairs of hex — 32
+                // bytes, so 32 pairs. A SHA-1 is 20 and looks close enough to
+                // be pasted in by mistake, since keystore-sha1.sh prints both
+                // one line apart.
+                assertTrue(
+                    "${target.getString("package_name")} has a fingerprint that is not " +
+                        "32 uppercase colon-separated hex pairs: $fingerprint",
+                    FINGERPRINT.matches(fingerprint),
+                )
+            }
         }
     }
 
+    @Test
+    fun `no placeholder fingerprint survives`() {
+        // The file carried REPLACE_WITH_* until the real ones arrived. A
+        // placeholder deployed by accident is not dangerous — verification
+        // fails and Android falls back to a chooser — but it fails quietly,
+        // which is the failure mode this whole test class exists for.
+        val raw = repoFile("deploy/assetlinks.json").readText()
+
+        assertFalse(raw, Regex("REPLACE|PLACEHOLDER|TODO", RegexOption.IGNORE_CASE).containsMatchIn(raw))
+    }
+
     private companion object {
+        /** 32 bytes as uppercase hex pairs, colon separated. */
+        val FINGERPRINT = Regex("[0-9A-F]{2}(:[0-9A-F]{2}){31}")
+
         /**
          * Found by walking up to the repository root rather than from a path
          * relative to the runner, which Gradle and an IDE disagree about. The

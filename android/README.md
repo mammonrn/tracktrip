@@ -494,16 +494,21 @@ the claim is checked against the links `joinWebLinkFor` actually writes.
 
 **Both builds claim it.** The filter is in the shared manifest, so the debug
 build claims the same links under `app.ptrip.tracktrip.debug`. Verification is
-per package name *and* per signing certificate, so `assetlinks.json` needs an
+per package name *and* per signing certificate, so `assetlinks.json` carries an
 entry for each — a file listing only the release id leaves the debug build
 falling back to a chooser, which is the build this gets tested on. Fingerprints
-come from [`scripts/keystore-sha1.sh`](../scripts/keystore-sha1.sh); the file in
-the repository carries placeholders until they are filled in at deploy time, and
-`AppLinkTest` keeps its package names in step with `build.gradle.kts`.
+come from [`scripts/keystore-sha1.sh`](../scripts/keystore-sha1.sh) and go in as
+printed: **uppercase hex, colon-separated**, which is what the Digital Asset
+Links statement-list spec asks for. `AppLinkTest` keeps the package names in
+step with `build.gradle.kts` and rejects a fingerprint of the wrong shape.
 
-Until the domain serves that file, Android offers a chooser instead of opening
-the app directly. That still works — it is the difference between one tap and
-two, not between working and not.
+The domain side is [`deploy/nginx-ptrip.app.conf`](../deploy/nginx-ptrip.app.conf) —
+its own nginx site on the same box as the API, serving the statement list and
+[a page for `/join/CODE`](../deploy/www/join.html) and nothing else. The page is
+for a phone **without** the app; a phone with it never sees it. Until that site
+is up, Android offers a chooser instead of opening the app directly. That still
+works — it is the difference between one tap and two, not between working and
+not.
 
 **A link is acted on once.** The launch intent stays attached to the activity for
 its whole life, so reading it on every `onCreate` would redeem the link again on
