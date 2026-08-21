@@ -54,6 +54,7 @@ import app.ptrip.tracktrip.ui.joinWebLinkFor
 import app.ptrip.tracktrip.ui.rememberCentreOnMe
 import app.ptrip.tracktrip.ui.rememberSharingPermissionRequest
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
+import app.ptrip.tracktrip.ui.rememberFeedbackHostState
 import app.ptrip.tracktrip.ui.ProfileScreen
 import app.ptrip.tracktrip.ui.ProfileViewModel
 import app.ptrip.tracktrip.ui.PlacesMapScreen
@@ -75,6 +76,7 @@ import app.ptrip.tracktrip.ui.TripMapViewModel
 import app.ptrip.tracktrip.ui.TripQrScreen
 import app.ptrip.tracktrip.ui.TripsViewModel
 import app.ptrip.tracktrip.ui.rememberBackStack
+import app.ptrip.tracktrip.ui.theme.HudSnackbarHost
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -124,9 +126,17 @@ class MainActivity : AppCompatActivity() {
                 // them into URLs needs the API's base URL. Provided here
                 // rather than threaded through every screen that shows a face.
                 CompositionLocalProvider(LocalApiBaseUrl provides container.baseUrl) {
+                    // The app's one snackbar, on the activity's own Scaffold
+                    // rather than on any screen's. Several writes navigate on
+                    // success — creating a trip opens it, leaving one goes
+                    // back to the list — so the answer has to outlive the
+                    // screen that asked. See `ui/Feedback.kt`.
+                    val feedbackHost = rememberFeedbackHostState(container.feedback)
+
                     Scaffold(
                         modifier = Modifier.fillMaxSize(),
                         containerColor = MaterialTheme.colorScheme.background,
+                        snackbarHost = { HudSnackbarHost(feedbackHost) },
                     ) { innerPadding ->
                         TracktripApp(
                             container = container,
@@ -689,6 +699,7 @@ private fun SignedInNavigation(
                 routePlan = mapState.summaryPlan,
                 routeLine = mapState.draftRoute,
                 routePreviewLoading = mapState.routePreviewLoading,
+                routeSaving = mapState.routeSaving,
                 searchState = routeSearchState,
                 personalPlaces = mapState.personalPlaces,
                 myLocation = routeLocation,
@@ -932,13 +943,13 @@ private fun tripsViewModelFactory(
     container: AppContainer,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { TripsViewModel(container.tripApi, onSessionExpired) }
+    factoryOf { TripsViewModel(container.tripApi, container.feedback, onSessionExpired) }
 
 private fun createTripViewModelFactory(
     container: AppContainer,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { CreateTripViewModel(container.tripApi, onSessionExpired) }
+    factoryOf { CreateTripViewModel(container.tripApi, container.feedback, onSessionExpired) }
 
 private fun tripDetailViewModelFactory(
     container: AppContainer,
@@ -951,6 +962,7 @@ private fun tripDetailViewModelFactory(
             tripApi = container.tripApi,
             sharingController = container.sharingController,
             settings = container.settings,
+            feedback = container.feedback,
             onSessionExpired = onSessionExpired,
         )
     }
@@ -964,6 +976,7 @@ private fun settingsViewModelFactory(
             settings = container.settings,
             tripApi = container.tripApi,
             sharingController = container.sharingController,
+            feedback = container.feedback,
             onSessionExpired = onSessionExpired,
         )
     }
@@ -987,6 +1000,7 @@ private fun tripMapViewModelFactory(
             tripId = tripId,
             tripApi = container.tripApi,
             positionSocket = container.positionSocket,
+            feedback = container.feedback,
             onSessionExpired = onSessionExpired,
             placeSearchApi = container.placeSearchApi,
             sharedPlacesApi = container.sharedPlacesApi,
@@ -1006,6 +1020,7 @@ private fun placesViewModelFactory(
             personalPlacesApi = container.personalPlacesApi,
             placeSearchApi = container.placeSearchApi,
             currentUserId = currentUserId,
+            feedback = container.feedback,
             onSessionExpired = onSessionExpired,
         )
     }
@@ -1014,10 +1029,10 @@ private fun profileViewModelFactory(
     container: AppContainer,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { ProfileViewModel(container.meApi, onSessionExpired) }
+    factoryOf { ProfileViewModel(container.meApi, container.feedback, onSessionExpired) }
 
 private fun joinTripViewModelFactory(
     container: AppContainer,
     onSessionExpired: () -> Unit,
 ): ViewModelProvider.Factory =
-    factoryOf { JoinTripViewModel(container.tripApi, onSessionExpired) }
+    factoryOf { JoinTripViewModel(container.tripApi, container.feedback, onSessionExpired) }

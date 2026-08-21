@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.MemberPosition
 import app.ptrip.tracktrip.data.PersonalPlace
@@ -94,6 +95,17 @@ data class TripMapUiState(
      * else's, and this app has no way to ask. See [PersonalPlace].
      */
     val personalPlaces: List<PersonalPlace> = emptyList(),
+    /**
+     * Whether the route is being written to the server right now.
+     *
+     * Confirm is a PATCH per end and a POST or DELETE per stop, in sequence,
+     * so it is the longest write in the app and the easiest to press twice.
+     * A second press part way through would re-send the same edits against a
+     * route the first press was still rewriting — a stop added twice, a stop
+     * deleted and then reported missing. The flag turns the button into a
+     * spinner and [TripMapViewModel.confirmRoute] refuses the second press.
+     */
+    val routeSaving: Boolean = false,
     val error: String? = null,
 ) {
     /** The riders with a fix — the ones that can be drawn. */
@@ -208,6 +220,8 @@ class TripMapViewModel(
     private val tripId: Long,
     private val tripApi: TripApi,
     private val positionSocket: PositionSocket?,
+    /** Where every write on this screen says whether it worked. */
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
     /**
      * Place search, or null in a preview or a test that does not exercise it.
@@ -727,6 +741,11 @@ class TripMapViewModel(
      */
     private fun writeRoute(keepDraft: Boolean) {
         val state = _uiState.value
+        // Refused rather than queued: the writes below are a sequence, and a
+        // second run part way through the first would be editing a route the
+        // first is still rewriting.
+        if (state.routeSaving) return
+
         val trip = state.trip
         val draft = state.routeDraft
 
@@ -751,6 +770,8 @@ class TripMapViewModel(
         }
 
         if (trip == null || !draft.isComplete) return
+
+        _uiState.update { it.copy(routeSaving = true) }
 
         viewModelScope.launch {
             try {
@@ -794,10 +815,20 @@ class TripMapViewModel(
                     }
                     refreshRoutePreview()
                 }
+
+                feedback.succeeded(R.string.feedback_route_saved)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                // No Retry. The draft this ran on has already been re-seeded
+                // from the server, or thrown away with the card that closed,
+                // so a second press here would not be sending the same route —
+                // it would be sending whatever is on screen now, under a label
+                // that promises otherwise. Confirm is still one tap away.
+                feedback.failed(e.message)
+            } finally {
+                _uiState.update { it.copy(routeSaving = false) }
             }
         }
     }
@@ -861,12 +892,14 @@ class TripMapViewModel(
             val saved = api.add(trimmedLabel, trimmedName, point)
             _uiState.update { it.copy(error = null) }
             loadPersonalPlaces()
+            feedback.succeeded(R.string.feedback_place_saved_personal, saved.label)
             RoutePoint(saved.point, saved.name)
         } catch (e: SessionExpiredException) {
             onSessionExpired()
             null
         } catch (e: ApiException) {
             _uiState.update { it.copy(error = e.message) }
+            feedback.failed(e.message)
             null
         }
     }
@@ -879,10 +912,12 @@ class TripMapViewModel(
                 api.remove(id)
                 _uiState.update { it.copy(error = null) }
                 loadPersonalPlaces()
+                feedback.succeeded(R.string.feedback_place_deleted_personal)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { removePersonalPlace(id) }
             }
         }
     }
@@ -915,12 +950,14 @@ class TripMapViewModel(
         return try {
             val saved = api.add(trimmed, point)
             _uiState.update { it.copy(error = null) }
+            feedback.succeeded(R.string.feedback_place_saved_shared, saved.name)
             RoutePoint(LatLng(saved.lat, saved.lng), saved.name)
         } catch (e: SessionExpiredException) {
             onSessionExpired()
             null
         } catch (e: ApiException) {
             _uiState.update { it.copy(error = e.message) }
+            feedback.failed(e.message)
             null
         }
     }
@@ -942,11 +979,13 @@ class TripMapViewModel(
             try {
                 api.remove(id)
                 _uiState.update { it.copy(error = null) }
+                feedback.succeeded(R.string.feedback_place_deleted_shared)
                 onRemoved()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { removeSharedPlace(id, onRemoved) }
             }
         }
     }
@@ -1125,6 +1164,11 @@ class TripMapViewModel(
         // that state, and this is the guard behind it.
         if (label == null && MapPlacementRules.nameRequired(placement)) return
 
+        // Deliberately not guarded against a second press the way Confirm is.
+        // The dialog that raised this has already closed, so there is no button
+        // left to press twice — a second call means a second long press, which
+        // is a rider dropping a second stop while the first is still landing.
+        // Refusing that would be dropping a point somebody asked for.
         _uiState.update { it.copy(error = null) }
 
         viewModelScope.launch {
@@ -1147,10 +1191,24 @@ class TripMapViewModel(
                 // on an action a rider takes by hand costs nothing.
                 refreshTrip()
                 refresh()
+
+                // Named by what it became, not "Saved". The three answers to
+                // one long press are the whole reason [MapPlacement] exists,
+                // and a rider who meant to drop a stop and set the destination
+                // by mistake has one press left to fix it — but only if the
+                // app says which one it did.
+                feedback.succeeded(
+                    when (placement) {
+                        MapPlacement.ORIGIN -> R.string.feedback_origin_set
+                        MapPlacement.DESTINATION -> R.string.feedback_destination_set
+                        MapPlacement.WAYPOINT -> R.string.feedback_stop_added
+                    }
+                )
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { place(placement, lat, lng, name) }
             }
         }
     }
@@ -1167,10 +1225,12 @@ class TripMapViewModel(
             try {
                 tripApi.deleteWaypoint(tripId, waypointId)
                 refresh()
+                feedback.succeeded(R.string.feedback_stop_removed)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { removeWaypoint(waypointId) }
             }
         }
     }

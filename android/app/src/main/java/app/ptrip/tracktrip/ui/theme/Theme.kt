@@ -59,6 +59,17 @@ val AppTextMuted = Color(0xFF5F6368)
 val AppDanger = Color(0xFFD93025)
 
 /**
+ * It worked.
+ *
+ * Used by one thing — the success half of the app's snackbar — and defined
+ * here anyway, because the rule this file states is that nothing outside it
+ * names a colour. Google's own green rather than a brighter one: it sits at
+ * the same weight as [AppDanger], so a success and a failure read as two
+ * answers to the same question instead of one shout and one murmur.
+ */
+val AppSuccess = Color(0xFF188038)
+
+/**
  * The route-progress bar's fill.
  *
  * ## Why this is not the primary blue

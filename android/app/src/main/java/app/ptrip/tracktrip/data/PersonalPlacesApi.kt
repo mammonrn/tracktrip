@@ -29,6 +29,15 @@ data class PersonalPlace(
     val name: String,
     val lat: Double,
     val lng: Double,
+    /**
+     * When this rider saved it, ISO-8601 from the server, or null.
+     *
+     * Null only against a backend older than the field —
+     * `personal_places.created_at` is `NOT NULL`. There is no "added by" to
+     * go with it and there never will be: the owner is the caller, which is
+     * the one thing this table's whole safety property rests on.
+     */
+    val createdAt: String? = null,
 ) {
     /** Where it is, for dropping straight into the row a rider is filling. */
     val point: LatLng get() = LatLng(lat, lng)
@@ -98,5 +107,12 @@ internal fun JSONObject.toPersonalPlace(): PersonalPlace? {
     val lat = optDoubleOrNull("lat") ?: return null
     val lng = optDoubleOrNull("lng") ?: return null
 
-    return PersonalPlace(id = id, label = label, name = name, lat = lat, lng = lng)
+    return PersonalPlace(
+        id = id,
+        label = label,
+        name = name,
+        lat = lat,
+        lng = lng,
+        createdAt = optStringOrNull("created_at"),
+    )
 }

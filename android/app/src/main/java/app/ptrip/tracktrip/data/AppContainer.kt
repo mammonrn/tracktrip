@@ -3,6 +3,7 @@ package app.ptrip.tracktrip.data
 import android.content.Context
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.location.SharingController
+import app.ptrip.tracktrip.ui.FeedbackCenter
 
 /**
  * The app's shared, long-lived objects, built once and handed to whatever
@@ -83,6 +84,16 @@ class AppContainer private constructor(context: Context) {
     val authApi: AuthApi by lazy { AuthApi(baseUrl = baseUrl) }
 
     val settings: AppSettings by lazy { AppSettings(appContext) }
+
+    /**
+     * Where every write in the app reports whether it worked.
+     *
+     * One per process for the same reason [apiClient] is: the point of it is
+     * that a rider gets one answer in one place, and a second centre would be
+     * a second snackbar host nobody is watching. See
+     * [FeedbackCenter][app.ptrip.tracktrip.ui.FeedbackCenter].
+     */
+    val feedback: FeedbackCenter by lazy { FeedbackCenter() }
 
     val sharingController: SharingController by lazy { SharingController(appContext, tripApi, settings) }
 

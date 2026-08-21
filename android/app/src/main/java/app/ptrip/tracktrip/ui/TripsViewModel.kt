@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ActiveTripException
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.Invite
@@ -70,6 +71,7 @@ data class TripsUiState(
  */
 class TripsViewModel(
     private val tripApi: TripApi,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -128,6 +130,10 @@ class TripsViewModel(
                 _uiState.update {
                     it.copy(acceptingInviteId = null, trips = trips, invites = invites)
                 }
+                feedback.succeeded(
+                    R.string.feedback_trip_joined,
+                    invite.tripName ?: trips.firstOrNull { it.id == invite.tripId }?.name.orEmpty(),
+                )
                 // The trip just joined is new to the list and has no podium
                 // yet; every other trip's is already here and is left alone.
                 loadPodiums()
@@ -144,8 +150,14 @@ class TripsViewModel(
                         blockedByTripName = e.tripName,
                     )
                 }
+                // No Retry: the answer will be the same until the rider has
+                // ended the ride they are on, and a button that repeats a
+                // refusal teaches nothing. The line on the screen names the
+                // trip that is in the way, which is the actual next step.
+                feedback.failed(e.message)
             } catch (e: ApiException) {
                 _uiState.update { it.copy(acceptingInviteId = null, error = e.message) }
+                feedback.failed(e.message) { acceptInvite(invite) }
             }
         }
     }

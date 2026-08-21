@@ -33,6 +33,14 @@ data class SharedPlace(
     val createdBy: Long?,
     /** What to call that rider on screen. Null for the same reason. */
     val createdByName: String?,
+    /**
+     * When it was written down, ISO-8601 from the server, or null.
+     *
+     * `shared_places.created_at` is `NOT NULL`, so null here only means a
+     * build talking to a backend that predates the field in the response. The
+     * detail card leaves the line out rather than showing a blank date.
+     */
+    val createdAt: String? = null,
 ) {
     /** The same shape a search result has, so one list can hold both. */
     fun asPlace(): Place = Place(
@@ -150,5 +158,6 @@ internal fun JSONObject.toSharedPlace(): SharedPlace? {
         lng = lng,
         createdBy = if (isNull("created_by")) null else optLong("created_by"),
         createdByName = optStringOrNull("created_by_name"),
+        createdAt = optStringOrNull("created_at"),
     )
 }

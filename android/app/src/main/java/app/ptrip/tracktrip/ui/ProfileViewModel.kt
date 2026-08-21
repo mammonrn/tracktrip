@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.LevelProgress
 import app.ptrip.tracktrip.data.MeApi
@@ -38,6 +39,7 @@ data class ProfileUiState(
  */
 class ProfileViewModel(
     private val meApi: MeApi,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -99,6 +101,7 @@ class ProfileViewModel(
             try {
                 val user = meApi.updateProfile(patch)
                 _uiState.update { it.copy(saving = false, user = user) }
+                feedback.succeeded(R.string.feedback_profile_saved)
                 onSaved()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
@@ -106,6 +109,7 @@ class ProfileViewModel(
                 // Includes the 409 for a username someone else holds, which
                 // arrives already worded for the rider.
                 _uiState.update { it.copy(saving = false, error = e.message) }
+                feedback.failed(e.message) { save(patch, onSaved) }
             }
         }
     }
@@ -118,10 +122,14 @@ class ProfileViewModel(
             try {
                 val user = meApi.uploadAvatar(bytes, contentType)
                 _uiState.update { it.copy(uploadingAvatar = false, user = user) }
+                feedback.succeeded(R.string.feedback_photo_updated)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(uploadingAvatar = false, error = e.message) }
+                // The bytes are still here, so Retry is a real second attempt
+                // rather than a second trip through the photo picker.
+                feedback.failed(e.message) { uploadAvatar(bytes, contentType) }
             }
         }
     }

@@ -55,6 +55,10 @@ class SharedPlacesParsingTest {
         assertEquals(98.971, places[0].lng, 1e-9)
         assertEquals(7L, places[0].createdBy)
         assertEquals("anne", places[0].createdByName)
+        // When it was written down. On the wire since the table existed and
+        // unread until the detail card behind a place needed it — see
+        // `ui/MyPlaces.kt`.
+        assertEquals("2026-08-20T07:49:12.345Z", places[0].createdAt)
     }
 
     @Test

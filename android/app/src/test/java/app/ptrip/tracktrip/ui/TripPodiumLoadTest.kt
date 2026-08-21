@@ -95,7 +95,7 @@ class TripPodiumLoadTest {
     }
 
     private fun model(server: CountingServer) =
-        TripsViewModel(tripApi = server, onSessionExpired = {})
+        TripsViewModel(tripApi = server, feedback = FeedbackCenter(), onSessionExpired = {})
 
     @Test
     fun `only the trips on screen are asked about`() = runTest(dispatcher) {

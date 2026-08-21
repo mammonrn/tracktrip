@@ -28,7 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -141,6 +143,11 @@ fun TripDetailScreen(
         }
     }
 
+    // On a finished trip this is what the member rows say instead of a report
+    // age. Read once for the whole list rather than per row: it is the same
+    // sentence on every one of them.
+    val tripDates = tripRanOn(trip, nowMs)
+
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         HudTopBar(
             title = trip?.name ?: stringResource(R.string.untitled_trip),
@@ -183,7 +190,18 @@ fun TripDetailScreen(
                 )
             }
             items(state.members, key = { it.userId }) { member ->
-                MemberRow(member, fixAgeMinutes = FixAge.minutesAgo(member.recordedAt, nowMs))
+                MemberRow(
+                    member = member,
+                    // One of the two, never both and never neither: the age of
+                    // this rider's last report while the trip is on, and the
+                    // days the trip ran once it is over. See [tripRanOn].
+                    fixAgeMinutes = if (tripDates == null) {
+                        FixAge.minutesAgo(member.recordedAt, nowMs)
+                    } else {
+                        null
+                    },
+                    tripDates = tripDates,
+                )
             }
 
             // Inviting is owner-only on the backend, so a member is not shown
@@ -443,6 +461,34 @@ private val SharingDuration.durationLabelRes: Int
     }
 
 /**
+ * The days a finished trip ran, as one line, or null while it is still on.
+ *
+ * Null for a running trip, for a trip that has not loaded, and for a trip
+ * whose stamps this build cannot read — in every one of those the member rows
+ * keep the report age they always showed, which is the useful number while
+ * anybody is still reporting.
+ *
+ * The locale comes off the `Context` rather than from `Locale.getDefault()`
+ * because the app has its own language switch: it runs through
+ * `AppCompatDelegate`, which puts the choice on the activity's configuration,
+ * and a month name read from the process default would be a step behind a
+ * rider who had just changed it.
+ */
+@Composable
+private fun tripRanOn(trip: Trip?, nowMs: Long): String? {
+    if (trip == null || trip.isActive) return null
+
+    val locale = LocalContext.current.resources.configuration.locales[0]
+    val span = remember(trip.createdAt, trip.endedAt, nowMs, locale) {
+        TripDates.span(trip.createdAt, trip.endedAt, nowMs, locale = locale)
+    } ?: return null
+
+    return span.ended
+        ?.let { stringResource(R.string.trip_dates_created_ended, span.created, it) }
+        ?: stringResource(R.string.trip_dates_created, span.created)
+}
+
+/**
  * One rider on the trip: their colour, name, role, and how their phone is
  * doing.
  *
@@ -452,7 +498,11 @@ private val SharingDuration.durationLabelRes: Int
  * from turns a reading a rider might argue with into one they can act on.
  */
 @Composable
-private fun MemberRow(member: MemberPosition, fixAgeMinutes: Long? = null) {
+private fun MemberRow(
+    member: MemberPosition,
+    fixAgeMinutes: Long? = null,
+    tripDates: String? = null,
+) {
     HudSurface {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HudDot(color = riderColor(member.userId))
@@ -486,9 +536,21 @@ private fun MemberRow(member: MemberPosition, fixAgeMinutes: Long? = null) {
                                 }
                             )
                         }
+                        // The same slot on a finished trip, where an age that
+                        // only counts up says nothing. See [TripDates].
+                        tripDates?.let {
+                            append(" · ")
+                            append(it)
+                        }
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = AppTextMuted,
+                    // One line, and the reason is the card: the dates are
+                    // longer than the age they replace, and a second line here
+                    // would make every row on a finished trip taller than the
+                    // same row on a running one.
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             member.batteryPct?.let { HudBatteryReadout(percent = it) }

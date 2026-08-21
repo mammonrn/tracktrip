@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.AppSettings
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -94,6 +95,7 @@ class SettingsViewModel(
     private val settings: AppSettings,
     private val tripApi: TripApi,
     private val sharingController: SharingController,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -194,6 +196,19 @@ class SettingsViewModel(
                         sharingController.start(effect.trip, settings.defaultSharingMinutes)
                 }
                 _uiState.update { it.copy(switchPending = false) }
+                // What the switch *did*, not what it now reads. A flip with no
+                // ride to act on only records a preference, and saying
+                // "Sharing your location" for that would claim a transmission
+                // that is not happening — the exact confusion the one-switch
+                // rewrite above exists to end.
+                feedback.succeeded(
+                    when {
+                        effect is DeviceSharing.Effect.Start -> R.string.feedback_sharing_started
+                        effect is DeviceSharing.Effect.Stop -> R.string.feedback_sharing_stopped
+                        on -> R.string.feedback_sharing_phone_on
+                        else -> R.string.feedback_sharing_phone_off
+                    }
+                )
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
@@ -202,6 +217,7 @@ class SettingsViewModel(
                 // turning on has already been remembered.
                 sharingController.setEnabled(on)
                 _uiState.update { it.copy(switchPending = false, error = e.message) }
+                feedback.failed(e.message) { setShareFromThisPhone(on) }
             }
         }
     }

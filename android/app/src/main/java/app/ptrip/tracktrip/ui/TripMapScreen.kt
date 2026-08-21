@@ -842,6 +842,7 @@ fun TripMapScreen(
                 },
                 onRemoveRow = onRemoveRouteRow,
                 onMoveRow = onMoveRoutePoint,
+                saving = state.routeSaving,
                 onConfirm = {
                     // The draft is read and cleared inside confirmRoute before
                     // it returns, so closing the card here cannot race it.
@@ -1367,6 +1368,8 @@ internal fun RouteListSheet(
     onMoveRow: (Int, Int) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** True while Confirm's own writes are in flight, so it cannot be pressed twice. */
+    saving: Boolean = false,
     /**
      * Whether to mention the long press.
      *
@@ -1534,6 +1537,10 @@ internal fun RouteListSheet(
             // list would PATCH one end and leave the ride with a start and no
             // finish, which is the state this whole card exists to avoid.
             enabled = draft.isComplete,
+            // Confirm is the longest write in the app — a PATCH per end and a
+            // write per stop, in sequence — so it is the one most worth
+            // holding a thumb off while it runs.
+            loading = saving,
             modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
         )
     }

@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.PersonalPlace
 import app.ptrip.tracktrip.data.PersonalPlaceStore
@@ -30,6 +31,22 @@ data class PlacesUiState(
     val personal: List<PersonalPlace> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    /**
+     * Which places are being deleted right now, by id.
+     *
+     * Two sets rather than one, because the two id spaces are unrelated:
+     * personal place 8 and shared place 8 are different rows in different
+     * tables, and one set would have a delete on either grey out both. The
+     * same reason there are two types in the first place.
+     *
+     * What they are for is the double tap. A delete is a round trip and the
+     * row stays on screen for all of it — until this existed, the cross was
+     * still live and still pointing at a row the server was already removing,
+     * so an impatient second tap sent a second DELETE and came back 404 on a
+     * place that had gone exactly as asked.
+     */
+    val removingShared: Set<Long> = emptySet(),
+    val removingPersonal: Set<Long> = emptySet(),
 )
 
 /**
@@ -56,6 +73,7 @@ class PlacesViewModel(
     private val personalPlacesApi: PersonalPlaceStore?,
     placeSearchApi: PlaceLookup?,
     val currentUserId: Long?,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -145,12 +163,18 @@ class PlacesViewModel(
             api.add(trimmed, point)
             _uiState.update { it.copy(error = null) }
             loadMine()
+            feedback.succeeded(R.string.feedback_place_saved_shared, trimmed)
             true
         } catch (e: SessionExpiredException) {
             onSessionExpired()
             false
         } catch (e: ApiException) {
+            // No Retry: the dialog stays open with the reason on it, so the
+            // rider's next press is the retry — and one of the two failures
+            // worth expecting here is the daily allowance, which a second
+            // attempt would only meet again.
             _uiState.update { it.copy(error = e.message) }
+            feedback.failed(e.message)
             false
         }
     }
@@ -172,27 +196,51 @@ class PlacesViewModel(
             api.add(trimmedLabel, trimmedName, point)
             _uiState.update { it.copy(error = null) }
             loadPersonal()
+            feedback.succeeded(R.string.feedback_place_saved_personal, trimmedLabel)
             true
         } catch (e: SessionExpiredException) {
             onSessionExpired()
             false
         } catch (e: ApiException) {
             _uiState.update { it.copy(error = e.message) }
+            feedback.failed(e.message)
             false
         }
     }
 
-    /** Removes one of this rider's shared places. The server checks again. */
+    /**
+     * Removes one of this rider's shared places. The server checks again.
+     *
+     * This is the delete that started the whole feedback pass. It removed a
+     * row everybody on the server can see, it had no undo, and it said
+     * nothing either way — the list simply reloaded, so a delete that failed
+     * looked exactly like a delete that worked and had not been drawn yet.
+     */
     fun removeShared(id: Long) {
         val api = sharedPlacesApi ?: return
+        if (id in _uiState.value.removingShared) return
+        // Claimed before the coroutine starts rather than inside it. Both taps
+        // of a double tap arrive on the main thread in the same frame, and a
+        // flag set inside `launch` would be set after the second had already
+        // read it as clear.
+        _uiState.update { it.copy(removingShared = it.removingShared + id) }
+
         viewModelScope.launch {
             try {
                 api.remove(id)
                 loadMine()
+                feedback.succeeded(R.string.feedback_place_deleted_shared)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { removeShared(id) }
+            } finally {
+                // In a `finally` rather than on each path: the row is drawn
+                // greyed while its id is in here, and an early return that
+                // forgot to clear it would leave a place nobody can delete
+                // until the screen is rebuilt.
+                _uiState.update { it.copy(removingShared = it.removingShared - id) }
             }
         }
     }
@@ -200,14 +248,25 @@ class PlacesViewModel(
     /** Removes one of this rider's private shortcuts. Nobody else is affected. */
     fun removePersonal(id: Long) {
         val api = personalPlacesApi ?: return
+        if (id in _uiState.value.removingPersonal) return
+        // Claimed before the coroutine starts rather than inside it. Both taps
+        // of a double tap arrive on the main thread in the same frame, and a
+        // flag set inside `launch` would be set after the second had already
+        // read it as clear.
+        _uiState.update { it.copy(removingPersonal = it.removingPersonal + id) }
+
         viewModelScope.launch {
             try {
                 api.remove(id)
                 loadPersonal()
+                feedback.succeeded(R.string.feedback_place_deleted_personal)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(error = e.message) }
+                feedback.failed(e.message) { removePersonal(id) }
+            } finally {
+                _uiState.update { it.copy(removingPersonal = it.removingPersonal - id) }
             }
         }
     }

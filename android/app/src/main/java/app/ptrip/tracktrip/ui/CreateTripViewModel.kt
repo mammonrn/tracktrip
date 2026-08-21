@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ActiveTripException
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -28,6 +29,7 @@ data class CreateTripUiState(
 
 class CreateTripViewModel(
     private val tripApi: TripApi,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -46,6 +48,10 @@ class CreateTripViewModel(
             try {
                 val trip = tripApi.createTrip(name)
                 _uiState.update { it.copy(creating = false) }
+                // Raised before [onCreated] navigates to the new trip, and
+                // read on the screen it lands on — the bar lives above the
+                // navigation stack.
+                feedback.succeeded(R.string.feedback_trip_created, trip.name)
                 onCreated(trip)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
@@ -56,8 +62,12 @@ class CreateTripViewModel(
                 _uiState.update {
                     it.copy(creating = false, error = e.message, blockedByTripName = e.tripName)
                 }
+                // No Retry: creating again would be refused again until the
+                // running trip is ended. The form says which one that is.
+                feedback.failed(e.message)
             } catch (e: ApiException) {
                 _uiState.update { it.copy(creating = false, error = e.message) }
+                feedback.failed(e.message) { create(name, onCreated) }
             }
         }
     }
