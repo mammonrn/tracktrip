@@ -162,6 +162,147 @@ test('usernames are checked for length and shape', async () => {
   }
 });
 
+// ─── Thai usernames ─────────────────────────────────────────────────────────
+//
+// See src/users/username.js. The short of it: Thai has no case, so the old
+// lower(username) index did nothing for it — and Thai's collision problem is
+// one lower() was never going to reach, because two different sequences of
+// code points can draw exactly the same glyphs.
+
+test('a Thai username is accepted, and stored as it was typed', async () => {
+  const { app, riderToken } = setup();
+
+  for (const username of ['กรงกราง', 'ก็อง', 'น้ำ', 'poom_ไทย', 'ไทย.rider']) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 200, `expected ${username} to be accepted`);
+    assert.equal(res.body.username, username);
+  }
+});
+
+test('every ASCII username that worked before still works', async () => {
+  // Backward compatibility is the whole risk of this change: the column has
+  // rows in it already, and every one of them is ASCII.
+  const { app, riderToken } = setup();
+
+  for (const username of ['abc', 'poom', 'poom_rides', 'poom.rides', 'Poom99', 'x'.repeat(20)]) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 200, `expected ${username} to be accepted`);
+    assert.equal(res.body.username, username);
+  }
+});
+
+test('two spellings of one Thai word are one username', async () => {
+  const { app, riderToken, otherToken } = setup();
+
+  // สำ is 0E2A 0E33. สํา is 0E2A 0E4D 0E32. Identical ink, different bytes,
+  // and NFC leaves them apart — SARA AM has no canonical decomposition.
+  assert.notEqual('สำ' + 'คัญ', ('สํา' + 'คัญ').normalize('NFC'));
+
+  assert.equal((await patchMe(app, otherToken).send({ username: 'สำคัญ' })).status, 200);
+
+  const clash = await patchMe(app, riderToken).send({ username: 'สํ' + 'าคัญ' });
+  assert.equal(clash.status, 409);
+  assert.match(clash.body.error, /already taken/);
+});
+
+test('marks typed in the other order are one username', async () => {
+  const { app, riderToken, otherToken } = setup();
+
+  // The vowel and the tone, stored the other way round. NFC will not reorder
+  // them either: canonical ordering sorts by combining class, and SARA II's
+  // is 0, so it never moves.
+  const vowelFirst = 'ก' + '\u0E35' + '\u0E48' + 'ยว';
+  const toneFirst = 'ก' + '\u0E48' + '\u0E35' + 'ยว';
+  assert.notEqual(vowelFirst.normalize('NFC'), toneFirst.normalize('NFC'));
+
+  assert.equal((await patchMe(app, otherToken).send({ username: vowelFirst })).status, 200);
+  assert.equal((await patchMe(app, riderToken).send({ username: toneFirst })).status, 409);
+});
+
+test('Thai words that merely look alike stay different usernames', async () => {
+  // The fold must not become "close enough". กอง and ก้อง are different words.
+  const { app, riderToken, otherToken } = setup();
+
+  assert.equal((await patchMe(app, otherToken).send({ username: 'กอง' })).status, 200);
+  assert.equal((await patchMe(app, riderToken).send({ username: 'ก้อง' })).status, 200);
+});
+
+test('homoglyph scripts are still refused, which is what ASCII-only was doing', async () => {
+  // The old pattern blocked these by accident, and \p{Script=Latin} would have
+  // let the first two straight back in — U+FF30 and U+0131 are both Latin by
+  // script. Script is a statement about writing systems, not about what looks
+  // like what.
+  const { app, riderToken } = setup();
+
+  const refused = [
+    'Ｐｏｏｍ', // fullwidth Latin
+    'ıdent', // U+0131 dotless i
+    'pооm', // Cyrillic о
+    'Ροom', // Greek Rho
+    'poom๑', // Thai digit: read aloud the same as poom1
+    'poom๏', // Thai punctuation
+    'ｐoom', // one fullwidth letter among ASCII
+  ];
+
+  for (const username of refused) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 400, `expected ${JSON.stringify(username)} to be refused`);
+  }
+});
+
+test('everything that was refused before is still refused', async () => {
+  const { app, riderToken } = setup();
+  const refused = [
+    'ab',
+    'x'.repeat(21),
+    'has space',
+    'has@symbol',
+    '.leading',
+    'trailing.',
+    'do..uble',
+    'poom-rides',
+    'poom😀',
+    "' OR 1=1 --",
+    '<script>x</script>',
+    'poom\u200bx', // zero-width space
+    '\u0E48กอง', // opens with a combining mark, which renders as a dotted circle
+  ];
+
+  for (const username of refused) {
+    const res = await patchMe(app, riderToken).send({ username });
+    assert.equal(res.status, 400, `expected ${JSON.stringify(username)} to be refused`);
+  }
+});
+
+test('the stored key is what the index is on, and it is not lower()', async () => {
+  const { app, db, riderToken, riderId } = setup();
+
+  await patchMe(app, riderToken).send({ username: 'สํ' + 'าคัญ' });
+  const row = db.prepare('SELECT username, username_key FROM users WHERE id = ?').get(riderId);
+
+  // Stored as typed; folded for comparison. SQLite's own lower() would have
+  // left the Thai exactly as it found it.
+  assert.equal(row.username, 'สํ' + 'าคัญ');
+  assert.equal(row.username_key, 'สำคัญ');
+  assert.notEqual(row.username_key, row.username);
+});
+
+test('clearing a username clears its key, so the name is free again', async () => {
+  const { app, db, riderToken, otherToken, riderId } = setup();
+
+  await patchMe(app, riderToken).send({ username: 'สำคัญ' });
+  assert.equal((await patchMe(app, otherToken).send({ username: 'สำคัญ' })).status, 409);
+
+  const cleared = await patchMe(app, riderToken).send({ username: '  ' });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.username, null);
+  assert.equal(db.prepare('SELECT username_key FROM users WHERE id = ?').get(riderId).username_key, null);
+
+  // A NULL key is ignored by the unique index, so several riders can have no
+  // username at once — and the name somebody released can be taken.
+  assert.equal((await patchMe(app, otherToken).send({ username: 'สำคัญ' })).status, 200);
+});
+
 // ─── Phone and birth date ───────────────────────────────────────────────────
 
 test('phone numbers are checked loosely but not blindly', async () => {

@@ -117,7 +117,8 @@
     <string name="profile_first_name">ชื่อ</string>
     <string name="profile_last_name">นามสกุล</string>
     <string name="profile_username">ชื่อผู้ใช้</string>
-    <string name="profile_username_hint">ใช้ตัวอักษร ตัวเลข ขีดล่าง และจุด</string>
+    <string name="profile_username_hint">ใช้ตัวอักษรไทยหรืออังกฤษ ตัวเลข ขีดล่าง และจุด</string>
+    <string name="profile_username_invalid">ใช้ตัวอักษรไทยหรืออังกฤษ ตัวเลข ขีดล่าง และจุดเดี่ยว ความยาว 3-20 ตัวอักษร</string>
     <string name="profile_phone">เบอร์โทร</string>
     <string name="profile_birth_date">วันเกิด</string>
     <string name="profile_save">บันทึก</string>

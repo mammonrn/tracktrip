@@ -51,6 +51,7 @@ src/
   users/
     levels.js        # the rider level table and progress towards the next one
     profile.js       # validation for the editable profile fields
+    username.js      # what a username may contain, and what counts as the same one
     avatar.js        # avatar storage: magic-byte sniffing, random filenames
   routes/
     index.js          # health check
@@ -109,7 +110,7 @@ Requires `Authorization: Bearer <accessToken>`.
   |---|---|
   | `display_name` | 1–40 characters after trimming. May be changed but **not** cleared — it is what other riders see in the member list. |
   | `first_name`, `last_name` | Up to 40 characters. `null` or `""` clears. |
-  | `username` | 3–20 characters, letters/digits/underscores and single dots between them. Unique case-insensitively; a clash is a `409`. `null` or `""` clears. |
+  | `username` | 3–20 characters: Latin (`a-zA-Z`) or **Thai** letters and marks, digits, underscores and single dots between them. Unique — case-insensitively for Latin, and by a Thai-aware fold that treats `สำ` and `สํา` as one name. A clash is a `409`. `null` or `""` clears. See [Usernames, Thai, and what counts as the same name](#usernames-thai-and-what-counts-as-the-same-name). |
   | `phone` | Digits with optional `+` and separators, 8–15 digits. Deliberately loose — it is read by humans, not dialled by the server. `null` or `""` clears. |
   | `birth_date` | `YYYY-MM-DD`, a real calendar date, in the past and within 120 years. `null` or `""` clears. |
 
@@ -897,6 +898,84 @@ All variables are documented in `.env.example`:
 | `LOCATIONIQ_COUNTRY_CODES`| Optional comma-separated ISO 3166-1 alpha-2 codes to bias searches towards, e.g. `th`. Unset searches the whole planet. | *(empty)* |
 
 Never commit a real `.env` file — it's excluded via `.gitignore`.
+
+## Usernames, Thai, and what counts as the same name
+
+`username` is Latin letters, **Thai letters and marks**, digits, underscores and
+single dots, 3 to 20 characters, no leading dot and no trailing dot. The rule
+and its reasoning live in [`src/users/username.js`](src/users/username.js).
+
+### Why the pattern is spelled out instead of using script properties
+
+The obvious way to add Thai is `\p{Script=Latin}` and `\p{Script=Thai}`, and it
+is wrong in both directions. Measured, not assumed:
+
+```js
+/^\p{Script=Latin}$/u.test('Ｐ')  // U+FF30 FULLWIDTH LATIN CAPITAL P -> true
+/^\p{Script=Latin}$/u.test('ı')  // U+0131 DOTLESS I                 -> true
+/^\p{Script=Thai}$/u.test('๏')   // U+0E4F FONGMAN, category Po       -> true
+```
+
+`Ｐｏｏｍ` and `ı` are exactly the impostors a unique username exists to keep
+apart from `Poom` and `i`, and the old ASCII-only pattern was blocking them **by
+accident** — it had no opinion about other scripts, it simply could not match
+them. Opening the rule up to Thai is precisely the moment that accident gets
+lost, so Latin here means ASCII `a-zA-Z` and Thai means two explicit ranges of
+letters and marks. Thai digits are excluded on the same grounds: `0-9` are
+already there, and `poom๑` beside `poom1` is two accounts a Thai reader says
+identically out loud.
+
+### Why `lower(username)` stopped being enough
+
+The unique index used to be `ON users (lower(username))`. Two problems, and only
+the second is about Thai.
+
+**SQLite's `lower()` is ASCII-only** in the build better-sqlite3 bundles:
+
+```
+sqlite> SELECT lower('POOM'), lower('ÉCOLE'), lower('ก้อง');
+        poom            École           ก้อง
+```
+
+So "Poom and poom are not two riders" already stopped at A-Z.
+
+**Thai's collision problem is not case at all.** It is two different sequences
+of code points that draw the same glyphs, and Unicode normalisation
+deliberately does not merge them:
+
+| looks like | one way | the other way | does NFC merge them? |
+|---|---|---|---|
+| `สำ` | `0E2A 0E33` | `0E2A 0E4D 0E32` | **no** — SARA AM has no canonical decomposition |
+| `กี่` | `0E01 0E35 0E48` | `0E01 0E48 0E35` | **no** — SARA II's combining class is 0, so it never reorders |
+
+Either one registers a name that renders exactly like somebody else's.
+
+So the fold runs in JavaScript at the one place a username is written, and its
+answer is stored beside the username in `username_key` (migration 0015). It
+expands every SARA AM into NIKHAHIT + SARA AA, sorts the marks within each
+cluster and puts the spacing vowel last, collapses the pair back, and
+lowercases. `usernameTaken` and the unique index both compare that column.
+
+The stored `username` keeps the rider's own spelling and capitalisation, for the
+same reason 0007 indexed an expression rather than storing a lowercased value:
+what to compare by and what to draw are different questions.
+
+Names that merely *look* similar are left alone on purpose — `กอง` and `ก้อง`
+are different words and stay different usernames.
+
+### The migration is backward-compatible, and checkably so
+
+0015 backfills `username_key` with plain SQL `lower(username)`, which is correct
+because **every username already in the database is ASCII**: `username` has
+exactly one writer — `PATCH /me`, which has gone through `validateUsername`
+since 0007 added the column — and that validator has only ever accepted
+`[a-zA-Z0-9_.]`. Google sign-in never touches the column. For ASCII the fold's
+Thai steps are no-ops and its last step is `toLowerCase()`, so SQL and
+JavaScript agree by construction.
+
+That is also why creating the new unique index cannot take the API down the way
+0013 warns about: it is over the same values the old index already held unique,
+so any pair it would reject was already rejected.
 
 ## Place search
 
