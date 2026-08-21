@@ -231,26 +231,70 @@ Nobody has reported since the trip closed, so the figure only counts up —
 nothing except that time passes, and that grows a digit every few days until it
 is the widest thing on the row.
 
-So on a finished trip that slot carries the days the trip actually ran instead:
-"Owner · Created 21 Aug – Ended 22 Aug". The rules live in
+So on a finished trip that slot now carries the days the trip actually ran, and
+the row is restacked around them:
+
+```
+Owner                          <- the role, as its own small label
+krongkrangrn                   <- the name
+Created 20/08/2026 – Ended 20/08/2026
+```
+
+against a running trip, which is unchanged:
+
+```
+krongkrangrn
+Owner · 4 min ago
+```
+
+Two full dates and a dash will not share a line with a role, and moving the
+role *above* the name is what frees the whole width for them. It reads better
+too: a label over a name is how a caption is normally worn, and on a finished
+trip the row is a record of who was there rather than a live readout.
+
+The rules live in
 [`ui/TripDates.kt`](app/src/main/java/app/ptrip/tracktrip/ui/TripDates.kt),
 which is a pure function of the two stamps, the clock and the locale, so they
 are testable without a screen:
 
-- the year is added when it is load-bearing and left off when it is not — when
-  the two dates fall in different years, and when either falls outside the year
-  the rider is reading in. That second rule is what keeps an archive honest: a
-  trip from 2024 read in 2026 says 2024, without every trip from this month
-  carrying a year nobody needed;
+- the member row uses `Style.NUMERIC` — `20/08/2026`, always the full date. The
+  fixed width is the point rather than a side effect: two of these share one
+  line, and a format whose length depends on the month name ("1 May" against
+  "21 September") would fit in English and overflow in Thai. It is formatted
+  against `Locale.ROOT`, because the pattern is digits and slashes with nothing
+  in it for a locale to translate — and passing one in would invite a calendar
+  that writes 2026 as 2569;
+- `Style.DAY_MONTH` — "21 Aug" — is still what the saved-place dialog uses,
+  where there is room, and it is where the conditional year lives: added when
+  it is load-bearing (the two dates in different years, or either outside the
+  year the rider is reading in), left off when it is not. That is what keeps an
+  archive honest without every trip from this month carrying a year nobody
+  needed;
 - a stamp this build cannot parse says nothing rather than guessing, the same
   rule `FixAge` follows, and the row keeps the age it always had;
 - `created_at` and `ended_at` were on the wire from the first migration and
   simply went unread until the row needed them.
 
-The row is held to one line (`maxLines = 1`), because the dates are longer than
-the age they replace and the member list is something people scroll: a second
-line on every row of a finished trip would be a worse screen than the number it
-replaced. `EndedTripDatesTest` measures the card before and after to hold that.
+### What the third line costs, and why it is not free
+
+About **18dp** — a card of 74dp becomes 92dp — and `EndedTripDatesTest`
+measures it rather than asserting it away.
+
+The two lines that are not the name come down from `labelSmall`'s 11sp to 10sp.
+The obvious next move — a tighter `lineHeight` with `LineHeightStyle.Trim.Both`
+and `includeFontPadding = false` — was tried and measured: it bought 3dp of the
+18, and it put the app's other language at risk to do it. **Thai stacks up to
+two marks above the base character**, and both strings this caption draws have
+them — `เจ้าของทริป` carries a tone mark and an upper vowel,
+`ยังไม่ได้แชร์ตำแหน่ง` carries four. The half-leading above the first line is
+exactly where those marks live, and a clipped tone mark is a different word.
+That is a worse bug than a taller card, and one that would only ever appear on
+a Thai phone — which is most of them. So the leading stays at roughly 1.4x the
+size, which is what Thai needs.
+
+An earlier version of that test measured the rider's *name* — a `Text` of fixed
+height — and so reported "no growth" through a change that added a line. It
+measures the card by tag now.
 
 ### Being refused for being mid-ride
 
@@ -703,11 +747,22 @@ the row showed a name and one supporting line, and everything else the app knew
 about the place — where it actually is, when it was written down, who by — was
 on no screen at all.
 
-Each row is a `HudSurface` card now, the same one the trip archive draws, and
-tapping it opens what the app knows: the coordinate (there is no address — a
-shared place is a name somebody typed over a point they chose, and nothing on
-the server can reverse-geocode it), the day it was added, who added it where
-that is known, and who can see it. A private shortcut also shows the name a
+Each place is a row inside one of two **group cards** — "Only you" and "Shared
+with everyone" — and tapping a row opens what the app knows: the coordinate
+(there is no address; a shared place is a name somebody typed over a point they
+chose, and nothing on the server can reverse-geocode it), the day it was added,
+who added it where that is known, and who can see it.
+
+The grouping was the second half of the fix. The headings were loose text and
+every place was its own floating card, so a rider with three private places and
+four shared ones read as seven identical cards with two captions somewhere among
+them — and nothing in that drawing said which three were private. That
+distinction is the only thing on this screen that matters, because one list is
+visible to the whole server and the other to nobody. A card is how this app
+already says "these belong together", so the *group* is the card and the rows
+inside it are plain rows on a divider: a card inside a card is two boundaries
+claiming the same thing. A group with nothing in it is not drawn at all — an
+empty "Only you" card would promise a rider private places they do not have. A private shortcut also shows the name a
 route calls it by, which is usually not the label on its chip; it never shows an
 author, because `personal_places` has no join to `users` — the owner is the
 caller, and that is the property the whole table rests on.
