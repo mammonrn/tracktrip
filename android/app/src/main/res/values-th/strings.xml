@@ -283,7 +283,6 @@
     <string name="qr_camera_denied">สิทธิ์กล้องถูกปิดอยู่ เปิดได้ที่ตั้งค่าแอปของ Android แล้วลองใหม่</string>
     <string name="qr_camera_allow">อนุญาตให้ใช้กล้อง</string>
     <string name="invite_share_link">แชร์ลิงก์</string>
-    <string name="invite_share_subject">มาร่วมทริปของฉันบน PTrips</string>
     <string name="invite_share_body">มาร่วมทริป \"%1$s\" ของฉันบน PTrips\n\nโค้ด: %2$s\nเปิด: %3$s\n\nโค้ดใช้ได้ 15 นาที</string>
     <string name="invite_share_chooser">แชร์คำเชิญ</string>
 

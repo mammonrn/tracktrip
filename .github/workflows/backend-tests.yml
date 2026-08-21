@@ -9,6 +9,12 @@ name: Backend tests
 # the repository had was the Android build, so every backend change — routes,
 # auth guards, migrations — was covered by whatever the developer remembered to
 # run before deploying.
+#
+# deploy/** is in the filter because test/appLinks.test.js reads what is in
+# there: the assetlinks statement list and the nginx site that serves it. Those
+# two fail silently in production — a lowercase fingerprint or a redirect and
+# invite links simply keep opening a browser — so the checks are worth nothing
+# if editing the file they guard does not run them.
 
 on:
   push:
@@ -18,6 +24,7 @@ on:
       - 'src/**'
       - 'test/**'
       - 'scripts/**'
+      - 'deploy/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/backend-tests.yml'
@@ -26,6 +33,7 @@ on:
       - 'src/**'
       - 'test/**'
       - 'scripts/**'
+      - 'deploy/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/backend-tests.yml'

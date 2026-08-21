@@ -416,6 +416,149 @@ password trap, and how to build the same APK locally are all in
 
 ---
 
+## Deploying ptrip.app (the web host, for invite links)
+
+An invite reads `https://ptrip.app/join/CODE`. That host is **not** this API
+server — `api.ptrip.app` is, and the certificate on it does not cover the apex.
+`ptrip.app` is a second nginx site on the same box, serving two static files and
+proxying nothing:
+
+| | |
+|---|---|
+| `/.well-known/assetlinks.json` | what makes a tapped invite open the app instead of a browser |
+| `/join/CODE` | what a phone **without** the app lands on |
+
+The site is [`deploy/nginx-ptrip.app.conf`](deploy/nginx-ptrip.app.conf), the
+page is [`deploy/www/join.html`](deploy/www/join.html), and the statement list
+is [`deploy/assetlinks.json`](deploy/assetlinks.json) — already filled in with
+both signing fingerprints.
+
+### 1. DNS first
+
+Certbot proves control of the name by fetching a file over HTTP from wherever
+`ptrip.app` currently resolves, so the A record has to point here **before** you
+ask for a certificate:
+
+```bash
+dig +short ptrip.app          # must return this server's address
+dig +short api.ptrip.app      # for comparison — the same address
+```
+
+Asking certbot before DNS has moved fails, and repeated failures hit Let's
+Encrypt's rate limit for the name. Check, do not retry.
+
+### 2. Put the files in place
+
+```bash
+sudo mkdir -p /var/www/ptrip.app/.well-known
+sudo cp ~/tracktrip/deploy/assetlinks.json /var/www/ptrip.app/.well-known/assetlinks.json
+sudo cp ~/tracktrip/deploy/www/join.html   /var/www/ptrip.app/join.html
+
+# nginx's worker (www-data) needs +x on every directory in the path and +r on
+# the files. Same requirement as /uploads/ on the API site.
+sudo chmod -R a+rX /var/www/ptrip.app
+```
+
+Copies rather than symlinks into the checkout: `git pull` replacing a file under
+a symlink is fine, but a checkout that moves or a stale branch silently changes
+what the domain serves. Re-run the two `cp` lines when either file changes.
+
+### 3. Enable the site
+
+```bash
+sudo ln -s ~/tracktrip/deploy/nginx-ptrip.app.conf /etc/nginx/sites-enabled/ptrip.app.conf
+sudo nginx -t && sudo systemctl reload nginx
+
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/.well-known/assetlinks.json   # 200
+```
+
+### 4. Certificate
+
+`ptrip.app` needs its own — a different hostname from `api.ptrip.app`, not a
+wildcard:
+
+```bash
+sudo certbot --nginx -d ptrip.app
+sudo systemctl reload nginx
+```
+
+Certbot clones the port-80 server block into a port-443 one with the certificate
+attached, and turns what is left on port 80 into an HTTP → HTTPS redirect. Every
+location comes across, which is the point: the TLS block is the one Android
+uses.
+
+### 5. Check it the way Android does
+
+This is the step worth doing carefully, because **every way this fails is
+silent** — a wrong header, a redirect, a bad certificate, and invite links just
+carry on opening a browser, which looks exactly like the site not being finished.
+
+```bash
+curl -sI https://ptrip.app/.well-known/assetlinks.json
+```
+
+| must be | why |
+|---|---|
+| `HTTP/2 200` | anything else is treated as an error |
+| `content-type: application/json` | served as `text/plain` it is read as no statement list at all |
+| **no `location:` header** | `301` and `302` are not followed — apex → www, or a trailing-slash canonicalisation, both break it |
+| a certificate that chains to a trusted root | a self-signed one produces an empty statement list |
+
+Then the content and the page:
+
+```bash
+curl -s https://ptrip.app/.well-known/assetlinks.json | python3 -m json.tool
+curl -s https://ptrip.app/join/K7M2QRX9 | head -5
+```
+
+The JSON must list **both** package names. The intent filter lives in the shared
+manifest, so the debug build claims the same links under
+`app.ptrip.tracktrip.debug`, and verification is per package name *and* per
+signing certificate — a list with only the release id leaves every test build
+falling back to a chooser.
+
+### 6. Check it on a phone
+
+Verification happens on the device, on install and on update, and is cached:
+
+```bash
+adb shell pm verify-app-links --re-verify app.ptrip.tracktrip
+adb shell pm get-app-links app.ptrip.tracktrip        # want: ptrip.app: verified
+adb shell am start -a android.intent.action.VIEW -d https://ptrip.app/join/K7M2QRX9
+```
+
+A phone that already failed verification keeps the failure until `--re-verify`
+or a reinstall, so a fix on the server does not show up on a phone that tried
+too early.
+
+### If a fingerprint changes
+
+Re-print it and edit `deploy/assetlinks.json`, then repeat step 2:
+
+```bash
+# On the machine that holds the keystores, not here.
+./scripts/keystore-sha1.sh ~/keystores/tracktrip-release.jks tracktrip   # SHA256: → release
+./scripts/keystore-sha1.sh ~/.android/debug.keystore androiddebugkey     # SHA256: → debug
+```
+
+The value goes in as printed: **uppercase hex, colon-separated**, which is what
+the Digital Asset Links statement-list spec asks for. `test/appLinks.test.js`
+rejects anything else, along with a redirect or a missing content type in the
+nginx site.
+
+The file is cached for five minutes, so a change takes effect on the next
+verification rather than needing a reload.
+
+### What ptrip.app does not do
+
+Everything outside those two paths returns `404`, deliberately, rather than
+redirecting to the API or to a placeholder — so adding a real site later is
+adding locations above that rule instead of undoing it. Nothing about this host
+touches the app, the database or PM2; `systemctl reload nginx` is the whole
+blast radius.
+
+---
+
 ## Nightly backups to Google Drive
 
 [`scripts/backup-to-drive.sh`](scripts/backup-to-drive.sh) puts one zip on

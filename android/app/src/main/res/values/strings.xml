@@ -412,7 +412,6 @@
     <string name="qr_camera_denied">Camera access is off for PTrips. Turn it on in Android\'s app settings, then try again.</string>
     <string name="qr_camera_allow">Allow camera</string>
     <string name="invite_share_link">Share link</string>
-    <string name="invite_share_subject">Join my trip on PTrips</string>
     <string name="invite_share_body">Join my trip \"%1$s\" on PTrips.\n\nCode: %2$s\nOpen: %3$s\n\nThe code works for 15 minutes.</string>
     <string name="invite_share_chooser">Share invite</string>
     <string name="language_system">Match my phone</string>

@@ -1,0 +1,115 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>PTrips — คำเชิญเข้าร่วมทริป</title>
+
+<!--
+  Served for every /join/CODE on ptrip.app. One page for all of them: this host
+  has no database, so it cannot tell a real code from a made-up one, and saying
+  "invalid" about a code it has not checked would be worse than saying nothing.
+
+  This is the page for a phone WITHOUT the app. A phone with the app installed
+  and the domain verified never gets here — Android hands the link straight to
+  PTrips. If the app is installed but verification has not happened yet, the
+  button below still opens it, because tracktrip:// is the app's own scheme and
+  needs no verification.
+
+  Deliberately one file with no external anything: no fonts, no scripts, no
+  images. It has to render on a phone with one bar of signal, and every asset
+  is another request that can fail.
+-->
+
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f6f6f4;
+    color: #1c1c1a;
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 26rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .5rem; }
+  p { margin: 0 0 1rem; }
+  .muted { color: #6b6b64; font-size: .9rem; }
+  .code {
+    font: 600 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .18em;
+    background: #fff;
+    border: 1px solid #dedcd4;
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+    margin: 0 0 1.25rem;
+    word-break: break-all;
+  }
+  .code[hidden] { display: none; }
+  a.button {
+    display: block;
+    padding: .85rem 1rem;
+    border-radius: 12px;
+    background: #1c1c1a;
+    color: #fff;
+    text-decoration: none;
+    text-align: center;
+    font-weight: 600;
+    margin: 0 0 .75rem;
+  }
+  hr { border: 0; border-top: 1px solid #dedcd4; margin: 1.75rem 0 1.25rem; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #17171a; color: #ececea; }
+    .code { background: #202024; border-color: #34343a; }
+    .muted { color: #9a9a94; }
+    a.button { background: #ececea; color: #17171a; }
+    hr { border-top-color: #34343a; }
+  }
+</style>
+
+<main>
+  <h1>คุณได้รับคำเชิญเข้าร่วมทริป</h1>
+
+  <p class="code" id="code" hidden></p>
+
+  <p>เปิดแอป <strong>PTrips</strong> แล้วใส่โค้ดนี้เพื่อเข้าร่วมทริป
+     ถ้ายังไม่ได้ติดตั้ง ต้องติดตั้งแอปก่อน</p>
+
+  <a class="button" id="open" href="#" hidden>เปิดใน PTrips</a>
+
+  <p class="muted">โค้ดมีอายุจำกัด ถ้าใช้ไม่ได้ให้ขอโค้ดใหม่จากคนที่ชวนคุณ</p>
+
+  <hr>
+
+  <h1>You have been invited to a trip</h1>
+  <p>Open the <strong>PTrips</strong> app and enter the code above to join.
+     If you do not have it installed yet, install it first.</p>
+  <p class="muted">Join codes are short-lived. If this one no longer works,
+     ask whoever invited you for a new one.</p>
+</main>
+
+<script>
+  // The code is in the path — /join/CODE — because nginx serves this one file
+  // for every code and cannot fill anything in.
+  //
+  // Shown only if it looks like one of ours: eight characters from the
+  // server's alphabet, which leaves out I, O, 0 and 1 so nothing is
+  // misread. Anything else and the page still explains itself, it just does
+  // not print a code that would be wrong to type in.
+  var raw = decodeURIComponent(location.pathname.replace(/^\/join\/?/, "").replace(/\/$/, ""));
+  var code = raw.toUpperCase().replace(/[\s-]/g, "");
+
+  if (/^[A-HJ-NP-Z2-9]{8}$/.test(code)) {
+    var el = document.getElementById("code");
+    el.textContent = code.slice(0, 4) + " " + code.slice(4);
+    el.hidden = false;
+
+    // The app's own scheme, so this works even before the domain is verified.
+    // A phone without the app does nothing visible here, which is why the
+    // written instructions above are the primary path and this is the shortcut.
+    var open = document.getElementById("open");
+    open.href = "tracktrip://join?code=" + encodeURIComponent(code);
+    open.hidden = false;
+  }
+</script>

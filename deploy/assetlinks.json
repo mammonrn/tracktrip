@@ -1,0 +1,22 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.ptrip.tracktrip",
+      "sha256_cert_fingerprints": [
+        "A3:93:43:1B:87:D5:5A:8A:D9:2A:6B:1A:10:E2:CA:5E:C8:7B:2B:81:D6:4B:83:F8:1B:4C:90:8A:BF:A5:3F:61"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.ptrip.tracktrip.debug",
+      "sha256_cert_fingerprints": [
+        "7F:54:FF:AB:D3:6D:9D:C5:95:6E:0C:2A:7F:5A:A8:A2:B7:DA:48:CF:68:1B:92:23:1A:05:33:81:4A:93:5B:F1"
+      ]
+    }
+  }
+]

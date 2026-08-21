@@ -236,9 +236,11 @@ class TripDetailViewModel(
      */
     fun createJoinCode() {
         if (_uiState.value.joinCodeLoading) return
+        // Claimed here rather than inside the coroutine, for the reason spelled
+        // out on `requestShareLink` — the two share this flag.
+        _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
             try {
                 val code = tripApi.createJoinCode(tripId)
                 _uiState.update { it.copy(joinCodeLoading = false, joinCode = code) }
@@ -463,9 +465,14 @@ class TripDetailViewModel(
      */
     fun requestShareLink() {
         if (_uiState.value.joinCodeLoading) return
+        // Claimed before the coroutine starts, not inside it. Issuing retires
+        // the previous code, so two presses landing together would leave the
+        // first sheet holding a link that is already dead. The guard only
+        // stops that if the flag is up by the time the second press reads it,
+        // and a coroutine body is not guaranteed to have run by then.
+        _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(joinCodeLoading = true, joinCodeError = null) }
             try {
                 val code = tripApi.createJoinCode(tripId)
                 _uiState.update {
