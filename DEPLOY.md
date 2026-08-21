@@ -285,14 +285,20 @@ And to confirm the newest one landed:
 sqlite3 /root/tracktrip/data/trip-tracker.db ".schema personal_places"
 ```
 
-**Back up first if the release changes schema.** The database is one file, so a
-backup is one copy, and it is the only way back from a migration that goes
-wrong:
+**Back up first if the release changes schema.** It is the only way back from a
+migration that goes wrong:
 
 ```bash
-cp /root/tracktrip/data/trip-tracker.db \
-   /root/tracktrip/data/trip-tracker.db.$(date +%F-%H%M).bak
+sqlite3 /root/tracktrip/data/trip-tracker.db \
+  ".backup '/root/tracktrip/data/trip-tracker.db.$(date +%F-%H%M).bak'"
 ```
+
+`.backup` rather than `cp`, and the difference is not pedantry: the app is
+still running while you type this. A plain copy takes the bytes as they are
+part way through somebody's write, and in WAL mode it copies only the main
+file — leaving behind the `-wal` alongside it, which is where the most recent
+commits still live. `.backup` goes through SQLite, takes the locks, and writes
+one file that opens cleanly.
 
 Migrations run inside a transaction each, so a failing one leaves the database
 as it was and stops the run — but a *successful* migration is not undone by
@@ -389,6 +395,109 @@ geocode: failed q="Pai" 429 Place search is busy. Try again in a moment.
 **No `geocode:` lines at all** while the phone is showing an error means the
 request never reached the route — which is the "backend is older than the
 app" case in the table above. The key is never written to the log.
+
+---
+
+## Nightly backups to Google Drive
+
+[`scripts/backup-to-drive.sh`](scripts/backup-to-drive.sh) puts one zip on
+Google Drive every night containing the three things this server holds that
+nothing else has a copy of:
+
+| | what | why it is in there |
+|---|---|---|
+| `trip-tracker.db` | the database, via `sqlite3 .backup` | every trip, rider, position and place |
+| `uploads/` | the avatars directory, copied whole | files on disk; not in the database and not in git |
+| `code.tar` + `code-commit.txt` | `git archive HEAD`, and which commit it was | so a restore can put the code and the data back together |
+
+`git archive` rather than the whole `.git`: the history is on GitHub already,
+and copying it nightly would make every archive mostly the same bytes. What is
+worth keeping beside a database is the one commit that database belongs to.
+
+### Before it will run
+
+**rclone must already be authorised**, with a remote called `gdrive`. That is
+interactive — it opens a browser and asks Google — so the script does not
+attempt it:
+
+```bash
+rclone config          # n) new remote, name it: gdrive, type: drive
+rclone lsd gdrive:     # should list what is already in the backup folder
+```
+
+The remote is configured with **`root_folder_id` pinned to the backup folder**,
+so `gdrive:` on its own already *is* the destination. That is why the script
+uploads to a bare `gdrive:` with no path after it: a path there would create a
+folder *inside* the backup folder and file every archive one level too deep.
+
+That pinning lives in the deploy user's `~/.config/rclone/rclone.conf` and
+nothing in the repository can verify it. To confirm it is still what you think
+it is:
+
+```bash
+rclone config show gdrive | grep -i root_folder_id
+```
+
+Also needed: `sqlite3`, `zip` and `git`. The script checks for all four on
+startup and stops with the name of the one that is missing.
+
+### Installing the cron entry
+
+Not installed for you — add it with `crontab -e`, **as the deploy user** (it
+needs that user's rclone config and read access to the database):
+
+```cron
+# Nightly backup to Google Drive at 03:00 Thai time.
+# The server runs UTC and ICT is UTC+7, so 03:00 ICT is 20:00 the day before.
+0 20 * * * /root/tracktrip/scripts/backup-to-drive.sh
+```
+
+Check the server's clock before trusting that sum — `timedatectl` will say. If
+it is set to `Asia/Bangkok` rather than UTC, use `0 3 * * *` instead.
+
+### Reading the log
+
+Every line is timestamped, in `/var/log/tracktrip-backup.log` — or
+`~/tracktrip-backup.log` if the deploy user cannot write to `/var/log`, which
+the script says on stderr the first time it happens.
+
+```
+2026-08-21 03:00:01+0700  ──── backup 20260821-030001 starting ────
+2026-08-21 03:00:01+0700  database   ok  (156K)
+2026-08-21 03:00:01+0700  uploads    ok  (2 file(s), 16K)
+2026-08-21 03:00:02+0700  code       ok  (4fc75fa, 2.9M)
+2026-08-21 03:00:02+0700  archive    ok  /tmp/tracktrip-backup-20260821-030001.zip (936K)
+2026-08-21 03:00:09+0700  upload     ok  -> gdrive: (as tracktrip-backup-20260821-030001.zip)
+2026-08-21 03:00:09+0700  cleanup    ok  removed /tmp/... and /tmp/....zip
+2026-08-21 03:00:09+0700  ──── backup 20260821-030001 done ────
+```
+
+**A failed upload deletes nothing.** The zip stays in `/tmp` and the log says
+how to push it by hand, because at that moment it is the only copy — a script
+that tidied up after a failed upload would turn "the backup did not reach
+Drive" into "the backup does not exist", quietly, every night, until somebody
+needed it.
+
+The database snapshot is read back with `PRAGMA integrity_check` before
+anything is uploaded. A file of the right size that SQLite will not open is
+the failure this whole thing exists to avoid, and it costs one query to rule
+out.
+
+### Restoring
+
+```bash
+rclone copy gdrive:tracktrip-backup-20260821-030001.zip /tmp/
+cd /tmp && unzip tracktrip-backup-20260821-030001.zip
+cd tracktrip-backup-20260821-030001
+
+cat code-commit.txt                      # which commit this data belongs to
+sqlite3 trip-tracker.db 'PRAGMA integrity_check;'   # expect: ok
+```
+
+Then stop the app, put `trip-tracker.db` back at `DB_PATH`, restore `uploads/`
+to `UPLOADS_DIR`, `git checkout` the commit in `code-commit.txt`, and start it
+again. Delete any `-wal` and `-shm` files sitting beside the old database
+first — they belong to the database you are replacing, not to this one.
 
 ---
 

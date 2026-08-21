@@ -1,0 +1,38 @@
+# A template for android/local.properties — copy it, do not rename it.
+#
+#     cp local.properties.example local.properties
+#
+# local.properties itself is gitignored (see /.gitignore) and must stay that
+# way: it holds the passwords to the key that signs the app. This file is the
+# committed half, and it must never gain a real value.
+#
+# Note that Android Studio and `./gradlew` both write `sdk.dir` into
+# local.properties by themselves. Keep that line if it is already there — the
+# four values below sit alongside it, they do not replace it.
+
+# ─── Release signing ────────────────────────────────────────────────────────
+#
+# All four are needed to run `./gradlew assembleRelease`. Leave them out and
+# the release build stops with a message naming the ones it could not find; it
+# will never quietly fall back to the debug key. Debug builds and the unit
+# tests do not read any of this and work fine without it.
+#
+# See android/README.md, "Building a release APK", for how to create the
+# keystore in the first place — and for why losing it means the app can never
+# be updated again.
+
+# Where the keystore is. A relative path is resolved against the android/
+# directory; an absolute path is used as-is. Keep the keystore OUT of the
+# repository — somewhere like ~/keystores/ptrip-release.jks.
+RELEASE_STORE_FILE=/absolute/path/to/ptrip-release.jks
+
+# The password for the keystore file itself.
+RELEASE_STORE_PASSWORD=
+
+# The name of the key inside the keystore — whatever `-alias` was set to when
+# it was created.
+RELEASE_KEY_ALIAS=ptrip
+
+# The password for that key. Often the same as the store password; keytool
+# lets them differ.
+RELEASE_KEY_PASSWORD=

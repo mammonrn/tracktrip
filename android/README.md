@@ -1402,6 +1402,67 @@ run's **Artifacts** section on the Actions tab (`tracktrip-debug-apk`).
 
 ---
 
+## Building a release APK
+
+One-off setup, on the machine that holds the keystore:
+
+```bash
+cd android
+cp local.properties.example local.properties   # keep any sdk.dir line already there
+$EDITOR local.properties                       # fill in the four RELEASE_* values
+```
+
+Then:
+
+```bash
+./gradlew assembleRelease
+```
+
+Output: `app/build/outputs/apk/release/app-release.apk`, signed, with the
+application id `app.ptrip.tracktrip` — no `.debug` suffix, so it is the id
+registered with Google and the one the Play Store would expect.
+
+`local.properties` is gitignored and stays on your machine. Nothing reads these
+values from the environment and CI never sees them, which is deliberate: a
+release key CI could reach is a release key anybody with push access could sign
+with. CI builds debug only.
+
+### It fails rather than guessing
+
+A missing or half-filled `local.properties` stops the build at
+`:app:packageRelease`, before an APK exists, and names what it could not find:
+
+```
+> Release signing is not configured.
+
+    android/local.properties is missing: RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD
+
+  Copy android/local.properties.example alongside it and fill in the
+  four RELEASE_* values. See android/README.md, "Building a release APK".
+```
+
+The two outcomes it exists to prevent are a release signed with the **debug**
+key and a release that is **unsigned**. Both install perfectly well on the
+machine that built them, both look like a working build, and neither can ever
+be updated by a properly signed one — Android refuses an update whose signing
+certificate differs from the installed app's.
+
+`assembleDebug` and `testDebugUnitTest` do not read any of this and work with
+no `local.properties` beyond `sdk.dir`.
+
+### Bump `versionCode` on every release
+
+`versionCode` is the integer Android compares; `versionName` is the string a
+human reads. **The installer only looks at `versionCode`** — ship two builds on
+the same one and the second cannot be installed over the first. The rider has
+to uninstall, which takes their stored tokens with it, so they sign in again.
+
+It only ever goes up, and nothing requires it to track `versionName`. Currently
+`versionCode = 1`, `versionName = "1.0.0"`, both in
+[`app/build.gradle.kts`](app/build.gradle.kts).
+
+---
+
 ## Release keystore
 
 The release keystore is a **private key you must create yourself, on your own
@@ -1547,10 +1608,14 @@ A debug keystore isn't really a secret — its password is the publicly known
 `android` and it has no security value — but keeping it out of the repo avoids
 confusing it with the release keystore, which genuinely must never be shared.
 
-## Adding release signing later (not done in this change)
+## Signing a release *in CI* (still not done, deliberately)
 
-Release signing is intentionally **not** configured yet, because the keystore
-must not touch GitHub until we deliberately put it there. When you're ready:
+Local release signing is wired up — see [Building a release
+APK](#building-a-release-apk). What is still not done, and is a separate
+decision rather than an unfinished one, is letting **GitHub** sign a release.
+The keystore must not touch CI until somebody deliberately puts it there, and
+the caution at the bottom of this section is the reason to think twice. When
+you're ready:
 
 1. Base64-encode the keystore so it survives as a text secret:
    ```bash
@@ -1570,10 +1635,10 @@ must not touch GitHub until we deliberately put it there. When you're ready:
 
    Then delete `keystore.b64` — don't leave it lying around.
 
-3. In `app/build.gradle.kts`, add a `signingConfigs.release` block that reads
-   those values from environment variables, and point
-   `buildTypes.release.signingConfig` at it. Guard it so local builds without
-   the env vars still work.
+3. In `app/build.gradle.kts`, teach the existing `signingConfigs.release` block
+   to fall back to those environment variables when `local.properties` has
+   nothing — it currently reads the file and only the file. Keep the guard that
+   fails a release build when neither source has all four values.
 
 4. In the workflow, decode the secret into a file before building:
    ```yaml

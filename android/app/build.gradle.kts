@@ -1,7 +1,88 @@
+// Imported rather than written as java.util.Properties at the use site: inside
+// the `android { }` block `java` resolves to Gradle's own java extension, which
+// shadows the package and fails to compile.
+import java.util.Properties
+
 plugins {
     // AGP 9 has built-in Kotlin support, so no separate kotlin-android plugin.
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+/**
+ * android/local.properties, or an empty set of properties when it is not
+ * there.
+ *
+ * The same file the Android SDK location lives in, and gitignored for that
+ * reason long before it held a password. Read once, here, rather than by
+ * each value that wants something out of it.
+ */
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+// Blank counts as absent, for the reason the env() above says: a key left
+// in the file with nothing after the `=` is somebody who meant to fill it
+// in, not somebody who chose an empty password.
+fun localProperty(name: String): String? =
+    localProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+/** The four values release signing needs, in the order the message lists them. */
+val releaseSigningKeys = listOf(
+    "RELEASE_STORE_FILE",
+    "RELEASE_STORE_PASSWORD",
+    "RELEASE_KEY_ALIAS",
+    "RELEASE_KEY_PASSWORD",
+)
+
+/**
+ * The keystore, or null when it cannot be used.
+ *
+ * `rootProject.file` resolves a relative path against android/ and leaves
+ * an absolute one alone, so both spellings work in local.properties.
+ */
+val releaseKeystore = localProperty("RELEASE_STORE_FILE")
+    ?.let(rootProject::file)
+    ?.takeIf { it.isFile }
+
+/**
+ * Why a release build cannot be signed, or null when it can.
+ *
+ * A `String` rather than a thrown exception, because *when* this is
+ * discovered matters. Throwing here would fail every Gradle invocation on
+ * a machine without the keystore — including `assembleDebug` and the unit
+ * tests, which is what CI runs and what a contributor runs. It is attached
+ * to the release tasks instead (below the android block), so it fires
+ * exactly when somebody asks for a release and stays silent otherwise.
+ */
+val releaseSigningProblem: String? = run {
+    val missing = releaseSigningKeys.filter { localProperty(it) == null }
+    val storePath = localProperty("RELEASE_STORE_FILE")
+    when {
+        missing.isNotEmpty() -> buildString {
+            appendLine("Release signing is not configured.")
+            appendLine()
+            appendLine("  android/local.properties is missing: ${missing.joinToString(", ")}")
+            appendLine()
+            appendLine("Copy android/local.properties.example alongside it and fill in the")
+            appendLine("four RELEASE_* values. See android/README.md, \"Building a release APK\".")
+        }
+
+        releaseKeystore == null -> buildString {
+            appendLine("Release signing is not configured.")
+            appendLine()
+            appendLine("  RELEASE_STORE_FILE points at a file that is not there:")
+            appendLine("    $storePath")
+            appendLine("    resolved to ${rootProject.file(storePath!!).absolutePath}")
+            appendLine()
+            appendLine("A relative path is resolved against the android/ directory.")
+        }
+
+        else -> null
+    }
 }
 
 android {
@@ -14,8 +95,19 @@ android {
         // background location tracking coming in the next phase.
         minSdk = 26
         targetSdk = 37
+
+        // versionCode is what Android compares; versionName is what a human
+        // reads. **Bump versionCode on every release you hand anybody**, even
+        // a one-character fix. The installer refuses an APK whose versionCode
+        // is not higher than the installed one — it does not look at
+        // versionName at all — so shipping twice on the same number means the
+        // rider cannot update: they have to uninstall first, and uninstalling
+        // takes their stored tokens with it, so they sign in again.
+        //
+        // It is an integer and it only ever goes up. Nothing requires it to
+        // track versionName, and it is easier if it does not try.
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
     }
 
     // Optional pinned debug keystore.
@@ -44,9 +136,27 @@ android {
         ?.takeIf { it.isFile }
 
     signingConfigs {
-        // Release signing is intentionally not configured yet — the keystore is
-        // kept off git and off CI. See android/README.md for how to wire it up
-        // via GitHub Secrets later.
+        // Release signing, from android/local.properties — a file git ignores,
+        // so the keystore's passwords stay on the machine that has the
+        // keystore. Nothing here reads an environment variable: CI builds
+        // debug only, and a release key that CI could reach is a release key
+        // anybody with push access could sign with.
+        //
+        // Created only when all four values are present and the keystore is
+        // really there. When they are not, there is no config to attach and
+        // [releaseSigningProblem] below fails any release build outright — the
+        // one thing that must never happen is a release quietly coming out
+        // signed with the debug key or not signed at all, because both install
+        // fine on the machine that built them and neither can be updated by
+        // the real one later.
+        releaseKeystore?.let { keystore ->
+            create("release") {
+                storeFile = keystore
+                storePassword = localProperty("RELEASE_STORE_PASSWORD")
+                keyAlias = localProperty("RELEASE_KEY_ALIAS")
+                keyPassword = localProperty("RELEASE_KEY_PASSWORD")
+            }
+        }
 
         if (pinnedDebugKeystore != null) {
             create("debugPinned") {
@@ -67,11 +177,22 @@ android {
             signingConfigs.findByName("debugPinned")?.let { signingConfig = it }
         }
         release {
+            // No applicationIdSuffix, deliberately and by omission: the id is
+            // defaultConfig's `app.ptrip.tracktrip` exactly. Only debug carries
+            // `.debug`, which is what lets both sit on one phone at once — and
+            // what makes the release id the one registered with Google.
+            //
+            // isMinifyEnabled stays false, matching debug. Turning R8 on is a
+            // change to what the app *does* — reflection, Compose, osmdroid and
+            // the JSON parsing all have shapes R8 can strip — and it belongs in
+            // its own change with its own testing, not smuggled in beside a
+            // signing config.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
 
@@ -107,6 +228,31 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+/**
+ * Refuses to build a release that cannot be signed properly.
+ *
+ * On the packaging and bundling tasks rather than on `assembleRelease`, so the
+ * build stops *before* producing an artefact rather than after — an unsigned
+ * APK sitting in build/outputs is exactly the thing somebody sideloads by
+ * mistake and cannot then update.
+ *
+ * `doFirst` rather than a check at configuration time: this must not fire for
+ * `assembleDebug` or `testDebugUnitTest`, which is all CI runs and all a
+ * contributor without the keystore ever needs.
+ */
+run {
+    val problem = releaseSigningProblem
+    val releaseTask = Regex("^(assemble|bundle|package|install)Release$")
+
+    tasks.matching { releaseTask.matches(it.name) }.configureEach {
+        doFirst {
+            if (problem != null) {
+                throw GradleException(problem)
+            }
         }
     }
 }
