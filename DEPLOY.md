@@ -422,7 +422,20 @@ attempt it:
 
 ```bash
 rclone config          # n) new remote, name it: gdrive, type: drive
-rclone lsd gdrive:     # should list your Drive folders
+rclone lsd gdrive:     # should list what is already in the backup folder
+```
+
+The remote is configured with **`root_folder_id` pinned to the backup folder**,
+so `gdrive:` on its own already *is* the destination. That is why the script
+uploads to a bare `gdrive:` with no path after it: a path there would create a
+folder *inside* the backup folder and file every archive one level too deep.
+
+That pinning lives in the deploy user's `~/.config/rclone/rclone.conf` and
+nothing in the repository can verify it. To confirm it is still what you think
+it is:
+
+```bash
+rclone config show gdrive | grep -i root_folder_id
 ```
 
 Also needed: `sqlite3`, `zip` and `git`. The script checks for all four on
@@ -454,7 +467,7 @@ the script says on stderr the first time it happens.
 2026-08-21 03:00:01+0700  uploads    ok  (2 file(s), 16K)
 2026-08-21 03:00:02+0700  code       ok  (4fc75fa, 2.9M)
 2026-08-21 03:00:02+0700  archive    ok  /tmp/tracktrip-backup-20260821-030001.zip (936K)
-2026-08-21 03:00:09+0700  upload     ok  -> gdrive:tracktrip-backups/tracktrip-backup-20260821-030001.zip
+2026-08-21 03:00:09+0700  upload     ok  -> gdrive: (as tracktrip-backup-20260821-030001.zip)
 2026-08-21 03:00:09+0700  cleanup    ok  removed /tmp/... and /tmp/....zip
 2026-08-21 03:00:09+0700  ──── backup 20260821-030001 done ────
 ```
@@ -473,7 +486,7 @@ out.
 ### Restoring
 
 ```bash
-rclone copy gdrive:tracktrip-backups/tracktrip-backup-20260821-030001.zip /tmp/
+rclone copy gdrive:tracktrip-backup-20260821-030001.zip /tmp/
 cd /tmp && unzip tracktrip-backup-20260821-030001.zip
 cd tracktrip-backup-20260821-030001
 

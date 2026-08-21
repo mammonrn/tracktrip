@@ -14,8 +14,9 @@
 #   0 20 * * * /home/DEPLOY_USER/tracktrip/scripts/backup-to-drive.sh
 #
 # Requires: sqlite3, zip, git, and an rclone remote called "gdrive" that is
-# already authorised. Setting that up is interactive (`rclone config`) and is
-# deliberately not attempted here — see DEPLOY.md.
+# already authorised and whose root_folder_id points at the backup folder.
+# Setting that up is interactive (`rclone config`) and is deliberately not
+# attempted here — see DEPLOY.md.
 
 set -euo pipefail
 
@@ -23,7 +24,15 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 LOG_FILE="${LOG_FILE:-/var/log/tracktrip-backup.log}"
-RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:tracktrip-backups}"
+# Bare `gdrive:`, with no folder after it, and that is not an omission. The
+# remote is configured with `root_folder_id` pinned to the backup folder, so
+# `gdrive:` already *is* that folder. Appending a path here would create a
+# folder inside it and quietly file every backup one level too deep.
+#
+# That configuration lives on the VPS, in the deploy user's rclone.conf, and
+# nothing in this repository can check it — which is exactly why it is written
+# down here rather than left to be rediscovered.
+RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:}"
 
 # Both default the way src/config.js defaults them, and both are overridden by
 # the same variables the app reads — so a server with a non-standard layout is
@@ -146,8 +155,14 @@ log "archive    ok  $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
 # away would turn "the backup did not reach Drive" into "the backup does not
 # exist" — and would do it quietly, every night, until somebody needed it.
 
-if rclone copy "$ARCHIVE" "$RCLONE_REMOTE/" >>"$LOG_FILE" 2>&1; then
-  log "upload     ok  -> $RCLONE_REMOTE/$(basename "$ARCHIVE")"
+# No trailing slash appended: the destination is used exactly as configured.
+# `gdrive:` and `gdrive:/` are not reliably the same thing across backends, and
+# gluing a separator onto a value somebody else set is how a remote that was
+# deliberately pinned to one folder ends up writing somewhere else.
+if rclone copy "$ARCHIVE" "$RCLONE_REMOTE" >>"$LOG_FILE" 2>&1; then
+  # Destination and filename logged apart rather than concatenated, so the line
+  # stays true whether RCLONE_REMOTE ends in a folder, a slash, or a colon.
+  log "upload     ok  -> $RCLONE_REMOTE (as $(basename "$ARCHIVE"))"
   rm -rf "$STAGE" "$ARCHIVE"
   log "cleanup    ok  removed $STAGE and $ARCHIVE"
   log "──── backup $STAMP done ────"
@@ -155,7 +170,7 @@ else
   status=$?
   log "ERROR: rclone exited $status — the upload did not happen"
   log "KEPT $ARCHIVE and $STAGE so this can be retried by hand:"
-  log "  rclone copy $ARCHIVE $RCLONE_REMOTE/"
+  log "  rclone copy $ARCHIVE $RCLONE_REMOTE"
   log "──── backup $STAMP FAILED ────"
   exit "$status"
 fi
