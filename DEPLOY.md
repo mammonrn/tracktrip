@@ -416,6 +416,56 @@ password trap, and how to build the same APK locally are all in
 
 ---
 
+## Invite links that open the app (ptrip.app, not this server)
+
+An invite reads `https://ptrip.app/join/CODE`. That host is **not** this API
+server — `api.ptrip.app` is. Two separate things have to be served from
+`ptrip.app` before a tapped invite opens the app:
+
+**1. `/.well-known/assetlinks.json`** — what makes the link a *verified* App
+Link. [`deploy/assetlinks.json`](deploy/assetlinks.json) is the file to serve,
+with the two placeholder fingerprints filled in first:
+
+```bash
+# On the machine that holds the keystores, not here.
+./scripts/keystore-sha1.sh ~/keystores/tracktrip-release.jks tracktrip   # SHA256: → release
+./scripts/keystore-sha1.sh ~/.android/debug.keystore androiddebugkey     # SHA256: → debug
+```
+
+Both entries matter. The Android manifest claims the link from the shared
+manifest, so the debug build claims it too, under `app.ptrip.tracktrip.debug` —
+and verification is per package name *and* per signing certificate. A file
+listing only the release id leaves every test build falling back to a chooser.
+
+Android fetches this file over HTTPS and is strict about it:
+
+- served as `Content-Type: application/json`
+- **no redirect**, including `http → https` and `ptrip.app → www.ptrip.app`;
+  the URL Android asks for is the one that must answer
+- valid certificate — a self-signed one fails verification silently
+
+Check it the way Android does, then on a phone:
+
+```bash
+curl -sI https://ptrip.app/.well-known/assetlinks.json | head -3
+curl -s  https://ptrip.app/.well-known/assetlinks.json | python3 -m json.tool
+
+adb shell pm verify-app-links --re-verify app.ptrip.tracktrip
+adb shell pm get-app-links app.ptrip.tracktrip        # want: ptrip.app: verified
+adb shell am start -a android.intent.action.VIEW -d https://ptrip.app/join/K7M2QRX9
+```
+
+**2. A page at `/join/CODE`** — for a phone without the app installed, which is
+most of the point of sending an https link rather than the app's own scheme. The
+app does not need it; somebody who was sent an invite and has no app does. Until
+it exists, the code printed in the message body is what a recipient acts on.
+
+Verification is Android's, on the phone, and it is retried on install and on
+update. Nothing here needs restarting when the file changes — but a phone that
+already failed verification keeps the failure until `--re-verify` or a reinstall.
+
+---
+
 ## Nightly backups to Google Drive
 
 [`scripts/backup-to-drive.sh`](scripts/backup-to-drive.sh) puts one zip on

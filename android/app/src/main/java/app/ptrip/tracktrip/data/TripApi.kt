@@ -359,7 +359,7 @@ open class TripApi(private val client: ApiClient) {
         JSONArray(client.get("/trips/$tripId/suggested-invitees")).map { it.toSuggestedInvitee() }
 
     /** Issues a fresh join code, retiring any the trip already had. */
-    suspend fun createJoinCode(tripId: Long): JoinCode =
+    open suspend fun createJoinCode(tripId: Long): JoinCode =
         JSONObject(client.post("/trips/$tripId/join-code")).toJoinCode()
 
     suspend fun joinByCode(code: String): JoinResult {

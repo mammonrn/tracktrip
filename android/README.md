@@ -447,6 +447,78 @@ nothing else, and everything with behaviour in it — `InviteByEmailForm`,
 reach it. The selection is held one level up, in `InvitePanel`, because the
 Invite button sits in the dialog's confirm slot rather than inside the form.
 
+### The share link, and one message that said it twice
+
+One press of **Share link** produced one message that contained the invitation
+twice — the greeting, then the greeting again with the trip name in it. Not two
+sends, and not the builder running twice.
+
+`ACTION_SEND` carries two text extras, and only email keeps them apart.
+`EXTRA_SUBJECT` is a header to Gmail; to SMS/MMS, LINE, Messenger and most other
+chat targets it is simply the first line of the message they compose. The intent
+set both: a subject reading *"Join my trip on PTrips"*, and a body opening
+*"Join my trip "X" on PTrips."* — self-contained, because it has to work on a
+target that drops the subject. Folded together by the receiving app, that is one
+message saying it twice.
+
+[`ui/InviteMessage.kt`](app/src/main/java/app/ptrip/tracktrip/ui/InviteMessage.kt)
+is now the only place the message is assembled, and it sets **one** extra. The
+body already stood alone, which left the subject nothing to add. Email loses
+nothing by it: inviting somebody by address is a separate action that goes
+through the server, where the subject is the server's to write.
+
+The text used to be built inline where the sheet was opened, which is why
+nothing caught this — there was no function to call and nothing to read back.
+`InviteMessageTest` reads the finished intent the way a chat app assembles it,
+and three of its cases fail if a second extra comes back.
+
+### A tapped link opens the app
+
+`https://ptrip.app/join/CODE` is claimed as a **verified App Link**, so tapping
+one in a chat opens the trip rather than a browser. Three things have to agree,
+and none of them can see the other two:
+
+| | |
+|---|---|
+| the manifest | `<data android:scheme="https" android:host="ptrip.app" android:pathPattern="/join/.*" />` with `autoVerify="true"` |
+| the app | `joinCodeFrom(intent.dataString)` in `MainActivity`, which also reads the `tracktrip://join?code=` form the QR code carries |
+| the domain | `https://ptrip.app/.well-known/assetlinks.json` — see [`deploy/assetlinks.json`](../deploy/assetlinks.json) |
+
+**`pathPattern`, not `pathPrefix`.** A prefix of `/join` also claims `/joining`,
+`/joinus` and the bare `/join`, which carries no code to act on — on a domain
+this product owns and will want to put pages on. The syntax is Android's
+simplified glob rather than a regex: `.` is any character and `*` is zero or
+more of what precedes it, so `/join/.*` reads as `/join/` followed by anything.
+`AppLinkTest` matches it with the same `PatternMatcher` Android routes with, so
+the claim is checked against the links `joinWebLinkFor` actually writes.
+
+**Both builds claim it.** The filter is in the shared manifest, so the debug
+build claims the same links under `app.ptrip.tracktrip.debug`. Verification is
+per package name *and* per signing certificate, so `assetlinks.json` needs an
+entry for each — a file listing only the release id leaves the debug build
+falling back to a chooser, which is the build this gets tested on. Fingerprints
+come from [`scripts/keystore-sha1.sh`](../scripts/keystore-sha1.sh); the file in
+the repository carries placeholders until they are filled in at deploy time, and
+`AppLinkTest` keeps its package names in step with `build.gradle.kts`.
+
+Until the domain serves that file, Android offers a chooser instead of opening
+the app directly. That still works — it is the difference between one tap and
+two, not between working and not.
+
+**A link is acted on once.** The launch intent stays attached to the activity for
+its whole life, so reading it on every `onCreate` would redeem the link again on
+every rotation: the server answers "already a member", and the rider is thrown
+out of whatever they were looking at and back onto the trip. `onCreate` reads it
+only when `savedInstanceState` is null; a link arriving while the app is already
+open comes through `onNewIntent`, which is what `launchMode="singleTask"` is for.
+
+A code from a link is redeemed as soon as there is a signed-in rider to redeem
+it for — held in `pendingJoinCode` until then, so a link tapped by somebody who
+has never opened the app survives the sign-in. Failures are not silent: an
+expired or unknown code comes back through the same snackbar as any other
+refusal, with the server's wording, and joining a trip while already out on one
+is refused by name.
+
 ## The map
 
 OpenStreetMap tiles through **osmdroid**, chosen over the Maps SDK for one

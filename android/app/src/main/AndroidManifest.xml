@@ -69,14 +69,31 @@
             <!-- Invite links. The app's own scheme always works; the https
                  form is what goes into a message, so a phone without the app
                  installed has somewhere to land once ptrip.app serves that
-                 path. Verified App Links need an assetlinks.json on the
-                 domain — until that exists Android will offer a chooser
-                 rather than opening the app directly, which still works. -->
+                 path.
+
+                 pathPattern rather than pathPrefix: a prefix of "/join" also
+                 claims /joining, /joinus and anything else the site may want
+                 that word for later, and it claims the bare /join, which
+                 carries no code to act on. "/join/.*" is the shape an invite
+                 actually has. The syntax is Android's simplified glob, not a
+                 regex — "." is any character and "*" is zero or more of what
+                 precedes it — so "/join/.*" reads as /join/ followed by
+                 anything, which is what is wanted here.
+
+                 autoVerify makes this a *verified* App Link, which is what
+                 opens the app without a chooser and stops another app from
+                 claiming the same link. Verification is per package name and
+                 per signing certificate, and this filter is in the shared
+                 manifest, so it applies to the debug variant too — under its
+                 own applicationId, app.ptrip.tracktrip.debug. Both have to be
+                 listed in the assetlinks.json served from the domain, or the
+                 one that is missing falls back to a chooser. See
+                 deploy/assetlinks.json. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="ptrip.app" android:pathPrefix="/join" />
+                <data android:scheme="https" android:host="ptrip.app" android:pathPattern="/join/.*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

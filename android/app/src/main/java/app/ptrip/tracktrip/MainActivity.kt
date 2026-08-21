@@ -49,8 +49,8 @@ import app.ptrip.tracktrip.ui.CreateTripViewModel
 import app.ptrip.tracktrip.ui.EditTripActions
 import app.ptrip.tracktrip.ui.EditTripScreen
 import app.ptrip.tracktrip.ui.JoinTripViewModel
+import app.ptrip.tracktrip.ui.inviteShareIntent
 import app.ptrip.tracktrip.ui.joinCodeFrom
-import app.ptrip.tracktrip.ui.joinWebLinkFor
 import app.ptrip.tracktrip.ui.rememberCentreOnMe
 import app.ptrip.tracktrip.ui.rememberSharingPermissionRequest
 import app.ptrip.tracktrip.ui.LocalApiBaseUrl
@@ -118,7 +118,17 @@ class MainActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
-        pendingJoinCode.value = joinCodeFrom(intent?.dataString)
+        // Only on a fresh start. The launch intent stays attached to the
+        // activity for its whole life, so reading it on every onCreate means a
+        // rotation — or any other recreation — redeems the link a second time:
+        // the server answers "already a member", and the rider is thrown out of
+        // whatever they were looking at and back onto the trip. savedInstanceState
+        // is null exactly once per intent, which is how often a link should be
+        // acted on. A link arriving while the app is already open comes through
+        // onNewIntent instead.
+        if (savedInstanceState == null) {
+            pendingJoinCode.value = joinCodeFrom(intent?.dataString)
+        }
 
         setContent {
             TracktripTheme {
@@ -545,33 +555,17 @@ private fun SignedInNavigation(
             val detailState by detailViewModel.uiState.collectAsStateWithLifecycle()
 
             val context = LocalContext.current
-            val shareSubject = stringResource(R.string.invite_share_subject)
-            val shareChooser = stringResource(R.string.invite_share_chooser)
             val tripName = detailState.trip?.name ?: stringResource(R.string.untitled_trip)
-            val shareBodyTemplate = stringResource(R.string.invite_share_body)
 
             // The share sheet opens once a code has been issued for it, then
-            // the request is cleared so a recomposition can't reopen it.
+            // the request is cleared so a recomposition can't reopen it. What
+            // goes in the message is `ui/InviteMessage.kt`'s to decide — the
+            // text used to be assembled here, in two extras that the receiving
+            // app folded back into one message that said it twice.
             LaunchedEffect(detailState.pendingShareCode) {
                 val code = detailState.pendingShareCode ?: return@LaunchedEffect
                 detailViewModel.shareLinkConsumed()
-                context.startActivity(
-                    Intent.createChooser(
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
-                            putExtra(
-                                Intent.EXTRA_TEXT,
-                                shareBodyTemplate.format(
-                                    tripName,
-                                    code.code,
-                                    joinWebLinkFor(code.code),
-                                ),
-                            )
-                        },
-                        shareChooser,
-                    )
-                )
+                context.startActivity(inviteShareIntent(context, tripName, code.code))
             }
 
             val requestSharingPermission = rememberSharingPermissionRequest(
