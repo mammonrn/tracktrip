@@ -161,6 +161,7 @@ class ConfirmRouteTest {
         tripId = 1L,
         tripApi = server,
         positionSocket = null,
+        feedback = FeedbackCenter(),
         onSessionExpired = {},
     )
 

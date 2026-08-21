@@ -51,6 +51,26 @@ class TripApiParsingTest {
         assertFalse(trip.isActive)
         assertTrue(trip.hasEnded)
         assertFalse(trip.isOwner)
+        // The two stamps a finished trip's member rows are labelled with —
+        // see [app.ptrip.tracktrip.ui.TripDates]. They were on the wire from
+        // the first migration and went unread until the rows needed them.
+        assertEquals("2026-08-17T11:10:29.479Z", trip.createdAt)
+        assertEquals("2026-08-17T11:10:29.876Z", trip.endedAt)
+    }
+
+    @Test
+    fun `a running trip has a created stamp and no ended one`() {
+        val payload = """
+            {"id":1,"name":"Smoke ride","owner_id":1,"status":"active",
+             "created_at":"2026-08-17T11:10:29.479Z","ended_at":null,"role":"owner"}
+        """.trimIndent()
+
+        val trip = JSONObject(payload).toTrip()
+
+        assertEquals("2026-08-17T11:10:29.479Z", trip.createdAt)
+        // JSON null, which is JSONObject.NULL and not Kotlin's — the
+        // distinction `optStringOrNull` exists for.
+        assertNull(trip.endedAt)
     }
 
     @Test

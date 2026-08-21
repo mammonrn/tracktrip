@@ -27,6 +27,23 @@ data class Trip(
     val origin: TripEndpoint? = null,
     /** Where the trip is going, or null. Independent of [origin]. */
     val destination: TripEndpoint? = null,
+    /**
+     * When the trip was made, ISO-8601 from the server, or null.
+     *
+     * Null only for a build talking to a backend that predates the field —
+     * `trips.created_at` is `NOT NULL` and has been since the first migration.
+     * The screens treat null as "say nothing" rather than as a date of zero.
+     */
+    val createdAt: String? = null,
+    /**
+     * When it was ended, or null while it is still running.
+     *
+     * Both readings of null are true at once and neither needs telling apart
+     * here: a running trip has no end yet, and a finished one that somehow has
+     * no stamp cannot be labelled with one. [status] is what says which of the
+     * two a trip is; this is only ever the date.
+     */
+    val endedAt: String? = null,
 ) {
     val isOwner: Boolean get() = role == ROLE_OWNER
     val isActive: Boolean get() = status == STATUS_ACTIVE
@@ -260,6 +277,15 @@ data class LevelProgress(
  *
  * `listInvites` is open because the trip list reads it on the way in, and a
  * test about how many `members` calls that screen makes has to get past it.
+ *
+ * The trip screen's own writes — end, leave, rename, invite — are open for a
+ * third reason, and it is the one this class was least able to answer before:
+ * every one of them now has to *say* whether it worked, and half of them
+ * navigate away as they do it. Whether the rider is told is not something a
+ * test can see from the outside of a real socket, so the server is faked and
+ * the answers are read off the feedback channel. `suggestedInvitees` comes
+ * with them only because opening the screen reads it, and a fake that could
+ * not answer it would fail before reaching anything worth asserting.
  */
 open class TripApi(private val client: ApiClient) {
 
@@ -278,7 +304,7 @@ open class TripApi(private val client: ApiClient) {
     suspend fun createTrip(name: String): Trip =
         JSONObject(client.post("/trips", JSONObject().put("name", name))).toTrip()
 
-    suspend fun endTrip(tripId: Long): Trip =
+    open suspend fun endTrip(tripId: Long): Trip =
         JSONObject(client.post("/trips/$tripId/end")).toTrip()
 
     /**
@@ -294,7 +320,7 @@ open class TripApi(private val client: ApiClient) {
      * owner (409, use [endTrip]) and on a finished trip (409, nothing is
      * holding anybody there).
      */
-    suspend fun leaveTrip(tripId: Long) {
+    open suspend fun leaveTrip(tripId: Long) {
         client.delete("/trips/$tripId/members/me")
     }
 
@@ -310,7 +336,7 @@ open class TripApi(private val client: ApiClient) {
      * empty one comes back 400 rather than being stored, so the screen refuses
      * it first.
      */
-    suspend fun renameTrip(tripId: Long, name: String): Trip =
+    open suspend fun renameTrip(tripId: Long, name: String): Trip =
         JSONObject(client.patch("/trips/$tripId", JSONObject().put("name", name))).toTrip()
 
     open suspend fun listInvites(): List<Invite> =
@@ -322,14 +348,14 @@ open class TripApi(private val client: ApiClient) {
             .getJSONObject("trip")
             .toTrip()
 
-    suspend fun invite(tripId: Long, email: String): Invite =
+    open suspend fun invite(tripId: Long, email: String): Invite =
         JSONObject(client.post("/trips/$tripId/invites", JSONObject().put("email", email)))
             .toInvite()
 
     open suspend fun members(tripId: Long): List<MemberPosition> =
         JSONArray(client.get("/trips/$tripId/positions")).map { it.toMemberPosition() }
 
-    suspend fun suggestedInvitees(tripId: Long): List<SuggestedInvitee> =
+    open suspend fun suggestedInvitees(tripId: Long): List<SuggestedInvitee> =
         JSONArray(client.get("/trips/$tripId/suggested-invitees")).map { it.toSuggestedInvitee() }
 
     /** Issues a fresh join code, retiring any the trip already had. */
@@ -502,6 +528,8 @@ internal fun JSONObject.toTrip() = Trip(
     role = optStringOrNull("role") ?: "member",
     origin = optJSONObject("origin")?.toTripEndpoint(),
     destination = optJSONObject("destination")?.toTripEndpoint(),
+    createdAt = optStringOrNull("created_at"),
+    endedAt = optStringOrNull("ended_at"),
 )
 
 /**

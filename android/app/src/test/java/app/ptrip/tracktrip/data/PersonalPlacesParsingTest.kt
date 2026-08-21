@@ -54,6 +54,10 @@ class PersonalPlacesParsingTest {
         assertEquals(18.789, places[0].lat, 1e-9)
         assertEquals(98.971, places[0].lng, 1e-9)
         assertEquals(18.789, places[0].point.lat, 1e-9)
+        // When the rider saved it, for the detail card behind the row. Note
+        // what is still absent beside it: there is no author field and never
+        // will be — the owner is the caller.
+        assertEquals("2026-08-20T07:49:12.345Z", places[0].createdAt)
     }
 
     @Test

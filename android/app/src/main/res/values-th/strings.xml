@@ -299,4 +299,43 @@
     <string name="error_sign_in_failed">เข้าสู่ระบบด้วย Google ไม่สำเร็จ ลองใหม่อีกครั้ง</string>
     <string name="error_unexpected_credential">ได้ข้อมูลรับรองชนิดที่ไม่คาดคิดจาก Google</string>
     <string name="error_active_trip_exists">คุณกำลังอยู่ในทริป \"%1$s\" อยู่แล้ว จบทริปนั้นก่อนจึงจะเริ่มหรือเข้าร่วมทริปใหม่ได้</string>
+
+    <!-- The one vocabulary every write in the app answers with. -->
+    <!-- The days a finished trip ran, in place of a report age. -->
+    <!-- รายละเอียดของสถานที่ที่บันทึกไว้ -->
+    <string name="place_detail_name">ชื่อที่ใช้ในเส้นทาง</string>
+    <string name="place_detail_coordinates">พิกัด</string>
+    <string name="place_detail_added">เพิ่มเมื่อ</string>
+    <string name="place_detail_added_by">เพิ่มโดย</string>
+    <string name="place_detail_visibility">ใครเห็นได้</string>
+    <string name="close">ปิด</string>
+
+    <string name="trip_dates_created_ended">สร้าง %1$s – จบ %2$s</string>
+    <string name="trip_dates_created">สร้าง %1$s</string>
+
+    <string name="feedback_retry">ลองใหม่</string>
+    <string name="feedback_failed">ทำรายการไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง</string>
+    <string name="feedback_trip_created">สร้างทริป \"%1$s\" แล้ว</string>
+    <string name="feedback_trip_saved">บันทึกทริปแล้ว</string>
+    <string name="feedback_trip_ended">จบทริปแล้ว</string>
+    <string name="feedback_trip_left">คุณออกจากทริปแล้ว</string>
+    <string name="feedback_trip_joined">เข้าร่วมทริป \"%1$s\" แล้ว</string>
+    <string name="feedback_trip_already_joined">คุณอยู่ในทริป \"%1$s\" อยู่แล้ว</string>
+    <string name="feedback_invite_sent">ส่งคำเชิญไปที่ %1$s แล้ว</string>
+    <string name="feedback_invites_sent">ส่งคำเชิญแล้ว %1$d รายการ</string>
+    <string name="feedback_sharing_started">กำลังแชร์ตำแหน่งของคุณ</string>
+    <string name="feedback_sharing_stopped">หยุดแชร์ตำแหน่งของคุณแล้ว</string>
+    <string name="feedback_sharing_phone_on">เครื่องนี้แชร์ตำแหน่งได้</string>
+    <string name="feedback_sharing_phone_off">เครื่องนี้จะไม่แชร์ตำแหน่ง</string>
+    <string name="feedback_profile_saved">บันทึกโปรไฟล์แล้ว</string>
+    <string name="feedback_photo_updated">อัปเดตรูปแล้ว</string>
+    <string name="feedback_place_saved_shared">บันทึก \"%1$s\" ให้ทุกคนแล้ว</string>
+    <string name="feedback_place_saved_personal">บันทึก \"%1$s\" ไว้ในที่ของคุณแล้ว</string>
+    <string name="feedback_place_deleted_shared">ลบสถานที่แล้ว</string>
+    <string name="feedback_place_deleted_personal">ลบทางลัดแล้ว</string>
+    <string name="feedback_route_saved">บันทึกเส้นทางแล้ว</string>
+    <string name="feedback_origin_set">ตั้งจุดเริ่มต้นแล้ว</string>
+    <string name="feedback_destination_set">ตั้งจุดหมายแล้ว</string>
+    <string name="feedback_stop_added">เพิ่มจุดแวะแล้ว</string>
+    <string name="feedback_stop_removed">ลบจุดแวะแล้ว</string>
 </resources>

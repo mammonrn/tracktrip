@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.AppSettings
 import app.ptrip.tracktrip.data.JoinCode
@@ -81,6 +82,7 @@ class TripDetailViewModel(
     private val tripApi: TripApi,
     private val sharingController: SharingController,
     private val settings: AppSettings,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -192,11 +194,16 @@ class TripDetailViewModel(
             try {
                 val trip = tripApi.renameTrip(tripId, trimmed)
                 _uiState.update { it.copy(renamePending = false, renameError = null, trip = trip) }
+                feedback.succeeded(R.string.feedback_trip_saved)
                 onRenamed()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
+                // The form keeps its own line as well as raising this one: the
+                // rider is looking at the field they typed into, and the bar
+                // goes away. Retry sends exactly what they typed.
                 _uiState.update { it.copy(renamePending = false, renameError = e.message) }
+                feedback.failed(e.message) { rename(name, onRenamed) }
             }
         }
     }
@@ -238,7 +245,11 @@ class TripDetailViewModel(
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
+                // No success message: the code itself appearing on the screen
+                // the rider is looking at says it worked better than a bar
+                // over it would.
                 _uiState.update { it.copy(joinCodeLoading = false, joinCodeError = e.message) }
+                feedback.failed(e.message) { createJoinCode() }
             }
         }
     }
@@ -309,6 +320,31 @@ class TripDetailViewModel(
                     error = refused.takeIf { it.isNotEmpty() }?.joinToString("\n"),
                 )
             }
+
+            // One answer for one press, even though the press was several
+            // requests. The bar shows the newest message and nothing else (see
+            // `rememberFeedbackHostState`), so raising a success and a failure
+            // for the same press would flash the first and leave only the
+            // second — a rider reading "3 invitations sent" for a quarter of a
+            // second is not being told anything.
+            //
+            // A press with any refusal in it reports the refusal, because that
+            // is the half with something left to do about it. What *did* land
+            // is not lost: [TripDetailUiState.inviteSent] lists it on the form
+            // the rider is looking at, beside the addresses that bounced.
+            when {
+                refused.isNotEmpty() -> {
+                    // Retry re-sends only the addresses that did not land: the
+                    // ones that did are on the trip, and inviting them again
+                    // would be answered "already a member" for no reason.
+                    val addresses = emails.filterNot { address ->
+                        sent.any { it.equals(address, true) }
+                    }
+                    feedback.failed(refused.joinToString("\n")) { sendInvites(addresses) }
+                }
+                sent.size == 1 -> feedback.succeeded(R.string.feedback_invite_sent, sent.single())
+                sent.size > 1 -> feedback.succeeded(R.string.feedback_invites_sent, sent.size)
+            }
         }
     }
 
@@ -323,10 +359,12 @@ class TripDetailViewModel(
                 // trip, this phone's included.
                 onTripEnded()
                 _uiState.update { it.copy(endPending = false, trip = ended) }
+                feedback.succeeded(R.string.feedback_trip_ended)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(endPending = false, error = e.message) }
+                feedback.failed(e.message) { endTrip() }
             }
         }
     }
@@ -350,10 +388,12 @@ class TripDetailViewModel(
                 // almost always the one they want next time too.
                 settings.defaultSharingMinutes = duration.minutes
                 _uiState.update { it.copy(sharingPending = false) }
+                feedback.succeeded(R.string.feedback_sharing_started)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(sharingPending = false, error = e.message) }
+                feedback.failed(e.message) { startSharing(duration) }
             }
         }
     }
@@ -366,10 +406,12 @@ class TripDetailViewModel(
             try {
                 sharingController.stop(tripId)
                 _uiState.update { it.copy(sharingPending = false) }
+                feedback.succeeded(R.string.feedback_sharing_stopped)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(sharingPending = false, error = e.message) }
+                feedback.failed(e.message) { stopSharing() }
             }
         }
     }
@@ -398,11 +440,16 @@ class TripDetailViewModel(
                 tripApi.leaveTrip(tripId)
                 onTripEnded()
                 _uiState.update { it.copy(leavePending = false) }
+                // Raised before [onLeft] navigates away, and it survives that:
+                // the bar is drawn above the whole navigation stack, so the
+                // rider reads it on the trip list they land on.
+                feedback.succeeded(R.string.feedback_trip_left)
                 onLeft()
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
                 _uiState.update { it.copy(leavePending = false, error = e.message) }
+                feedback.failed(e.message) { leaveTrip(onLeft) }
             }
         }
     }
@@ -427,7 +474,9 @@ class TripDetailViewModel(
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
             } catch (e: ApiException) {
+                // Success opens the share sheet, which is answer enough.
                 _uiState.update { it.copy(joinCodeLoading = false, error = e.message) }
+                feedback.failed(e.message) { requestShareLink() }
             }
         }
     }

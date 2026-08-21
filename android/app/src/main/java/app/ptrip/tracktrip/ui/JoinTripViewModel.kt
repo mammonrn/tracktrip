@@ -2,6 +2,7 @@ package app.ptrip.tracktrip.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.ActiveTripException
 import app.ptrip.tracktrip.data.ApiException
 import app.ptrip.tracktrip.data.SessionExpiredException
@@ -29,6 +30,7 @@ data class JoinTripUiState(
  */
 class JoinTripViewModel(
     private val tripApi: TripApi,
+    private val feedback: FeedbackCenter,
     private val onSessionExpired: () -> Unit,
 ) : ViewModel() {
 
@@ -48,6 +50,14 @@ class JoinTripViewModel(
             try {
                 val result = tripApi.joinByCode(code)
                 _uiState.update { it.copy(joining = false) }
+                // Two different true things, said differently. A code scanned
+                // for a trip the rider is already on is not a failure, but
+                // "Joined" would be a lie about what just happened.
+                if (result.alreadyMember) {
+                    feedback.succeeded(R.string.feedback_trip_already_joined, result.trip.name)
+                } else {
+                    feedback.succeeded(R.string.feedback_trip_joined, result.trip.name)
+                }
                 onJoined(result.trip)
             } catch (e: SessionExpiredException) {
                 onSessionExpired()
@@ -56,11 +66,19 @@ class JoinTripViewModel(
                 _uiState.update {
                     it.copy(joining = false, error = e.message, blockedByTripName = e.tripName)
                 }
+                feedback.failed(e.message)
             } catch (e: ApiException) {
                 // The server's wording is better than anything decided here:
                 // an expired code and an unknown one are different problems
                 // with different next steps.
+                //
+                // No Retry either, and this is the case that most needs saying
+                // why: a join code is single-use on the server and the two
+                // failures a rider actually meets are "expired" and "unknown".
+                // Pressing Retry on those would re-present a code that is
+                // already gone, and get the same refusal a second time.
                 _uiState.update { it.copy(joining = false, error = e.message) }
+                feedback.failed(e.message)
             }
         }
     }

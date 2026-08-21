@@ -12,9 +12,11 @@ position every 10 seconds until it lapses, they stop it, or the trip ends.
 On the map, pressing and holding places a point: the owner sets where the
 trip starts and where it is going, and anyone on it can drop a stop. There is
 a settings screen for the profile, language, sharing defaults, per-trip
-sharing toggles, background battery use, and signing out. **The app is fully
-translated into Thai** — `StringCoverageTest` fails the build if an English
-string arrives without one.
+sharing toggles, background battery use, and signing out. **Every action that
+writes to the server says whether it worked** — one snackbar, green or red,
+with a Retry where repeating the call is the whole fix; see [Saying whether it
+worked](#saying-whether-it-worked). **The app is fully translated into Thai** —
+`StringCoverageTest` fails the build if an English string arrives without one.
 
 Google sign-in is wired end to end — Credential Manager obtains a Google ID
 token, it's exchanged at the backend's `POST /auth/google`, and the returned
@@ -215,6 +217,40 @@ riders go on counting as having ridden together — and one thing improved
 without being touched. A rider who left is no longer on the trip's roster but
 *is* still in "Ridden with before", so `InviteShortcuts` offers them again:
 the window drops whoever is in `state.members`, and they are not.
+
+### A finished trip's member rows say when, not how long ago
+
+Every member row carries the age of that rider's last position report, and
+while a ride is on that is the most useful number on the screen: it is the
+difference between a pin that has not moved because the rider has not moved and
+one that has not moved because their phone lost signal ten minutes ago.
+
+On a trip that has **ended** the same number is noise dressed as information.
+Nobody has reported since the trip closed, so the figure only counts up —
+"Owner · 1206 min ago" on a ride that finished yesterday, a number that says
+nothing except that time passes, and that grows a digit every few days until it
+is the widest thing on the row.
+
+So on a finished trip that slot carries the days the trip actually ran instead:
+"Owner · Created 21 Aug – Ended 22 Aug". The rules live in
+[`ui/TripDates.kt`](app/src/main/java/app/ptrip/tracktrip/ui/TripDates.kt),
+which is a pure function of the two stamps, the clock and the locale, so they
+are testable without a screen:
+
+- the year is added when it is load-bearing and left off when it is not — when
+  the two dates fall in different years, and when either falls outside the year
+  the rider is reading in. That second rule is what keeps an archive honest: a
+  trip from 2024 read in 2026 says 2024, without every trip from this month
+  carrying a year nobody needed;
+- a stamp this build cannot parse says nothing rather than guessing, the same
+  rule `FixAge` follows, and the row keeps the age it always had;
+- `created_at` and `ended_at` were on the wire from the first migration and
+  simply went unread until the row needed them.
+
+The row is held to one line (`maxLines = 1`), because the dates are longer than
+the age they replace and the member list is something people scroll: a second
+line on every row of a finished trip would be a worse screen than the number it
+replaced. `EndedTripDatesTest` measures the card before and after to hold that.
 
 ### Being refused for being mid-ride
 
@@ -658,6 +694,37 @@ the phone: the server has no "mine" filter and should not grow one, since a
 shared list is shared and an endpoint answering "just yours" would be a second
 way to ask a question it deliberately does not care about.
 
+#### The rows became cards, and the cards open
+
+Once the list was on Settings it was still bare rows in a column, and the only
+thing on a row that could be pressed was the cross that deleted it. A rider with
+two PTTs written down had no way to tell which was which before removing one:
+the row showed a name and one supporting line, and everything else the app knew
+about the place — where it actually is, when it was written down, who by — was
+on no screen at all.
+
+Each row is a `HudSurface` card now, the same one the trip archive draws, and
+tapping it opens what the app knows: the coordinate (there is no address — a
+shared place is a name somebody typed over a point they chose, and nothing on
+the server can reverse-geocode it), the day it was added, who added it where
+that is known, and who can see it. A private shortcut also shows the name a
+route calls it by, which is usually not the label on its chip; it never shows an
+author, because `personal_places` has no join to `users` — the owner is the
+caller, and that is the property the whole table rests on.
+
+Two consequences worth stating. The whole row is now a target that does
+something harmless, so a mis-tap opens a card instead of deleting a place. And
+the cross has an alternative beside it, so pressing it is a choice between two
+things rather than the only thing on the row to press. The confirmation in front
+of a removal is unchanged; what is new behind it is that the delete now says
+whether it worked (see [Saying whether it worked](#saying-whether-it-worked)),
+and that the card greys out with a spinner while it is in flight — the gap a
+rider used to fill by tapping the cross a second time, which sent a second
+DELETE and came back 404 on a place that had gone exactly as asked.
+
+`created_at` was already in both endpoints' responses and simply unread until
+the card needed it.
+
 Pins for both lists are drawn on one map, so the id has to say which list a tap
 came from: a shared place keeps its own rowid, which is positive, and a private
 one becomes `-(id + 1)`, which is at most `-2` and can never collide.
@@ -894,6 +961,103 @@ on 14, and the rider is left with a button that does nothing. A sentence naming
 the setting keeps working when the phone is updated. Phones close to stock are
 shown nothing extra — there is nothing to say, and a section that appeared
 everywhere with generic advice would teach riders to skip it.
+
+## Saying whether it worked
+
+Every write in this app went out the same way and came back three different
+ways. A rename put its failure on the form it was typed into; a leave put its
+failure on the member list; a place deleted itself off a list and said nothing
+at all, success or failure — which is the one that started this. A rider
+tapping the cross on a place could not tell "gone" from "the request never
+landed", because for the second or two it takes both look like a row that is
+still there. Their only move was to press it again.
+
+Successes were worse: there were none. The only signal that anything had worked
+was the screen changing underneath, and half of these actions change nothing
+visible — an invitation sent, a trip renamed from a form that closes, a place
+removed from a list already scrolled past.
+
+So there is now one rule: **every action that writes to the server says whether
+it worked**, in one place and one look.
+
+- [`ui/Feedback.kt`](app/src/main/java/app/ptrip/tracktrip/ui/Feedback.kt) is
+  the channel. A view model raises a `FeedbackMessage` — a tone, a wording, and
+  optionally something to retry — into the one `FeedbackCenter` on
+  [`AppContainer`](app/src/main/java/app/ptrip/tracktrip/data/AppContainer.kt).
+- [`ui/FeedbackHost.kt`](app/src/main/java/app/ptrip/tracktrip/ui/FeedbackHost.kt)
+  collects it, on `MainActivity`'s own `Scaffold` rather than on any screen's.
+- [`ui/theme/HudSnackbar.kt`](app/src/main/java/app/ptrip/tracktrip/ui/theme/HudSnackbar.kt)
+  draws it: green for a success, red for a failure, and a **Retry** where there
+  is something to retry.
+
+### Why the bar is on the activity and not on the screen
+
+Several of these actions navigate as they land — creating a trip opens it,
+joining one opens it, leaving one goes back to the list — so a snackbar owned by
+the screen that started the write would be torn down in the same frame as the
+answer arrived. Above the navigation stack, the answer outlives the screen that
+asked the question. It also means there is exactly one bar: two hosts is how an
+app ends up stacking two answers to one press.
+
+### Why the newest answer wins
+
+The host collects with `collectLatest`, and that is load-bearing.
+`showSnackbar` suspends for as long as the bar is on screen, so a plain
+`collect` would park the collector inside the first message for four seconds
+while the second waited — and the answer to a press a rider made *now* would
+arrive after the last one had finished being read, looking like an answer to the
+wrong question. Collecting the latest cancels the suspended call, takes the old
+bar off and draws the new one.
+
+That is also why one press of Invite raises **one** message even though it is
+one request per address: a success and a failure for the same press would flash
+the first and leave only the second. A press with any refusal in it reports the
+refusal — the half with something left to do about it — and what did land is
+listed on the form beside what did not.
+
+### Where the words come from
+
+A view model has no `Context` and must not have one, so it sends a resource id
+and its arguments (`FeedbackText.Res`) rather than a sentence. That keeps every
+success translatable, which `StringCoverageTest` enforces.
+
+Failures are the exception: they carry the backend's own `error` string
+(`FeedbackText.Plain`), shown verbatim, for the reason
+[`ApiErrorText`](app/src/main/java/app/ptrip/tracktrip/ui/ApiErrorText.kt)
+already gives — "trip has ended" and "only the trip owner can do this" are
+written to be read, and re-wording them here would let the app's rules drift
+from the server's. A failure that never reached a server with an opinion falls
+back to `feedback_failed`, so a red bar is never blank.
+
+### Where Retry is offered, and where it is not
+
+Retry is offered where repeating the call *is* the whole fix: ending a trip,
+leaving one, renaming one, deleting a place or a stop, accepting an invitation,
+uploading a photo, moving the sharing switch. It is deliberately absent where a
+second attempt would be either a different request or the same refusal:
+
+- **a join code** is single-use, and the two failures a rider meets are
+  "expired" and "unknown" — a Retry would re-present a code that is already gone;
+- **creating or joining a trip while already out on one** is refused until that
+  ride is ended, and a button that earns the same refusal teaches a rider to
+  ignore it;
+- **confirming a route** has already re-seeded its draft from the server by the
+  time it fails, so a second press would send whatever is on screen now under a
+  label promising otherwise. Confirm is still one tap away.
+
+### Which actions say something
+
+Everything that writes: create trip, rename trip, end trip, leave trip, accept
+invitation, send invitations, join by code or QR, issue a QR / share link
+(failures only — the code appearing *is* the success), start and stop sharing,
+the settings sharing switch, save profile, upload photo, add and delete a shared
+place, add and delete a private place, confirm a route, set a start or
+destination, add and remove a stop.
+
+The one write that stays silent is the position report the location service
+sends every ten seconds. It is not something a rider pressed, and a bar for it
+would be a bar every ten seconds; how that is going is already answered by the
+sharing notification and by the fix age on the map.
 
 ## Session handling
 

@@ -112,6 +112,7 @@ class RouteSeedTimingTest {
             tripId = 1L,
             tripApi = HeldWaypoints(trip, held),
             positionSocket = null,
+            feedback = FeedbackCenter(),
             onSessionExpired = {},
         )
 
@@ -150,6 +151,7 @@ class RouteSeedTimingTest {
             tripId = 1L,
             tripApi = HeldWaypoints(trip, held),
             positionSocket = null,
+            feedback = FeedbackCenter(),
             onSessionExpired = {},
         )
         model.refresh()
@@ -191,6 +193,7 @@ class RouteSeedTimingTest {
                 tripId = 1L,
                 tripApi = HeldWaypoints(trip, held),
                 positionSocket = null,
+                feedback = FeedbackCenter(),
                 onSessionExpired = {},
             )
 

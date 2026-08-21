@@ -269,6 +269,8 @@ fun SettingsScreen(
                 onRemovePersonal = onRemovePersonalPlace,
                 onRemoveShared = onRemoveSharedPlace,
                 modifier = Modifier.padding(vertical = 8.dp),
+                removingShared = places.removingShared,
+                removingPersonal = places.removingPersonal,
             )
 
             HudDivider()

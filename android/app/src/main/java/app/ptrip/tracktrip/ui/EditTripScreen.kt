@@ -95,6 +95,8 @@ fun EditTripScreen(
     routePlan: RoutePlan?,
     routeLine: RouteLine?,
     routePreviewLoading: Boolean,
+    /** True while the route's own Confirm is writing. Distinct from [saving], the name's. */
+    routeSaving: Boolean,
     searchState: PlaceSearchState,
     personalPlaces: List<PersonalPlace>,
     myLocation: LatLng?,
@@ -287,6 +289,7 @@ fun EditTripScreen(
                     onRemoveRow = onRemoveRouteRow,
                     onMoveRow = onMoveRoutePoint,
                     onConfirm = onConfirmRoute,
+                    saving = routeSaving,
                     // The cross in the sheet's own corner. Over the map it
                     // closes a card; here the card *is* the screen, so it means
                     // the same thing the back arrow does.
@@ -372,6 +375,7 @@ private fun EditTripPreview() {
             routePlan = null,
             routeLine = null,
             routePreviewLoading = false,
+            routeSaving = false,
             searchState = PlaceSearchState(),
             personalPlaces = emptyList(),
             myLocation = null,

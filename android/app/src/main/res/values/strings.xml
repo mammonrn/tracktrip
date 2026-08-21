@@ -440,4 +440,66 @@
     <string name="error_cancelled_or_aborted">Google closed the sign-in without returning an account. If you didn\'t cancel it yourself, this build\'s package name and signing certificate are probably not registered in the Google Cloud project. Check logcat tag TracktripSignIn for details.</string>
     <string name="error_sign_in_failed">Google sign-in failed. Please try again.</string>
     <string name="error_unexpected_credential">Got an unexpected credential type from Google.</string>
+
+    <!--
+      What the app says back after it has changed something on the server.
+
+      One vocabulary for every write in the app, drawn by one snackbar — see
+      android/app/src/main/java/app/ptrip/tracktrip/ui/Feedback.kt. Successes
+      are short and name the thing that changed; failures are the backend's own
+      sentence, which is written to be read, with feedback_failed as the
+      fallback for a request that never reached a server with an opinion.
+    -->
+    <!--
+      What a finished trip's member rows say where a running one shows how old
+      a rider's last report is. See ui/TripDates.kt for why the age is dropped
+      once nobody is reporting, and for when the year appears.
+    -->
+    <!--
+      The card behind a place in "Places you added": everything the app knows
+      about one, on one tap, so a rider can tell two PTTs apart before they
+      delete one. See ui/MyPlaces.kt.
+    -->
+    <string name="place_detail_name">Called on a route</string>
+    <string name="place_detail_coordinates">Coordinates</string>
+    <string name="place_detail_added">Added</string>
+    <string name="place_detail_added_by">Added by</string>
+    <string name="place_detail_visibility">Visible to</string>
+    <string name="close">Close</string>
+
+    <string name="trip_dates_created_ended">Created %1$s – Ended %2$s</string>
+    <!-- A finished trip the server has no end stamp for. -->
+    <string name="trip_dates_created">Created %1$s</string>
+
+    <string name="feedback_retry">Retry</string>
+    <string name="feedback_failed">That didn\'t work. Check your connection and try again.</string>
+    <string name="feedback_trip_created">Trip \"%1$s\" created</string>
+    <string name="feedback_trip_saved">Trip saved</string>
+    <string name="feedback_trip_ended">Trip ended</string>
+    <string name="feedback_trip_left">You left the trip</string>
+    <string name="feedback_trip_joined">Joined \"%1$s\"</string>
+    <!-- A scanned code for a trip the rider is already on: true, and not a join. -->
+    <string name="feedback_trip_already_joined">You\'re already on \"%1$s\"</string>
+    <string name="feedback_invite_sent">Invitation sent to %1$s</string>
+    <string name="feedback_invites_sent">%1$d invitations sent</string>
+    <string name="feedback_sharing_started">Sharing your location</string>
+    <string name="feedback_sharing_stopped">Stopped sharing your location</string>
+    <!--
+      The switch moved with no ride to act on. A preference was recorded and
+      nothing is being transmitted, and the wording has to say so rather than
+      claim a transmission that is not happening.
+    -->
+    <string name="feedback_sharing_phone_on">This phone can share its location</string>
+    <string name="feedback_sharing_phone_off">This phone won\'t share its location</string>
+    <string name="feedback_profile_saved">Profile saved</string>
+    <string name="feedback_photo_updated">Photo updated</string>
+    <string name="feedback_place_saved_shared">\"%1$s\" saved for everyone</string>
+    <string name="feedback_place_saved_personal">\"%1$s\" saved to your places</string>
+    <string name="feedback_place_deleted_shared">Place deleted</string>
+    <string name="feedback_place_deleted_personal">Shortcut deleted</string>
+    <string name="feedback_route_saved">Route saved</string>
+    <string name="feedback_origin_set">Starting point set</string>
+    <string name="feedback_destination_set">Destination set</string>
+    <string name="feedback_stop_added">Stop added</string>
+    <string name="feedback_stop_removed">Stop removed</string>
 </resources>
