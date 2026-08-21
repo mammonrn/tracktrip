@@ -39,7 +39,26 @@ function log(msg) {
   process.stderr.write(`[graft-ensure] ${msg}\n`);
 }
 
+// Does `name` resolve as a dependency of something in `fromDir`? Walks the
+// node_modules chain by hand rather than using require.resolve, which reports a
+// package with a restrictive "exports" map as missing even when it is installed.
+function depInstalled(fromDir, name) {
+  for (let dir = fromDir;;) {
+    if (fs.existsSync(path.join(dir, 'node_modules', name))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
 // Absolute path to graft's CLI entrypoint as resolved from `base`, or null.
+//
+// "The entrypoint exists" is not the same as "the install finished". npm unpacks
+// a tree incrementally, so a concurrent reader can see package.json and
+// dist/cli.js while the nested dependencies are still being written — and a CLI
+// launched in that window dies on ERR_MODULE_NOT_FOUND partway through an
+// import. Checking that every declared dependency is on disk closes that window,
+// and costs a handful of existsSync calls.
 function cliFrom(base) {
   try {
     const manifestPath = require.resolve(`${PKG}/package.json`, { paths: [base] });
@@ -48,8 +67,12 @@ function cliFrom(base) {
       ? manifest.bin
       : manifest.bin && (manifest.bin.graft || Object.values(manifest.bin)[0]);
     if (!bin) return null;
-    const entry = path.join(path.dirname(manifestPath), bin);
-    return fs.existsSync(entry) ? entry : null;
+    const pkgDir = path.dirname(manifestPath);
+    const entry = path.join(pkgDir, bin);
+    if (!fs.existsSync(entry)) return null;
+    const deps = Object.keys(manifest.dependencies ?? {});
+    if (!deps.every((d) => depInstalled(pkgDir, d))) return null; // still unpacking
+    return entry;
   } catch {
     return null;
   }
@@ -80,35 +103,49 @@ function findCli() {
   return null;
 }
 
+const LOCK = path.join(require('os').tmpdir(), 'graft-ensure.lock');
+const LOCK_WAIT_MS = 240000;  // how long a waiter blocks before giving up
+const LOCK_STALE_MS = 600000; // when a lock is assumed orphaned by a killed process
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 // mkdir is atomic, so it doubles as a mutex. The SessionStart hook and the MCP
 // wrapper both call ensure() and Claude Code starts them concurrently; without
 // this they would race into two simultaneous `npm install -g` runs on the same
 // prefix. The loser waits for the winner rather than installing again.
+//
+// A waiter waits for the lock to be *released* and does not look at the files
+// while it waits. Polling findCli() here instead looks like an optimisation and
+// is a bug: it returns the moment npm has written enough of the tree to look
+// finished, which is how the MCP server came up pointing at a graft whose
+// dependencies were still being unpacked. The only safe moment to trust the
+// filesystem is once nobody holds the lock.
 function withInstallLock(fn) {
-  const lock = path.join(require('os').tmpdir(), 'graft-ensure.lock');
-  const deadlineMs = Date.now() + 120000;
+  const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
-      fs.mkdirSync(lock);
+      fs.mkdirSync(LOCK);
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') return fn(); // can't lock — just do the work
       // A lock left behind by a killed process would otherwise wedge every
       // future session, so treat an old one as abandoned.
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > 120000) fs.rmdirSync(lock);
+        if (Date.now() - fs.statSync(LOCK).mtimeMs > LOCK_STALE_MS) fs.rmdirSync(LOCK);
       } catch { /* raced with the owner releasing it */ }
-      if (Date.now() > deadlineMs) return fn();
-      // Re-check: the holder may have finished the install while we waited.
-      const cli = findCli();
-      if (cli) return cli;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+      if (Date.now() > deadline) {
+        log('timed out waiting for another install to finish — proceeding anyway');
+        return fn();
+      }
+      sleep(250);
     }
   }
   try {
     return fn();
   } finally {
-    try { fs.rmdirSync(lock); } catch { /* already gone */ }
+    try { fs.rmdirSync(LOCK); } catch { /* already gone */ }
   }
 }
 
@@ -139,7 +176,14 @@ function install() {
  *  caller treats that as "skip graft", never as a hard failure — a session
  *  without the index must still be a working session. */
 function ensure() {
-  return findCli() || withInstallLock(() => findCli() || install());
+  // Skip the fast path while an install is in flight: findCli() screens out a
+  // half-written tree, but going through the lock means waiting for the install
+  // that is already running rather than racing it.
+  if (!fs.existsSync(LOCK)) {
+    const cli = findCli();
+    if (cli) return cli;
+  }
+  return withInstallLock(() => findCli() || install());
 }
 
 module.exports = { ensure, projectDir, SPEC };
