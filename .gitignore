@@ -33,3 +33,34 @@ android/.cxx/
 *.dex
 .idea/
 *.iml
+
+# --- graft (dev tooling only; nothing here reaches the server) ---
+# graft/ is the code graph the Claude Code sessions query instead of reading
+# source files. It is generated, not authored: ~14 MB of parse cache, wiring
+# JSON and per-file cards, all derived from src/, android/, test/ and scripts/.
+#
+# It stays ignored even though sessions run on throwaway containers where an
+# ignored directory does not survive. Committing it was the obvious fix and is
+# the wrong one: a full rebuild takes about 4 seconds, needs no API key and
+# costs nothing, while a committed graph would be a snapshot that silently rots
+# — every commit that lands without regenerating it leaves the agent trusting
+# file:line spans that have moved, which is worse than having no graph at all.
+# It would also put a 14 MB generated blob in the history the VPS pulls.
+#
+# What makes it survive instead: .claude/helpers/graft-session-start.cjs, a
+# SessionStart hook that rebuilds it when the container doesn't have one.
+#
+# Anchored with a leading slash, unlike the keystore patterns above where the
+# lack of one is deliberate. `graft init` writes this rule unanchored, and
+# unanchored it also matches .claude/skills/graft/ — the instruction file that
+# tells the agent the index exists — so the tool would quietly ignore the half
+# of itself that has to be committed.
+/graft/
+
+# Fallback install prefix used by .claude/helpers/graft-ensure.cjs when the
+# graft npm package cannot be installed globally. Machine-local, never shared.
+.claude/.graft-runtime/
+
+# Per-developer Claude Code overrides. .claude/settings.json is shared; this
+# one is personal and would otherwise fight between machines.
+.claude/settings.local.json
