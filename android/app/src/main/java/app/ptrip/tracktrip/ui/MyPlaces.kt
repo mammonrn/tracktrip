@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,6 +32,7 @@ import app.ptrip.tracktrip.ui.theme.AppSurface
 import app.ptrip.tracktrip.ui.theme.AppText
 import app.ptrip.tracktrip.ui.theme.AppTextMuted
 import app.ptrip.tracktrip.ui.theme.HudConfirmDialog
+import app.ptrip.tracktrip.ui.theme.HudDivider
 import app.ptrip.tracktrip.ui.theme.HudPinIcon
 import app.ptrip.tracktrip.ui.theme.HudSecondaryButton
 import app.ptrip.tracktrip.ui.theme.HudSurface
@@ -131,29 +133,38 @@ fun MyPlacesSection(
             )
         }
 
+        // A group with nothing in it is not drawn at all — not as an empty
+        // card, and not as a heading over nothing. An empty card would be a
+        // promise that the rider has private places when they have none, and
+        // the "nothing yet" line above already covers the case where both are
+        // empty.
         if (personal.isNotEmpty()) {
-            PlacesSectionHeading(stringResource(R.string.places_personal_section))
-            personal.forEach { place ->
-                PlaceCard(
-                    title = place.label,
-                    detail = place.name,
-                    removing = place.id in removingPersonal,
-                    onOpen = { openPersonal = place },
-                    onRemove = { removingPersonalPlace = place },
-                )
+            PlacesGroup(heading = stringResource(R.string.places_personal_section)) {
+                personal.forEachIndexed { index, place ->
+                    if (index > 0) HudDivider()
+                    PlaceRow(
+                        title = place.label,
+                        detail = place.name,
+                        removing = place.id in removingPersonal,
+                        onOpen = { openPersonal = place },
+                        onRemove = { removingPersonalPlace = place },
+                    )
+                }
             }
         }
 
         if (shared.isNotEmpty()) {
-            PlacesSectionHeading(stringResource(R.string.places_shared_section))
-            shared.forEach { place ->
-                PlaceCard(
-                    title = place.name,
-                    detail = place.createdByName.orEmpty(),
-                    removing = place.id in removingShared,
-                    onOpen = { openShared = place },
-                    onRemove = { removingSharedPlace = place },
-                )
+            PlacesGroup(heading = stringResource(R.string.places_shared_section)) {
+                shared.forEachIndexed { index, place ->
+                    if (index > 0) HudDivider()
+                    PlaceRow(
+                        title = place.name,
+                        detail = place.createdByName.orEmpty(),
+                        removing = place.id in removingShared,
+                        onOpen = { openShared = place },
+                        onRemove = { removingSharedPlace = place },
+                    )
+                }
             }
         }
     }
@@ -237,43 +248,68 @@ fun MyPlacesSection(
     }
 }
 
+/**
+ * One kind of place, and everything the rider has of it, inside one card.
+ *
+ * ## Why the group is the card and the places are not
+ *
+ * They were the other way round: the two headings were loose text and each
+ * place was its own floating `HudSurface`, so a rider with three private
+ * places and four shared ones read as seven identical cards down the screen
+ * with two captions somewhere among them. Nothing about that drawing said the
+ * first three were private and the last four were on the whole server — and
+ * that distinction is the only thing on this screen that matters, because one
+ * list is visible to everybody and the other to nobody.
+ *
+ * A card is how this app already says "these belong together". Making the
+ * *group* the card puts the heading and its rows inside one boundary, which is
+ * the same move the trip screen makes with its members, and leaves the two
+ * lists impossible to read as one.
+ *
+ * The rows inside are plain rows on a divider rather than cards of their own —
+ * a card inside a card is two boundaries claiming the same thing, and the
+ * second one wins for no reason.
+ */
 @Composable
-private fun PlacesSectionHeading(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = AppTextMuted,
-        modifier = Modifier.padding(start = 4.dp, top = 6.dp),
-    )
+private fun PlacesGroup(heading: String, content: @Composable ColumnScope.() -> Unit) {
+    HudSurface {
+        Text(
+            text = heading,
+            style = MaterialTheme.typography.labelMedium,
+            color = AppTextMuted,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        content()
+    }
 }
 
 /**
- * One place: a card that opens it, and the cross that removes it.
+ * One place: a row that opens it, and the cross that removes it.
  *
- * The same [HudSurface] the trip archive draws its cards with, for the same
- * reason — a list of things a rider taps to look at reads as a list of cards,
- * and having the two lists in the app disagree about that was the only thing
- * making this one look like a settings screen rather than a list of places.
+ * Tapping anywhere on it opens what the app knows about the place, which is
+ * the half of this row that exists so the cross is not the only thing on it
+ * that can be pressed. The cross keeps its own padding and its own target:
+ * pressing it opens the confirmation rather than deleting anything, so the two
+ * things next to each other are a harmless one and a reversible one.
  *
- * The cross keeps its own padding and sits outside the card's clickable area
- * in *meaning* though not in layout: pressing it opens the confirmation rather
- * than deleting anything, so the two targets next to each other do a harmless
- * thing and a reversible one.
- *
- * [removing] is the delete already in flight. The card dims and the cross
- * becomes a spinner, which is the difference between "nothing happened" and
- * "this is happening" — the gap a rider used to fill by tapping again.
+ * [removing] is the delete already in flight. The row stops being tappable and
+ * the cross becomes a spinner, which is the difference between "nothing
+ * happened" and "this is happening" — the gap a rider used to fill by tapping
+ * again.
  */
 @Composable
-private fun PlaceCard(
+private fun PlaceRow(
     title: String,
     detail: String,
     removing: Boolean,
     onOpen: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    HudSurface(modifier = Modifier.clickable(enabled = !removing, onClick = onOpen)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Box(modifier = Modifier.clickable(enabled = !removing, onClick = onOpen)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,

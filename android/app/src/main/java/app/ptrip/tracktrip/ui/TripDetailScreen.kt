@@ -29,12 +29,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.ptrip.tracktrip.R
 import app.ptrip.tracktrip.data.LiveCadence
 import app.ptrip.tracktrip.data.MemberPosition
@@ -468,11 +470,13 @@ private val SharingDuration.durationLabelRes: Int
  * keep the report age they always showed, which is the useful number while
  * anybody is still reporting.
  *
- * The locale comes off the `Context` rather than from `Locale.getDefault()`
- * because the app has its own language switch: it runs through
- * `AppCompatDelegate`, which puts the choice on the activity's configuration,
- * and a month name read from the process default would be a step behind a
- * rider who had just changed it.
+ * The dates themselves are numeric and so carry no language, but the sentence
+ * around them — "Created … – Ended …" — is a translated resource, and the
+ * locale is still keyed on so the `remember` is invalidated when a rider
+ * changes the app's language. It is read off the `Context` rather than from
+ * `Locale.getDefault()` because the switch runs through `AppCompatDelegate`,
+ * which puts the choice on the activity's configuration; the process default
+ * would be a step behind.
  */
 @Composable
 private fun tripRanOn(trip: Trip?, nowMs: Long): String? {
@@ -480,13 +484,61 @@ private fun tripRanOn(trip: Trip?, nowMs: Long): String? {
 
     val locale = LocalContext.current.resources.configuration.locales[0]
     val span = remember(trip.createdAt, trip.endedAt, nowMs, locale) {
-        TripDates.span(trip.createdAt, trip.endedAt, nowMs, locale = locale)
+        TripDates.span(
+            createdAtIso = trip.createdAt,
+            endedAtIso = trip.endedAt,
+            nowMs = nowMs,
+            locale = locale,
+            // Numeric here, and only here. Two dates share one line under the
+            // rider's name, so what the row needs from a date is a width that
+            // does not depend on which month it is or what language the phone
+            // is in. See [TripDates.Style].
+            style = TripDates.Style.NUMERIC,
+        )
     } ?: return null
 
     return span.ended
         ?.let { stringResource(R.string.trip_dates_created_ended, span.created, it) }
         ?: stringResource(R.string.trip_dates_created, span.created)
 }
+
+/**
+ * The tag `EndedTripDatesTest` measures the card by.
+ *
+ * On the card rather than on any text inside it, and that is the whole point:
+ * the test this exists for asks whether the *card* grew when a third line
+ * arrived, and the first version of it reached for the rider's name instead —
+ * a `Text` of fixed height that could not have answered the question either
+ * way. It reported "no growth" through a change that added a line.
+ */
+internal const val MEMBER_CARD_TAG = "member-card"
+
+/**
+ * The caption on a member row: the role above the name, and the dates below it.
+ *
+ * A member card on a finished trip stacks three lines where a running one
+ * stacks two, so the two lines that are not the name come down from
+ * `labelSmall`'s 11sp to 10sp. That is as far as the shrinking goes, and the
+ * reason it stops there is Thai.
+ *
+ * ## Why the leading is not squeezed further
+ *
+ * The obvious next move — a tighter `lineHeight` with
+ * `LineHeightStyle.Trim.Both` and `includeFontPadding = false` — was tried and
+ * measured. It bought 3dp of the 18, and it put the app's other language at
+ * risk to do it. Thai stacks up to two marks *above* the base character, and
+ * both strings this caption draws have them: `เจ้าของทริป` carries a tone mark
+ * and an upper vowel, `ยังไม่ได้แชร์ตำแหน่ง` carries four. The half-leading
+ * above the first line is exactly where those marks live, and a clipped tone
+ * mark is a different word — a worse bug than a taller card, and one that would
+ * only ever appear on a Thai phone, which is most of them.
+ *
+ * So the leading stays at roughly 1.4x the size, which is what Thai needs; the
+ * card grows by about one small line; and `EndedTripDatesTest` measures that
+ * cost rather than pretending there is none.
+ */
+private val MEMBER_CAPTION_SIZE = 10.sp
+private val MEMBER_CAPTION_LEADING = 14.sp
 
 /**
  * One rider on the trip: their colour, name, role, and how their phone is
@@ -496,6 +548,21 @@ private fun tripRanOn(trip: Trip?, nowMs: Long): String? {
  * is not a live reading — it is whatever came up with this rider's last
  * position report — and a bare "37%" reads as "now". Saying when the number is
  * from turns a reading a rider might argue with into one they can act on.
+ *
+ * ## Two layouts, and which trip gets which
+ *
+ * A **running** trip draws the name, then a caption under it carrying the role
+ * and the age of the last report. That age is the most useful thing on the row
+ * while anybody is still reporting, it is three or four characters wide, and it
+ * sits beside the role without crowding it.
+ *
+ * A **finished** trip — [tripDates] non-null — draws the role *above* the name
+ * as its own small label, and the days the trip ran below it. Two full dates
+ * and a dash are far too wide to share a line with a role, and moving the role
+ * above rather than beside is what frees the whole width for them. It reads
+ * better too: a label over a name is how a caption is normally worn, and on a
+ * finished trip the row is a record of who was there rather than a live
+ * readout.
  */
 @Composable
 private fun MemberRow(
@@ -503,52 +570,70 @@ private fun MemberRow(
     fixAgeMinutes: Long? = null,
     tripDates: String? = null,
 ) {
-    HudSurface {
+    val caption = MaterialTheme.typography.labelSmall.copy(
+        fontSize = MEMBER_CAPTION_SIZE,
+        lineHeight = MEMBER_CAPTION_LEADING,
+    )
+
+    // The role, and the one thing that can qualify it: a rider who never
+    // reported at all. True on a finished trip as much as on a running one —
+    // it says the ride happened without them ever appearing on the map.
+    val role = buildString {
+        append(stringResource(if (member.isOwner) R.string.role_owner else R.string.role_member))
+        if (!member.hasPosition) {
+            append(" · ")
+            append(stringResource(R.string.not_tracking_yet))
+        }
+    }
+
+    HudSurface(modifier = Modifier.testTag(MEMBER_CARD_TAG)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HudDot(color = riderColor(member.userId))
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                if (tripDates != null) {
+                    Text(
+                        text = role,
+                        style = caption,
+                        color = AppTextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
                 Text(
                     text = member.label,
                     style = MaterialTheme.typography.titleMedium,
                     color = AppText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+
                 Text(
-                    text = buildString {
-                        append(
-                            stringResource(
-                                if (member.isOwner) R.string.role_owner else R.string.role_member
-                            )
-                        )
-                        if (!member.hasPosition) {
-                            append(" · ")
-                            append(stringResource(R.string.not_tracking_yet))
-                        }
-                        // How old everything to the right of this row is —
-                        // the battery included, since it arrives with the
-                        // position rather than on its own.
-                        fixAgeMinutes?.let { minutes ->
-                            append(" · ")
-                            append(
-                                if (minutes < 1) {
-                                    stringResource(R.string.map_fix_age_now)
-                                } else {
-                                    stringResource(R.string.map_fix_age_minutes, minutes)
-                                }
-                            )
-                        }
-                        // The same slot on a finished trip, where an age that
-                        // only counts up says nothing. See [TripDates].
-                        tripDates?.let {
-                            append(" · ")
-                            append(it)
+                    text = if (tripDates != null) {
+                        tripDates
+                    } else {
+                        buildString {
+                            append(role)
+                            // How old everything to the right of this row is —
+                            // the battery included, since it arrives with the
+                            // position rather than on its own.
+                            fixAgeMinutes?.let { minutes ->
+                                append(" · ")
+                                append(
+                                    if (minutes < 1) {
+                                        stringResource(R.string.map_fix_age_now)
+                                    } else {
+                                        stringResource(R.string.map_fix_age_minutes, minutes)
+                                    }
+                                )
+                            }
                         }
                     },
-                    style = MaterialTheme.typography.labelSmall,
+                    style = if (tripDates != null) caption else MaterialTheme.typography.labelSmall,
                     color = AppTextMuted,
-                    // One line, and the reason is the card: the dates are
-                    // longer than the age they replace, and a second line here
-                    // would make every row on a finished trip taller than the
-                    // same row on a running one.
+                    // One line either way. This is a list somebody scrolls, and
+                    // a caption that wrapped would make one row taller than the
+                    // rest for the length of somebody's name.
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

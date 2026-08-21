@@ -3,6 +3,7 @@ package app.ptrip.tracktrip.ui
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -12,6 +13,7 @@ import app.ptrip.tracktrip.data.PersonalPlace
 import app.ptrip.tracktrip.data.SharedPlace
 import app.ptrip.tracktrip.ui.theme.TracktripTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -156,6 +158,54 @@ class SettingsPlaceCardTest {
 
         compose.onNodeWithText("Remove").performClick()
         assertEquals(listOf(8L), removedShared)
+    }
+
+    @Test
+    fun `a group with nothing in it is not drawn at all`() {
+        // Not as an empty card and not as a heading over nothing. An empty
+        // "Only you" card would tell a rider they have private places when
+        // they have none, and the "nothing yet" line already covers the case
+        // where both lists are empty.
+        show(personal = emptyList())
+
+        compose.onNodeWithText("Shared with everyone").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Only you").assertCountEquals(0)
+    }
+
+    @Test
+    fun `the other group is the one that disappears when it is the empty one`() {
+        show(shared = emptyList())
+
+        compose.onNodeWithText("Only you").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Shared with everyone").assertCountEquals(0)
+    }
+
+    @Test
+    fun `each heading sits with its own places rather than beside them`() {
+        // The two lists are the only thing on this screen that matters: one is
+        // visible to the whole server and the other to nobody. They used to be
+        // loose captions among a column of identical floating cards, which said
+        // nothing about which places belonged to which. The heading and its
+        // rows are inside one card now, so a place cannot be read under the
+        // wrong heading.
+        show()
+
+        val privateGroup = compose.onNodeWithText("Only you").performScrollTo()
+            .getUnclippedBoundsInRoot()
+        val home = compose.onNodeWithText("Home").getUnclippedBoundsInRoot()
+        val sharedGroup = compose.onNodeWithText("Shared with everyone").performScrollTo()
+            .getUnclippedBoundsInRoot()
+        val pumpRow = compose.onNodeWithText("PTT Doi Saket").getUnclippedBoundsInRoot()
+
+        // Private first, and its one place under its own heading and above the
+        // next one — which is the ordering the two headings exist to carry.
+        assertTrue(
+            "expected Only you < Home < Shared with everyone < PTT, got " +
+                "${privateGroup.top} ${home.top} ${sharedGroup.top} ${pumpRow.top}",
+            privateGroup.top < home.top &&
+                home.top < sharedGroup.top &&
+                sharedGroup.top < pumpRow.top,
+        )
     }
 
     @Test
