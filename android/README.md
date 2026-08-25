@@ -1753,12 +1753,33 @@ script is unaffected.
 
 ### What it produces
 
-The APK is uploaded as the **`tracktrip-release-apk`** artifact (30 days), and
-the run summary carries the application id, versionName, versionCode and the
+Two artifacts, both 30 days, both from the same build and the same key:
+
+| Artifact | What it is for |
+|---|---|
+| **`tracktrip-release-apk`** | handing to a rider directly — sideloaded, no Play account needed |
+| **`tracktrip-release-aab`** | uploading to Google Play |
+
+The APK is the one to send to somebody who is not on the Play test list; Play
+will not accept it, and only takes the bundle. Neither replaces the other, so
+the workflow builds both every run — `bundleRelease` reuses what
+`assembleRelease` already compiled, and the secret check, keystore decode and
+`keytool` verification are steps of the one job that run once for both.
+
+The run summary carries the application id, versionName, versionCode and the
 signing SHA-1 — so you can confirm what was built and which certificate signed
 it without downloading anything. That SHA-1 has to be registered in Google
 Cloud Console against `app.ptrip.tracktrip` or Google Sign-In refuses the
 build.
+
+> **With Play App Signing on, the bundle's SHA-1 is not the one Play installs
+> with.** Play re-signs the delivered APKs with its own app signing key, so the
+> fingerprint to register for anyone who installs from Play is the one under
+> *Release → Setup → App signing* in the Play Console — not the one this
+> summary prints. Register both and Sign-In works for sideloaded and Play
+> installs alike. The workflow verifies the `.aab` is signed at all
+> (`jarsigner -verify`, because `apksigner` cannot read a bundle) rather than
+> re-reporting a fingerprint that may not be the effective one.
 
 The decoded keystore lives in `$RUNNER_TEMP`, outside the checkout, so no
 artifact glob can reach it; the `local.properties` the workflow writes is never

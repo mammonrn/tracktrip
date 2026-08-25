@@ -200,8 +200,31 @@ jobs:
         working-directory: android
         run: ./gradlew assembleRelease --stacktrace
 
+      - name: Build release App Bundle
+        working-directory: android
+        # The .aab is what Google Play takes; the .apk above is what gets handed
+        # to a rider who is not on the Play test list. Both are wanted, so both
+        # are built — this does not replace the APK.
+        #
+        # It needs no signing config of its own. Signing is attached to the
+        # release *build type* in android/app/build.gradle.kts, not to a task,
+        # so bundleRelease is signed by the same key assembleRelease just used,
+        # and the same [releaseSigningProblem] check refuses the build outright
+        # if that config is missing. Everything above — the secret check, the
+        # decoded keystore, the keytool verification, local.properties — is a
+        # step of this one job and has already run once for both tasks. There is
+        # nothing here to guard a second time.
+        #
+        # A separate step rather than `./gradlew assembleRelease bundleRelease`
+        # so a failure names which output failed. It is nearly free either way:
+        # the compilation is shared, and Gradle reuses what the APK task built.
+        run: ./gradlew bundleRelease --stacktrace
+
       - name: Report signing certificate
-        # Proof that the APK is signed, and by which certificate. Fingerprints
+        # Proof that both artefacts are signed, and by which certificate. The
+        # APK carries the fingerprint worth printing; the bundle is checked for
+        # a signature but not re-fingerprinted, for the Play App Signing reason
+        # spelled out in the summary below. Fingerprints
         # are public — they are what gets registered in Google Cloud Console —
         # so printing them leaks nothing and settles "did this actually get
         # signed with the release key?" without downloading the artifact.
@@ -219,10 +242,33 @@ jobs:
 
           "$APKSIGNER" verify --print-certs "$APK" | grep -iE 'DN:|SHA-1 digest|SHA-256 digest' | tee /tmp/certs.txt
           SHA1="$(grep -im1 'SHA-1 digest' /tmp/certs.txt | sed 's/.*: //' | tr -d ' \r' | tr 'a-z' 'A-Z' | sed 's/../&:/g; s/:$//')"
+
+          # The bundle, checked the same way and for the same reason: an
+          # unsigned artefact that only fails when somebody uploads it is worth
+          # catching here. apksigner cannot read an .aab — an App Bundle carries
+          # ordinary JAR signing — so jarsigner is the tool, and the exit code is
+          # not the answer: jarsigner exits 0 on an unsigned jar and says so in
+          # its output instead, so the output is what gets tested.
+          AAB="$(find android/app/build/outputs/bundle/release -name '*.aab' | head -1)"
+          echo "AAB: $AAB"
+
+          if [ -z "$AAB" ]; then
+            echo "::error::bundleRelease produced no .aab under android/app/build/outputs/bundle/release."
+            exit 1
+          fi
+
+          jarsigner -verify "$AAB" >/tmp/aab.out 2>&1 || true
+          if ! grep -q 'jar verified' /tmp/aab.out; then
+            grep -v '^Picked up' /tmp/aab.out | head -5
+            echo "::error::The App Bundle came out unsigned. It was built from the same release build type as the APK, which did sign, so this is a bundleRelease problem rather than a missing key."
+            exit 1
+          fi
+          echo "App Bundle is signed."
+
           VERSION="$(grep -E '^ +versionName' android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')"
           CODE="$(grep -E '^ +versionCode' android/app/build.gradle.kts | head -1 | sed 's/[^0-9]//g')"
           {
-            echo "### Signed release APK"
+            echo "### Signed release build"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -230,12 +276,22 @@ jobs:
             echo "| versionName | \`$VERSION\` |"
             echo "| versionCode | \`$CODE\` |"
             echo "| Signing SHA-1 | \`$SHA1\` |"
+            echo "| APK (hand to a rider) | \`tracktrip-release-apk\` |"
+            echo "| AAB (upload to Play) | \`tracktrip-release-aab\` |"
+            echo ""
+            echo "Both artefacts come from the same build and the same key."
             echo ""
             echo "This SHA-1 must be registered in Google Cloud Console against package"
             echo "\`app.ptrip.tracktrip\`, or Google Sign-In will refuse this build."
             echo ""
+            echo "With **Play App Signing** on, that holds for the APK above but not for what"
+            echo "Play installs: Play re-signs the bundle with its own app signing key, so the"
+            echo "SHA-1 to register for Play users is the one Play shows under Release ›"
+            echo "Setup › App signing, not this one. Register both and Sign-In works either way."
+            echo ""
             echo "**Bump \`versionCode\` before the next release.** Android compares only that"
             echo "number; shipping twice on \`$CODE\` means riders cannot update over this build."
+            echo "Play rejects a second upload on \`$CODE\` outright."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release APK
@@ -245,6 +301,18 @@ jobs:
           # Scoped to the APK. Nothing from RUNNER_TEMP is in the workspace and
           # local.properties is not under this path, so neither can be swept up.
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload release App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          # Its own artifact rather than a second path on the one above, so
+          # downloading "the APK" does not also drag down a bundle nobody
+          # outside Play has a use for — and so `if-no-files-found: error`
+          # still means something for each of them separately.
+          name: tracktrip-release-aab
+          path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 30
 
