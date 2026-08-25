@@ -398,15 +398,21 @@ app" case in the table above. The key is never written to the log.
 
 ---
 
-## Shipping a signed release APK
+## Shipping a signed release build
 
-The APK is built by a GitHub Action, not on this server — nothing about a
+The build happens in a GitHub Action, not on this server — nothing about a
 release touches the VPS.
 
 **Actions → Build signed release APK → Run workflow.** It runs on demand only;
-there is no push or tag trigger, deliberately. The signed APK comes back as the
-`tracktrip-release-apk` artifact and the run summary shows the version and the
-signing fingerprint.
+there is no push or tag trigger, deliberately. One run produces both artifacts,
+signed with the same key:
+
+| Artifact | For |
+|---|---|
+| `tracktrip-release-apk` | sideloading — hand it to a rider who is not on the Play test list |
+| `tracktrip-release-aab` | uploading to Google Play |
+
+The run summary shows the version and the signing fingerprint for both.
 
 It needs four repository secrets — `RELEASE_KEYSTORE_BASE64`,
 `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` — and the
