@@ -436,6 +436,7 @@ proxying nothing:
 | `/privacy.html` | the privacy policy, the URL given to Google Play |
 | `/delete-account.html` | how to ask for an account to be deleted, also a URL Play stores |
 | `/download.html` | the landing page riders are sent to, with both download links |
+| `/download` | the same page at the shorter address, served in place rather than redirected |
 
 The site is [`deploy/nginx-ptrip.app.conf`](deploy/nginx-ptrip.app.conf), the
 pages are [`deploy/www/join.html`](deploy/www/join.html),
@@ -494,6 +495,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/.well-known/assetlinks
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/privacy.html                  # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/delete-account.html           # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/download.html                 # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/download                      # 200, same page
 ```
 
 ### 4. Certificate
