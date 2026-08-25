@@ -426,17 +426,19 @@ password trap, and how to build the same APK locally are all in
 
 An invite reads `https://ptrip.app/join/CODE`. That host is **not** this API
 server — `api.ptrip.app` is, and the certificate on it does not cover the apex.
-`ptrip.app` is a second nginx site on the same box, serving two static files and
+`ptrip.app` is a second nginx site on the same box, serving static files and
 proxying nothing:
 
 | | |
 |---|---|
 | `/.well-known/assetlinks.json` | what makes a tapped invite open the app instead of a browser |
 | `/join/CODE` | what a phone **without** the app lands on |
+| `/privacy.html` | the privacy policy, the URL given to Google Play |
 
 The site is [`deploy/nginx-ptrip.app.conf`](deploy/nginx-ptrip.app.conf), the
-page is [`deploy/www/join.html`](deploy/www/join.html), and the statement list
-is [`deploy/assetlinks.json`](deploy/assetlinks.json) — already filled in with
+pages are [`deploy/www/join.html`](deploy/www/join.html) and
+[`deploy/www/privacy.html`](deploy/www/privacy.html), and the statement list is
+[`deploy/assetlinks.json`](deploy/assetlinks.json) — already filled in with
 both signing fingerprints.
 
 ### 1. DNS first
@@ -457,8 +459,9 @@ Encrypt's rate limit for the name. Check, do not retry.
 
 ```bash
 sudo mkdir -p /var/www/ptrip.app/.well-known
-sudo cp ~/tracktrip/deploy/assetlinks.json /var/www/ptrip.app/.well-known/assetlinks.json
-sudo cp ~/tracktrip/deploy/www/join.html   /var/www/ptrip.app/join.html
+sudo cp ~/tracktrip/deploy/assetlinks.json  /var/www/ptrip.app/.well-known/assetlinks.json
+sudo cp ~/tracktrip/deploy/www/join.html    /var/www/ptrip.app/join.html
+sudo cp ~/tracktrip/deploy/www/privacy.html /var/www/ptrip.app/privacy.html
 
 # nginx's worker (www-data) needs +x on every directory in the path and +r on
 # the files. Same requirement as /uploads/ on the API site.
@@ -467,7 +470,12 @@ sudo chmod -R a+rX /var/www/ptrip.app
 
 Copies rather than symlinks into the checkout: `git pull` replacing a file under
 a symlink is fine, but a checkout that moves or a stale branch silently changes
-what the domain serves. Re-run the two `cp` lines when either file changes.
+what the domain serves. Re-run the `cp` line for a file when that file changes.
+
+The privacy policy is a plain static page in the same directory — nothing to
+install, no new nginx site and no certificate work, because `ptrip.app` already
+has both. Updating the policy later is this one `cp` and nothing else: no
+reload, since nginx reads it from disk per request.
 
 ### 3. Enable the site
 
@@ -476,6 +484,7 @@ sudo ln -s ~/tracktrip/deploy/nginx-ptrip.app.conf /etc/nginx/sites-enabled/ptri
 sudo nginx -t && sudo systemctl reload nginx
 
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/.well-known/assetlinks.json   # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/privacy.html                  # 200
 ```
 
 ### 4. Certificate

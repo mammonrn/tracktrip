@@ -133,6 +133,55 @@ test('the nginx site serves one page for every join code', () => {
   assert.match(conf, /try_files \/join\.html =404;/);
 });
 
+test('the nginx site serves the privacy policy from an exact path', () => {
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  // Google Play stores the policy URL and re-checks it, so this 404ing is a
+  // listing problem rather than only a broken page — and it fails as quietly
+  // as everything else on this host.
+  //
+  // An exact match for the same reason assetlinks.json uses one: nothing can
+  // shadow it and it picks up no trailing-slash rewrite. Unlike /join/ there
+  // is no variable part of the path, so there is nothing for a prefix to
+  // absorb.
+  assert.match(conf, /location = \/privacy\.html \{/);
+
+  const block = conf.slice(conf.indexOf('location = /privacy.html'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  assert.match(body, /try_files \$uri =404;/);
+
+  // No forced content type here, unlike assetlinks.json: that one overrides
+  // mime.types because Google's statement-list parser rejects anything but
+  // application/json. An HTML page served as application/json would download
+  // instead of rendering, so this asserts the override was *not* copied over.
+  assert.ok(!/default_type/.test(body), 'privacy.html must be left to mime.types');
+});
+
+test('the privacy policy page carries no external asset', () => {
+  // Same rule as the invite page: no fonts, no scripts, no images, no CDN.
+  // This one is also read by people deciding whether to trust the app with
+  // their location, and a policy page that phones a third party to render is
+  // a poor way to open that argument.
+  const html = read('deploy/www/privacy.html');
+
+  assert.ok(!/src=["']https?:/i.test(html), 'external script or image');
+  assert.ok(!/<link\b[^>]*href=["']https?:/i.test(html), 'external stylesheet');
+  assert.ok(!/@import/i.test(html), 'external stylesheet via @import');
+});
+
+test('the privacy policy page is a complete, self-describing document', () => {
+  // It is the URL handed to Google Play, so the failure that matters is it
+  // going up half-finished: a draft marker left in, or no way to get in touch,
+  // which Play requires the policy to provide.
+  const html = read('deploy/www/privacy.html');
+
+  assert.match(html, /<title>/i, 'no title');
+  assert.match(html, /<meta charset="utf-8">/i, 'no charset — Thai text would render as mojibake');
+  assert.ok(!/REPLACE|PLACEHOLDER|TODO|LOREM|XXXX/i.test(html), 'placeholder left in privacy.html');
+  assert.match(html, /mailto:/, 'no contact address — Play requires the policy to give one');
+});
+
 test('the invite page reads the code out of the path', () => {
   // The page is served for every /join/CODE, so filling the code in is the
   // page's own job. Run its script the way a browser would, with a stand-in
