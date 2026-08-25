@@ -217,6 +217,52 @@ test('the account-deletion page is a complete, self-describing document', () => 
   assert.match(html, /mailto:/, 'no contact address — the request cannot be made without one');
 });
 
+test('the nginx site serves the download page from an exact path', () => {
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  assert.match(conf, /location = \/download\.html \{/);
+
+  const block = conf.slice(conf.indexOf('location = /download.html'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  assert.match(body, /try_files \$uri =404;/);
+  // Not copied from assetlinks.json — forced to application/json this page
+  // would download instead of render.
+  assert.ok(!/default_type/.test(body), 'download.html must be left to mime.types');
+});
+
+test('the download page is also reachable without the .html', () => {
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  // /download is the address that gets handed out, so it has to work — but
+  // NOT as a redirect. This host redirects nothing (a 30x on assetlinks.json
+  // fails App Link verification silently), so the bare path serves the file
+  // where it stands. Verified against nginx 1.24: /download returns 200
+  // text/html, byte-identical to /download.html, because try_files takes the
+  // content type from the file it lands on rather than from the request URI.
+  assert.match(conf, /location = \/download \{/);
+
+  const block = conf.slice(conf.indexOf('location = /download {'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  assert.match(body, /try_files \/download\.html =404;/);
+  assert.ok(!/return\s+30\d/.test(body), '/download must serve the file, not redirect to it');
+});
+
+test('the download page still offers both ways to get the app', () => {
+  // Deliberately NOT checked for external assets, unlike the two pages above:
+  // this one is a Claude Design export that unpacks itself, and it carries
+  // preconnect hints to Google Fonts that those assertions would reject.
+  //
+  // What is worth pinning is the two links, because they are the entire point
+  // of the page and the one thing a re-export can silently drop — everything
+  // around them is regenerated markup nobody reads in a diff.
+  const html = read('deploy/www/download.html');
+
+  assert.match(html, /tinyurl\.com\/PTripsGG/, 'the Play Store link is gone');
+  assert.match(html, /tinyurl\.com\/PTripsCR/, 'the direct APK link is gone');
+});
+
 test('the invite page reads the code out of the path', () => {
   // The page is served for every /join/CODE, so filling the code in is the
   // page's own job. Run its script the way a browser would, with a stand-in
