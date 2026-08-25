@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="th">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTrips — นโยบายความเป็นส่วนตัว</title>
+
+<!--
+  Served at https://ptrip.app/privacy.html — the URL given to Google Play.
+  Play stores it as a link and re-fetches it, so this 404ing or moving is a
+  listing problem, not only a broken page. It is a plain file in
+  /var/www/ptrip.app alongside join.html; updating the policy is one `cp` and
+  no reload, because nginx reads it per request.
+
+  No `<meta name="robots" content="noindex">`, unlike join.html, and the
+  difference is deliberate: an invite page is for one person holding one code
+  and has no business in a search index, whereas a privacy policy is a public
+  document that both Play's crawler and a rider deciding whether to trust this
+  app with their location should be able to find.
+
+  Deliberately one file with no external anything — no fonts, no scripts, no
+  images — for join.html's reason and one more of its own: a page arguing that
+  the app is careful with your data is a poor place to call out to a CDN that
+  would see who is reading it. Its styles are join.html's, kept in step by
+  hand rather than shared, because a stylesheet would be a second request that
+  can fail and the whole point of both pages is that they cannot.
+-->
+
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    font: 16px/1.7 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f6f6f4;
+    color: #1c1c1a;
+    display: flex;
+    justify-content: center;
+  }
+  /* Wider than join.html's 26rem: that page is three short paragraphs on a
+     phone, this one is a document somebody reads through. */
+  main { width: 100%; max-width: 34rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .35rem; }
+  h2 {
+    font-size: 1.05rem;
+    margin: 2rem 0 .6rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #dedcd4;
+  }
+  p { margin: 0 0 1rem; }
+  ul { margin: 0 0 1rem; padding-left: 1.25rem; }
+  li { margin: 0 0 .6rem; }
+  .muted { color: #6b6b64; font-size: .9rem; }
+  .updated { margin: 0 0 1.75rem; }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #17171a; color: #ececea; }
+    .muted { color: #9a9a94; }
+    h2 { border-top-color: #34343a; }
+  }
+</style>
+
+<main>
+  <h1>นโยบายความเป็นส่วนตัว — PTrips</h1>
+  <p class="muted updated">ปรับปรุงล่าสุด: <time datetime="2026-08-25">25 สิงหาคม 2569</time></p>
+
+  <p>PTrips (“แอป”) เป็นแอปสำหรับกลุ่มเพื่อนที่ขี่มอเตอร์ไซค์ท่องเที่ยวด้วยกัน
+     ใช้แชร์ตำแหน่งระหว่างทริป เอกสารนี้อธิบายว่าเราเก็บ ใช้ และแชร์ข้อมูลอะไรบ้าง</p>
+
+  <h2>ข้อมูลที่เราเก็บ</h2>
+  <ul>
+    <li><strong>ตำแหน่ง GPS</strong> — เก็บเฉพาะช่วงที่ทริปกำลังดำเนินอยู่และคุณเปิดสวิตช์แชร์ตำแหน่งไว้เท่านั้น</li>
+    <li><strong>บัญชี Google</strong> — อีเมล ชื่อที่แสดง รูปโปรไฟล์ และ username ที่ตั้งในแอป
+        ได้รับจาก Google Sign-In ตอนเข้าสู่ระบบครั้งแรก</li>
+    <li><strong>ข้อมูลทริป</strong> — ชื่อทริป เส้นทาง จุดแวะ ที่คุณสร้างหรือเข้าร่วม</li>
+  </ul>
+
+  <h2>เราใช้ข้อมูลอย่างไร</h2>
+  <p>ข้อมูลตำแหน่งใช้เพื่อแสดงตำแหน่งของสมาชิกในทริปเดียวกันแบบเรียลไทม์บนแผนที่เท่านั้น
+     เราไม่ใช้ข้อมูลของคุณเพื่อโฆษณา ไม่ขายข้อมูลให้บุคคลที่สาม</p>
+
+  <h2>เราแชร์ข้อมูลกับใคร</h2>
+  <ul>
+    <li>ตำแหน่งของคุณมองเห็นได้เฉพาะสมาชิกที่อยู่ในทริปเดียวกันขณะทริปกำลังดำเนินอยู่เท่านั้น</li>
+    <li>เราใช้บริการ <strong>LocationIQ</strong> เพื่อค้นหาสถานที่และคำนวณเส้นทางบนแผนที่
+        ระบบจะส่งพิกัด/คำค้นหาไปให้ LocationIQ ประมวลผลเท่าที่จำเป็นสำหรับฟีเจอร์นี้เท่านั้น</li>
+    <li>ไม่มีการแชร์ข้อมูลให้บุคคลภายนอกอื่นใดนอกจากนี้</li>
+  </ul>
+
+  <h2>การเก็บรักษาข้อมูล</h2>
+  <p>ประวัติตำแหน่งเก็บไว้ 30 วันแล้วลบออกจากระบบโดยอัตโนมัติ
+     บัญชีผู้ใช้และประวัติทริปเก็บไว้จนกว่าคุณจะขอให้ลบ</p>
+
+  <h2>สิทธิ์ของคุณ</h2>
+  <p>คุณสามารถขอให้ลบบัญชีและข้อมูลทั้งหมดได้ตลอดเวลาโดยติดต่อผู้ดูแลแอปที่อีเมลด้านล่าง</p>
+
+  <h2>ติดต่อเรา</h2>
+  <p>หากมีคำถามเกี่ยวกับนโยบายนี้ ติดต่อได้ที่:
+     <a href="mailto:krongkrangrn@gmail.com">krongkrangrn@gmail.com</a></p>
+</main>
