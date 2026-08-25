@@ -434,10 +434,13 @@ proxying nothing:
 | `/.well-known/assetlinks.json` | what makes a tapped invite open the app instead of a browser |
 | `/join/CODE` | what a phone **without** the app lands on |
 | `/privacy.html` | the privacy policy, the URL given to Google Play |
+| `/delete-account.html` | how to ask for an account to be deleted, also a URL Play stores |
 
 The site is [`deploy/nginx-ptrip.app.conf`](deploy/nginx-ptrip.app.conf), the
-pages are [`deploy/www/join.html`](deploy/www/join.html) and
-[`deploy/www/privacy.html`](deploy/www/privacy.html), and the statement list is
+pages are [`deploy/www/join.html`](deploy/www/join.html),
+[`deploy/www/privacy.html`](deploy/www/privacy.html) and
+[`deploy/www/delete-account.html`](deploy/www/delete-account.html), and the
+statement list is
 [`deploy/assetlinks.json`](deploy/assetlinks.json) — already filled in with
 both signing fingerprints.
 
@@ -462,6 +465,7 @@ sudo mkdir -p /var/www/ptrip.app/.well-known
 sudo cp ~/tracktrip/deploy/assetlinks.json  /var/www/ptrip.app/.well-known/assetlinks.json
 sudo cp ~/tracktrip/deploy/www/join.html    /var/www/ptrip.app/join.html
 sudo cp ~/tracktrip/deploy/www/privacy.html /var/www/ptrip.app/privacy.html
+sudo cp ~/tracktrip/deploy/www/delete-account.html /var/www/ptrip.app/delete-account.html
 
 # nginx's worker (www-data) needs +x on every directory in the path and +r on
 # the files. Same requirement as /uploads/ on the API site.
@@ -472,10 +476,10 @@ Copies rather than symlinks into the checkout: `git pull` replacing a file under
 a symlink is fine, but a checkout that moves or a stale branch silently changes
 what the domain serves. Re-run the `cp` line for a file when that file changes.
 
-The privacy policy is a plain static page in the same directory — nothing to
-install, no new nginx site and no certificate work, because `ptrip.app` already
-has both. Updating the policy later is this one `cp` and nothing else: no
-reload, since nginx reads it from disk per request.
+The privacy policy and the account-deletion page are plain static pages in the
+same directory — nothing to install, no new nginx site and no certificate work,
+because `ptrip.app` already has both. Updating either later is its one `cp` and
+nothing else: no reload, since nginx reads them from disk per request.
 
 ### 3. Enable the site
 
@@ -485,6 +489,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/.well-known/assetlinks.json   # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/privacy.html                  # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/delete-account.html           # 200
 ```
 
 ### 4. Certificate

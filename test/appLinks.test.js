@@ -182,6 +182,41 @@ test('the privacy policy page is a complete, self-describing document', () => {
   assert.match(html, /mailto:/, 'no contact address — Play requires the policy to give one');
 });
 
+test('the nginx site serves the account-deletion page from an exact path', () => {
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  // Play stores this URL separately from the policy one and re-fetches it, so
+  // it fails the same quiet way: the listing breaks, not the site.
+  assert.match(conf, /location = \/delete-account\.html \{/);
+
+  const block = conf.slice(conf.indexOf('location = /delete-account.html'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  assert.match(body, /try_files \$uri =404;/);
+  // Not copied from assetlinks.json — an HTML page forced to application/json
+  // downloads instead of rendering.
+  assert.ok(!/default_type/.test(body), 'delete-account.html must be left to mime.types');
+});
+
+test('the account-deletion page carries no external asset', () => {
+  const html = read('deploy/www/delete-account.html');
+
+  assert.ok(!/src=["']https?:/i.test(html), 'external script or image');
+  assert.ok(!/<link\b[^>]*href=["']https?:/i.test(html), 'external stylesheet');
+  assert.ok(!/@import/i.test(html), 'external stylesheet via @import');
+});
+
+test('the account-deletion page is a complete, self-describing document', () => {
+  // The address is the whole mechanism here — deletion is requested by email,
+  // so a page that lost its mailto: would leave no way to ask at all.
+  const html = read('deploy/www/delete-account.html');
+
+  assert.match(html, /<title>/i, 'no title');
+  assert.match(html, /<meta charset="utf-8">/i, 'no charset — Thai text would render as mojibake');
+  assert.ok(!/REPLACE|PLACEHOLDER|TODO|LOREM|XXXX/i.test(html), 'placeholder left in delete-account.html');
+  assert.match(html, /mailto:/, 'no contact address — the request cannot be made without one');
+});
+
 test('the invite page reads the code out of the path', () => {
   // The page is served for every /join/CODE, so filling the code in is the
   // page's own job. Run its script the way a browser would, with a stand-in
