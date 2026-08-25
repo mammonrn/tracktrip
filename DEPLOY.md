@@ -435,11 +435,13 @@ proxying nothing:
 | `/join/CODE` | what a phone **without** the app lands on |
 | `/privacy.html` | the privacy policy, the URL given to Google Play |
 | `/delete-account.html` | how to ask for an account to be deleted, also a URL Play stores |
+| `/download.html` | the landing page riders are sent to, with both download links |
 
 The site is [`deploy/nginx-ptrip.app.conf`](deploy/nginx-ptrip.app.conf), the
 pages are [`deploy/www/join.html`](deploy/www/join.html),
 [`deploy/www/privacy.html`](deploy/www/privacy.html) and
-[`deploy/www/delete-account.html`](deploy/www/delete-account.html), and the
+[`deploy/www/delete-account.html`](deploy/www/delete-account.html) and
+[`deploy/www/download.html`](deploy/www/download.html), and the
 statement list is
 [`deploy/assetlinks.json`](deploy/assetlinks.json) — already filled in with
 both signing fingerprints.
@@ -466,6 +468,7 @@ sudo cp ~/tracktrip/deploy/assetlinks.json  /var/www/ptrip.app/.well-known/asset
 sudo cp ~/tracktrip/deploy/www/join.html    /var/www/ptrip.app/join.html
 sudo cp ~/tracktrip/deploy/www/privacy.html /var/www/ptrip.app/privacy.html
 sudo cp ~/tracktrip/deploy/www/delete-account.html /var/www/ptrip.app/delete-account.html
+sudo cp ~/tracktrip/deploy/www/download.html /var/www/ptrip.app/download.html
 
 # nginx's worker (www-data) needs +x on every directory in the path and +r on
 # the files. Same requirement as /uploads/ on the API site.
@@ -490,6 +493,7 @@ sudo nginx -t && sudo systemctl reload nginx
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/.well-known/assetlinks.json   # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/privacy.html                  # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/delete-account.html           # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/download.html                 # 200
 ```
 
 ### 4. Certificate
