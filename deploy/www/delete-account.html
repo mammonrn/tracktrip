@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="th">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTrips — ขอลบบัญชีและข้อมูล</title>
+
+<!--
+  Served at https://ptrip.app/delete-account.html — the account-deletion URL
+  given to Google Play, which stores it as a link and re-fetches it, so this
+  404ing or moving is a listing problem rather than only a broken page.
+
+  Same shape as privacy.html and join.html, and for the same reasons: one file,
+  no fonts, no scripts, no images, so there is nothing to fail on a bad
+  connection and nothing that phones a third party while somebody reads about
+  having their data erased. Styles are copied rather than shared, because a
+  stylesheet would be the second request these pages exist to avoid.
+
+  No `noindex`, matching privacy.html: this is a public document Play's crawler
+  and a rider should both be able to find.
+-->
+
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    font: 16px/1.7 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f6f6f4;
+    color: #1c1c1a;
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 34rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .35rem; }
+  h2 {
+    font-size: 1.05rem;
+    margin: 2rem 0 .6rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #dedcd4;
+  }
+  p { margin: 0 0 1rem; }
+  ul, ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+  li { margin: 0 0 .6rem; }
+  .muted { color: #6b6b64; font-size: .9rem; }
+  .updated { margin: 0 0 1.75rem; }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #17171a; color: #ececea; }
+    .muted { color: #9a9a94; }
+    h2 { border-top-color: #34343a; }
+  }
+</style>
+
+<main>
+  <h1>ขอลบบัญชีและข้อมูล — PTrips</h1>
+  <p class="muted updated">ปรับปรุงล่าสุด: <time datetime="2026-08-25">25 สิงหาคม 2569</time></p>
+
+  <p>หน้านี้อธิบายวิธีขอลบบัญชี PTrips และข้อมูลที่เกี่ยวข้อง (“PTrips” พัฒนาโดย Poom Tammason)</p>
+
+  <h2>วิธีขอลบบัญชี</h2>
+  <p>ส่งอีเมลมาที่ <strong><a href="mailto:krongkrangrn@gmail.com">krongkrangrn@gmail.com</a></strong> โดยระบุ:</p>
+  <ol>
+    <li>หัวข้ออีเมล: “ขอลบบัญชี PTrips”</li>
+    <li>อีเมล Google account ที่ใช้ล็อกอินเข้าแอป (เพื่อยืนยันตัวตนเจ้าของบัญชี)</li>
+  </ol>
+  <p>เราจะดำเนินการลบบัญชีให้ภายใน 7 วันทำการ และแจ้งกลับทางอีเมลเมื่อดำเนินการเสร็จสิ้น</p>
+
+  <h2>ข้อมูลที่จะถูกลบ</h2>
+  <p>เมื่อบัญชีถูกลบ ข้อมูลต่อไปนี้จะถูกลบออกจากระบบถาวร:</p>
+  <ul>
+    <li>ข้อมูลบัญชี (อีเมล ชื่อ รูปโปรไฟล์ username ที่ได้จาก Google Sign-In)</li>
+    <li>ประวัติตำแหน่ง GPS ที่เกี่ยวข้องกับบัญชี</li>
+    <li>ทริปที่คุณสร้างเอง (สมาชิกคนอื่นในทริปที่คุณเข้าร่วมยังเห็นประวัติทริปได้ตามปกติ
+        แต่จะไม่เห็นชื่อ/โปรไฟล์ของคุณอีกต่อไป)</li>
+  </ul>
+
+  <h2>ข้อมูลที่อาจเก็บไว้</h2>
+  <p>ข้อมูล log ระดับเซิร์ฟเวอร์ที่ไม่ระบุตัวตน (เช่น สถิติการใช้งานทั่วไป)
+     อาจถูกเก็บไว้เพื่อการดูแลระบบ แต่จะไม่สามารถเชื่อมโยงกลับไปยังบัญชีที่ถูกลบได้อีก</p>
+
+  <h2>ติดต่อเรา</h2>
+  <p>หากมีคำถามเพิ่มเติมเกี่ยวกับการลบบัญชี ติดต่อได้ที่:
+     <a href="mailto:krongkrangrn@gmail.com">krongkrangrn@gmail.com</a></p>
+</main>
