@@ -263,6 +263,40 @@ test('the download page still offers both ways to get the app', () => {
   assert.match(html, /tinyurl\.com\/PTripsCR/, 'the direct APK link is gone');
 });
 
+test('the homepage is the download page, not a 404', () => {
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  // The apex is the address people reach by guessing or by trimming the path
+  // off an invite link, and it used to fall through to the catch-all below —
+  // nginx's bare "404 Not Found" on the one page nobody was linked to.
+  //
+  // `location = /` is an exact match on the empty path, so it beats the
+  // catch-all `location /` while leaving every other unknown path a 404.
+  assert.match(conf, /location = \/ \{/);
+
+  const block = conf.slice(conf.indexOf('location = / {'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  // Serves the file where it stands. Not a redirect (this host redirects
+  // nothing) and not `index`, which is an internal redirect to /download.html
+  // and would land back in the catch-all as a 404.
+  assert.match(body, /try_files \/download\.html =404;/);
+  assert.ok(!/return\s+30\d/.test(body), '/ must serve the page, not redirect to it');
+  assert.ok(!/\bindex\b/.test(body), '/ must not use index — it redirects internally');
+});
+
+test('the catch-all still answers everything else with a 404', () => {
+  // The homepage location is an addition above it, not a replacement: an
+  // unknown path must stay a plain 404 rather than quietly becoming the
+  // download page.
+  const conf = directivesOf('deploy/nginx-ptrip.app.conf');
+
+  const block = conf.slice(conf.indexOf('location / {'));
+  const body = block.slice(0, block.indexOf('\n    }'));
+
+  assert.match(body, /return 404;/);
+});
+
 test('the invite page reads the code out of the path', () => {
   // The page is served for every /join/CODE, so filling the code in is the
   // page's own job. Run its script the way a browser would, with a stand-in

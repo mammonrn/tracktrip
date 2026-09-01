@@ -431,6 +431,7 @@ proxying nothing:
 
 | | |
 |---|---|
+| `/` | the homepage — the same download page, for anyone who types the bare domain |
 | `/.well-known/assetlinks.json` | what makes a tapped invite open the app instead of a browser |
 | `/join/CODE` | what a phone **without** the app lands on |
 | `/privacy.html` | the privacy policy, the URL given to Google Play |
@@ -496,6 +497,8 @@ curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/privacy.html          
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/delete-account.html           # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/download.html                 # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/download                      # 200, same page
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/                              # 200, same page again
+curl -s -o /dev/null -w '%{http_code}\n' http://ptrip.app/nope                          # 404, everything else
 ```
 
 ### 4. Certificate
